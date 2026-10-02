@@ -40,6 +40,10 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/app.js` | The main program. Draws each screen (welcome, dashboard, list, add/edit form, detail, backup & settings) and reacts to taps. |
 | `js/stats.js` | The sums behind the dashboard: spend this year, monthly spend, next due item, meter usage per day, energy bills. |
 | `js/charts.js` | Tiny SVG bar charts and sparklines, drawn by our own code (no chart library, nothing downloaded, works offline). |
+| `js/periodcard.js` | The swipeable detail card under the meter chart and the dashboard spending chart (see section 4b). |
+| `js/scan.js` | **Scan receipt or bill**: opens a PDF (pdf.js) or reads a photo with OCR (Tesseract). Only loaded when you open the scanner. |
+| `js/parse.js` | Turns the scanned text into title, date, total, supplier and, for energy bills, the period and meter readings. Plain JavaScript, no browser needed (so it can be tested with Node). |
+| `vendor/` | The two bundled libraries for the scanner, with their licences (see section 4c). Nothing is fetched from the internet. |
 | `js/icons.js` | The line icons, as plain SVG path strings. |
 | `js/theme.js` | Light / Dark / Auto appearance (remembered in `localStorage`). |
 | `fonts/inter-latin.woff` | The Inter typeface (Latin letters only, ~38 KB), stored with the app so it works offline. Licence: SIL Open Font License, see `fonts/LICENSE-Inter.txt`. |
@@ -51,7 +55,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
 | `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
-| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `screenshots.py` and `make_comparison.py` (phone screenshots). See section 7. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus two made-up sample documents `demo-receipt.png` / `demo-bill.pdf`. See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -115,6 +119,80 @@ such a file, checks it, turns the text back into photos and saves the
 entries. Entries with the same id are replaced; nothing else is deleted, so
 restoring twice doesn't make duplicates.
 
+## 4b. Chart detail cards
+
+On the **Meters** screen, tap a bar in *Daily use between readings* (or
+Tab to it and press Enter/Space; the arrow keys, Home and End move along the
+bars). The bar is highlighted and a card opens with that period's dates,
+kWh used, average kWh a day, the bill and the cost per kWh (bill ÷ kWh, so
+it includes the standing charge), and the change from the period before
+(kWh and £). If a bill is logged for that period, its photo is shown with an
+**Open bill** button; if not, the card says so and offers **Add bill**.
+
+The bill for a period is the closing reading itself if it has a cost (the
+way bills are usually logged), otherwise any meter entry with a cost dated
+inside the period.
+
+Swipe the card left or right (or use the ‹ › buttons, or ←/→ while it has
+focus) to move to the next or previous period. The card follows your finger,
+then slides across, and the highlighted bar moves with it. It stops at the
+first and last period, where that arrow is greyed out. A mostly vertical drag
+still scrolls the page.
+
+The dashboard's 12-month **Spending** chart has the same card: month total,
+number of entries with a cost, change from the month before, and the three
+biggest costs (tap one to open it).
+
+## 4c. Scan a receipt or bill
+
+**+ → Scan receipt or bill**: take a photo, or choose a photo, screenshot or
+PDF. The app shows *Reading…* with a progress bar, then opens a normal
+**New receipt** form (or a **New meter reading** form for an energy bill)
+with the details filled in, the fields it filled lightly tinted, and a
+**Check these details** note saying what it couldn't find. The picture (or
+page 1 of the PDF) is attached as the entry's photo. Nothing is saved until
+you press Save.
+
+How it reads the document, all on the phone:
+
+1. **PDF with real text** (most emailed bills): the text is read directly with
+   pdf.js. This is exact.
+2. **Photo, screenshot or scanned PDF**: Tesseract OCR turns the picture into
+   text (about 1–4 seconds a page on a recent phone).
+3. `js/parse.js` picks out the supplier (from a list of UK energy companies
+   and shops, else the name at the top), the date, the total, and for energy
+   bills the charges for the period, the period dates, kWh used and the
+   opening and closing readings. A bill is dated on its closing-reading date
+   (or the day after the period ends), the same way bills are logged here.
+
+**Limits.** OCR can misread blurry photos, so always check the amounts. The
+first page of an EDF bill doesn't show the meter readings (they're on
+page 2), so a photo of page 1 fills everything **except the reading**, which
+you type in. A PDF bill includes all its pages, so the reading is found. iPhone
+HEIC photos can't be decoded by Chrome on Android; you get a friendly message.
+
+**Size and speed.** The scanner adds about 11 MB of files to the app folder:
+`vendor/tesseract/` (OCR engine ~2.9 MB in each of two builds, English model
+`eng.traineddata.gz` 2.9 MB, loader 0.2 MB) and `vendor/pdfjs/` (1.7 MB).
+None of it loads when the app starts. `js/scan.js` and the libraries are only
+loaded when you pick a file. A few seconds after the app opens, the service
+worker quietly downloads the files the phone needs (about 8 MB, only the
+build this phone uses) into a separate cache, `hearthbook-ocr-v1`, so
+scanning works offline. This is skipped when Android's *Data saver* is on;
+the files are then fetched the first time you scan. The scanner screen tells
+you whether it's ready offline. Because that cache has its own version, a
+normal app update doesn't download the 8 MB again.
+
+**Licences.** Tesseract.js and tesseract.js-core: Apache 2.0
+(`vendor/tesseract/LICENSE.md`, `LICENSE-tesseract-core.txt`); the English
+model is from the Tesseract project (Apache 2.0). pdf.js (Mozilla):
+Apache 2.0 (`vendor/pdfjs/LICENSE.txt`).
+
+**Accuracy test.** `node tests/scan_accuracy.mjs` runs the parser over text
+read from your real bills and receipts (kept in
+`/workspace/logbook-scan-samples/`, *outside* the app folder because they
+contain personal details) and compares it with what's in your logbook.
+
 ## 5. How to change something simple
 
 ### Example: add a new section "Insurance"
@@ -136,8 +214,8 @@ restoring twice doesn't make duplicates.
    },
    ```
 
-2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v2'` to
-   `'hearthbook-v3'` (do this after **any** change, so phones fetch
+2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v3'` to
+   `'hearthbook-v4'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
@@ -214,6 +292,11 @@ report, offline mode and dark mode, and finally restores the real 44-entry
 Gmail backup into another fresh profile. Use another port with
 `LOGBOOK_BASE=http://localhost:8766/ python tests/test_app.py`.
 
+It also taps, swipes and arrow-keys through the meter and spending chart
+cards, and scans a real EDF PDF bill and a receipt photo (checking the
+filled-in fields, the attached picture, a bad file, and scanning offline
+after the background download).
+
 `tests/test_upgrade.py` serves the original app and this one from the same
 address, saves data with the old one and checks the new one shows it all.
 
@@ -225,3 +308,6 @@ address, saves data with the old one and checks the new one shows it all.
   `js/backup.js`. (The backup *file name* now starts `hearthbook-backup-…`;
   that's only a name — restore looks at what's inside.)
 - Section `id`s in `js/sections.js`.
+- When you change any app file, bump `CACHE_NAME` in `sw.js` (now
+  `hearthbook-v3`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
+  in `vendor/` change.

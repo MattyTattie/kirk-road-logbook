@@ -503,3 +503,94 @@ body.no-nav .bottom-nav { display: none; }
 .banner.compact .small { font-size: 13px; }
 .banner.compact .btn { margin: 0; flex: none; }
 .stat-card .pill { white-space: nowrap; }
+
+/* ---------- Swipeable period detail card ---------- */
+.period-card {
+  margin-top: 12px; padding: 12px 12px 10px; border-radius: 16px;
+  background: var(--surface-2); border: 1px solid var(--line); outline: none;
+  animation: rise 0.28s var(--ease) both; overflow: hidden;
+}
+.period-card:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 45%, transparent); }
+.period-nav { display: flex; align-items: center; gap: 8px; }
+.period-heading { flex: 1; min-width: 0; text-align: center; display: flex; flex-direction: column; }
+.period-title { font-size: 15.5px; letter-spacing: -0.01em; }
+.period-sub { font-size: 12.5px; color: var(--text-2); }
+.period-arrow {
+  width: 44px; height: 44px; flex: none; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.period-arrow:disabled { opacity: 0.35; cursor: default; }
+.period-viewport { touch-action: pan-y; overflow: hidden; margin-top: 10px; cursor: grab; }
+.period-card.dragging .period-viewport { cursor: grabbing; }
+.period-slide { will-change: transform; user-select: none; -webkit-user-select: none; }
+.period-pos { display: flex; justify-content: center; gap: 5px; margin: 10px 0 0 !important; }
+.period-pos .dot { width: 6px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text-2) 35%, transparent); transition: width 0.2s, background 0.2s; }
+.period-pos .dot.on { width: 16px; background: var(--brand); }
+.meter-card .period-pos .dot.on { background: var(--amber); }
+.period-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.period-stat { background: var(--surface); border-radius: 12px; padding: 10px 12px; min-width: 0; }
+.period-stat .stat-label { font-size: 12px; }
+.period-stat .v { display: block; font-size: 19px; font-weight: 760; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.period-stat .v small { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.period-stat .muted-v { color: var(--text-2); font-size: 15px; font-weight: 600; }
+.period-change { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; font-size: 13px; color: var(--text-2); }
+.period-bill { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 10px; background: var(--surface); border-radius: 12px; }
+.period-bill img { width: 48px; height: 60px; object-fit: cover; object-position: top; border-radius: 8px; border: 1px solid var(--line); flex: none; background: #fff; }
+.period-bill .pb-text { flex: 1; min-width: 0; font-size: 13.5px; }
+.period-bill .pb-text strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; }
+.period-bill .btn { flex: none; }
+.period-bill.none { color: var(--text-2); }
+.period-items { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.period-items a { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; min-height: 44px; align-items: center; background: var(--surface); border-radius: 12px; color: var(--text); text-decoration: none; font-size: 14px; }
+.period-items a span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.period-items a span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
+.chart-hint { margin: 6px 0 0 !important; font-size: 12.5px; color: var(--text-2); text-align: center; }
+.chart-col:focus { outline: none; }
+.chart-col:focus-visible .chart-hit { fill: color-mix(in srgb, var(--brand) 14%, transparent); }
+.chart-col:focus-visible .chart-bar { stroke: var(--text); stroke-width: 2; }
+.btn.small { min-height: 44px; padding: 0 14px; font-size: 14px; border-radius: 12px; }
+.period-bill .pb-icon { width: 48px; height: 60px; border-radius: 8px; flex: none; display: inline-flex; align-items: center; justify-content: center; background: var(--amber-soft); color: var(--amber); }
+
+/* ---------- Scan receipt / bill ---------- */
+.scan-choice {
+  display: flex; align-items: center; gap: 14px; padding: 16px; margin-bottom: 6px; border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); text-decoration: none;
+  box-shadow: var(--shadow); min-height: 76px;
+}
+.scan-choice:active { transform: scale(0.985); }
+.scan-choice-icon { width: 48px; height: 48px; border-radius: 14px; flex: none; display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,.18); }
+.scan-choice-text { flex: 1; display: flex; flex-direction: column; }
+.scan-choice .choice-label { margin-top: 0; }
+.scan-choice .choice-blurb { color: inherit; opacity: 0.85; }
+.chooser-or { text-align: center; color: var(--text-2); font-size: 13px; margin: 14px 0 10px !important; }
+.scan-body { display: flex; flex-direction: column; gap: 14px; }
+.scan-hero { text-align: center; padding: 8px 8px 0; }
+.scan-hero h2 { font-size: 21px; letter-spacing: -0.02em; margin: 16px 0 6px; }
+.scan-hero p { color: var(--text-2); margin: 0; font-size: 15px; line-height: 1.45; }
+.scan-art { position: relative; width: 132px; height: 150px; margin: 0 auto; border-radius: 22px; background: var(--brand-soft); overflow: hidden; }
+.scan-doc { position: absolute; inset: 22px 30px; background: var(--surface); border-radius: 8px; box-shadow: var(--shadow); padding: 14px 10px; display: flex; flex-direction: column; gap: 8px; }
+.scan-doc i { display: block; height: 6px; border-radius: 3px; background: var(--line); }
+.scan-doc i:nth-child(1) { width: 60%; background: var(--brand); opacity: .6; }
+.scan-doc i:nth-child(3) { width: 80%; }
+.scan-doc i:nth-child(4) { width: 45%; margin-top: auto; background: var(--text-2); opacity: .5; }
+.scan-beam { position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--brand); box-shadow: 0 0 14px 4px color-mix(in srgb, var(--brand) 55%, transparent); animation: beam 2.2s ease-in-out infinite; }
+@keyframes beam { 0%, 100% { top: 8%; } 50% { top: 90%; } }
+@media (prefers-reduced-motion: reduce) { .scan-beam { animation: none; top: 50%; } }
+.scan-actions { display: flex; flex-direction: column; gap: 10px; }
+.scan-offline { display: flex; gap: 8px; align-items: flex-start; justify-content: center; font-size: 13px; color: var(--text-2); text-align: left; margin: 0 !important; }
+.scan-offline svg { flex: none; margin-top: 1px; }
+.scan-reading { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 6px; }
+.scan-reading h2 { margin: 6px 0 0; font-size: 21px; }
+.scan-preview { position: relative; width: 210px; height: 270px; border-radius: 16px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow-lift); border: 1px solid var(--line); }
+.scan-preview img { width: 100%; height: 100%; object-fit: contain; object-position: center top; display: block; background: #fff; }
+.scan-preview.is-pdf { display: flex; align-items: center; justify-content: center; }
+.scan-pdf-icon { display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--brand); font-size: 13px; padding: 0 16px; word-break: break-all; }
+.scan-pdf-icon span { color: var(--text-2); }
+.scan-bar { width: 100%; max-width: 300px; height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.scan-bar-fill { display: block; height: 100%; width: 0; background: var(--brand); border-radius: 4px; transition: width 0.3s var(--ease); }
+.scan-status { color: var(--text-2); margin: 0 !important; font-size: 14px; min-height: 1.4em; }
+.scan-hint { display: flex; gap: 12px; padding: 14px; border-radius: 16px; background: var(--brand-soft); color: var(--text); border: 1.5px solid color-mix(in srgb, var(--brand) 40%, transparent); margin-bottom: 4px; }
+.scan-hint > svg { color: var(--brand); flex: none; margin-top: 1px; }
+.scan-hint strong { font-size: 16px; }
+.scan-hint p { margin: 3px 0 0; font-size: 13.5px; color: var(--text-2); line-height: 1.4; }
+.field input.prefilled, .field textarea.prefilled { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }

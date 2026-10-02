@@ -18,8 +18,33 @@
 // new version, downloads fresh copies of all files, and deletes the old cache.
 
 // v2 = the Hearthbook redesign (new look, dashboard, charts, dark mode).
-// (The old 'kirk-road-logbook-v1' cache is deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v2';
+// v3 = scan receipts/bills, swipeable chart detail cards.
+// (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
+const CACHE_NAME = 'hearthbook-v3';
+
+// The scanner's libraries (OCR engine + English model + PDF reader) are big
+// (~8 MB to download), so they get their OWN cache with its own version.
+// That way an ordinary app update doesn't download them all again, and the
+// first install isn't slowed down: they're fetched quietly in the background
+// after the app has loaded (see "warm-ocr" below). Bump this only when the
+// files in vendor/ change.
+const OCR_CACHE = 'hearthbook-ocr-v1';
+const OCR_FILES = [
+  './vendor/tesseract/tesseract.min.js',
+  './vendor/tesseract/worker.min.js',
+  './vendor/tesseract/eng.traineddata.gz',
+  './vendor/pdfjs/pdf.min.mjs',
+  './vendor/pdfjs/pdf.worker.min.mjs',
+];
+// Tesseract comes in two builds; only download the one this phone will use.
+function ocrCoreFiles() {
+  let simd = false;
+  try {
+    simd = WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
+  } catch {}
+  const core = simd ? 'tesseract-core-simd-lstm' : 'tesseract-core-lstm';
+  return [`./vendor/tesseract/${core}.js`, `./vendor/tesseract/${core}.wasm`];
+}
 
 // Every file the app needs to run. If you add a new file, add it here too.
 const APP_SHELL = [
@@ -41,6 +66,9 @@ const APP_SHELL = [
   './js/charts.js',
   './js/stats.js',
   './js/theme.js',
+  './js/periodcard.js',
+  './js/scan.js',
+  './js/parse.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -61,9 +89,29 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))))
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME && n !== OCR_CACHE).map((n) => caches.delete(n))))
       .then(() => self.clients.claim()) // start controlling open pages straight away
   );
+});
+
+// 2b) The page sends 'warm-ocr' once it has loaded and gone quiet. We then
+//     download the scanner files (only the ones not already saved), so
+//     scanning works offline later. If the phone is offline right now it
+//     simply tries again next time the app opens.
+let warming = null;
+async function warmOcr() {
+  const cache = await caches.open(OCR_CACHE);
+  for (const url of [...OCR_FILES, ...ocrCoreFiles()]) {
+    if (await cache.match(url)) continue;
+    const response = await fetch(url);
+    if (response.ok) await cache.put(url, response);
+  }
+}
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'warm-ocr') {
+    warming = warming || warmOcr().catch(() => {}).finally(() => { warming = null; });
+    event.waitUntil(warming);
+  }
 });
 
 // 3) FETCH: runs for every file request the app makes.
@@ -82,7 +130,8 @@ self.addEventListener('fetch', (event) => {
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+            const name = request.url.includes('/vendor/') ? OCR_CACHE : CACHE_NAME;
+            caches.open(name).then((cache) => cache.put(request, copy));
           }
           return response;
         })

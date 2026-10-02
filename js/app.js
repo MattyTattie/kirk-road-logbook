@@ -12,6 +12,7 @@
 //   #/list/warranty   one section's list
 //   #/new             "what do you want to add?" chooser
 //   #/new/receipt     blank form for a new receipt
+//   #/scan            scan a receipt or bill (photo or PDF) and pre-fill a form
 //   #/view/<id>       one entry, with its photos
 //   #/edit/<id>       the form, filled in, for editing
 //   #/export          backup / restore / report / appearance
@@ -29,6 +30,7 @@ import { exportBackup, importBackup } from './backup.js';
 import { el, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst } from './utils.js';
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
+import { periodCard } from './periodcard.js';
 import { spendInYear, monthlySpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
 
@@ -81,6 +83,7 @@ async function render() {
   try {
     if (page === 'new' && arg) await renderForm(arg, null);
     else if (page === 'new') renderChooser();
+    else if (page === 'scan') renderScan();
     else if (page === 'edit') await renderForm(null, arg);
     else if (page === 'view') await renderDetail(arg);
     else if (page === 'export') await renderExport();
@@ -113,7 +116,7 @@ function setChrome(page, arg) {
   });
   const add = document.getElementById('add');
   if (add) add.href = page === 'list' && arg && arg !== 'all' ? `#/new/${arg}` : '#/new';
-  const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome';
+  const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome' || page === 'scan';
   document.body.classList.toggle('no-nav', bare);
 }
 
@@ -341,7 +344,8 @@ async function renderHome() {
   const chartCard = el('section', { class: 'card chart-card', id: 'spend-chart', 'aria-labelledby': 'chart-title' });
   function drawChart() {
     const source = state.chartMode === 'bills' ? everything.filter((e) => e.type === 'meter') : everything;
-    const months = monthlySpend(source, 12);
+    const months13 = monthlySpend(source, 13); // one extra so the first month has a "previous"
+    const months = months13.slice(1);
     // Default to the latest month that actually has some spending.
     let pick = state.chartPick;
     if (pick < 0) { pick = months.length - 1; while (pick > 0 && !months[pick].value) pick--; }
@@ -349,14 +353,23 @@ async function renderHome() {
     const seg = (mode, label) =>
       el('button', { type: 'button', class: 'seg-btn' + (state.chartMode === mode ? ' active' : ''), 'aria-pressed': String(state.chartMode === mode), 'data-mode': mode,
         onclick: () => { state.chartMode = mode; state.chartPick = -1; drawChart(); } }, label);
+    let chart;
+    const card = periodCard({
+      id: 'month-card',
+      label: 'month',
+      count: months.length,
+      index: pick,
+      render: (i) => monthDetail(months[i], months13[i], source),
+      onChange: (i) => { state.chartPick = i; chart.select(i); },
+    });
+    chart = barChart(months, { height: 150, selected: pick, format: (v) => money(v).replace(/\.\d\d$/, ''), onSelect: (i) => { state.chartPick = i; chart.select(i); card.show(i); } });
     chartCard.replaceChildren(
       el('div', { class: 'card-head' },
         el('div', {}, el('h2', { class: 'card-title', id: 'chart-title' }, 'Spending'), el('p', { class: 'card-sub' }, `Last 12 months · ${money(total)}`)),
         el('div', { class: 'seg', role: 'group', 'aria-label': 'Chart shows' }, seg('all', 'All'), seg('bills', 'Bills'))
       ),
-      el('p', { class: 'chart-readout', id: 'chart-readout', 'aria-live': 'polite' },
-        el('strong', {}, money(months[pick].value)), ` in ${months[pick].title}`),
-      barChart(months, { height: 150, selected: pick, format: (v) => money(v).replace(/\.\d\d$/, ''), onSelect: (i) => { state.chartPick = i; drawChart(); } })
+      chart,
+      card
     );
   }
   drawChart();
@@ -499,7 +512,9 @@ async function renderList(type) {
 // Summary card + usage chart at the top of the meter readings list.
 function meterInsights(everything) {
   const r = readings(everything);
-  const intervals = usageIntervals(everything).slice(-12);
+  const all = usageIntervals(everything);
+  const intervals = all.slice(-12);
+  const offset = all.length - intervals.length; // so the first shown period still has a "previous"
   const b = bills(everything);
   const latest = r[r.length - 1];
   if (!latest) return null;
@@ -507,24 +522,117 @@ function meterInsights(everything) {
   const avg = recent.length ? recent.reduce((s, i) => s + i.used, 0) / recent.reduce((s, i) => s + i.days, 0) : null;
   const year = new Date().getFullYear();
   const billsYear = totalCost(b.filter((x) => (x.date || '').startsWith(String(year))));
+  const unit = latest.meterUnit || '';
+
+  // Tap (or Enter/Space on) a bar to open the detail card; swipe or use the arrows to move.
+  const slot = el('div', { class: 'period-slot' });
+  const hint = el('p', { class: 'chart-hint', id: 'meter-hint' }, 'Tap a bar to see that period');
+  let card = null;
+  let chart = null;
+  const pick = (i) => {
+    chart.select(i);
+    if (card) return card.show(i);
+    card = periodCard({
+      id: 'period',
+      label: 'period',
+      count: intervals.length,
+      index: i,
+      render: (k) => periodDetail(all[offset + k], all[offset + k - 1], everything),
+      onChange: (k) => chart.select(k),
+    });
+    hint.remove();
+    slot.replaceChildren(card);
+  };
+  if (intervals.length > 1) {
+    chart = barChart(
+      intervals.map((i) => ({ label: new Date(i.to.date).toLocaleDateString('en-GB', { month: 'short' }).slice(0, 1), title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
+      { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
+    );
+  }
   return el(
     'section',
     { class: 'card meter-card', id: 'meter-insights', 'aria-label': 'Meter summary' },
     el('div', { class: 'meter-stats' },
-      el('div', {}, el('span', { class: 'stat-label' }, 'Latest'), el('span', { class: 'stat-value' }, Number(latest.meterValue).toLocaleString('en-GB')), el('span', { class: 'stat-title' }, `${latest.meterUnit || ''} · ${niceDate(latest.date)}`)),
-      el('div', {}, el('span', { class: 'stat-label' }, 'Daily use'), el('span', { class: 'stat-value' }, avg !== null ? avg.toFixed(1) : '–'), el('span', { class: 'stat-title' }, `${latest.meterUnit || ''}/day, recent`)),
+      el('div', {}, el('span', { class: 'stat-label' }, 'Latest'), el('span', { class: 'stat-value' }, Number(latest.meterValue).toLocaleString('en-GB')), el('span', { class: 'stat-title' }, `${unit} · ${niceDate(latest.date)}`)),
+      el('div', {}, el('span', { class: 'stat-label' }, 'Daily use'), el('span', { class: 'stat-value' }, avg !== null ? avg.toFixed(1) : '–'), el('span', { class: 'stat-title' }, `${unit}/day, recent`)),
       el('div', {}, el('span', { class: 'stat-label' }, `Bills ${year}`), el('span', { class: 'stat-value' }, money(billsYear).replace(/\.\d\d$/, '')), el('span', { class: 'stat-title' }, `${b.filter((x) => (x.date || '').startsWith(String(year))).length} bills`))
     ),
-    intervals.length > 1
-      ? [
-          el('p', { class: 'card-sub chart-caption' }, `Daily use between readings (${latest.meterUnit || ''}/day)`),
-          barChart(
-            intervals.map((i) => ({ label: new Date(i.to.date).toLocaleDateString('en-GB', { month: 'short' }).slice(0, 1), title: `to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
-            { height: 120, selected: intervals.length - 1, format: (v) => v.toFixed(1) }
-          ),
-        ]
-      : null
+    chart ? [el('p', { class: 'card-sub chart-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot] : null
   );
+}
+
+// The bill that belongs to a period between two readings: the closing reading
+// itself if it has a cost (that's how bills are usually logged), otherwise any
+// meter entry with a cost dated inside the period.
+function billFor(interval, everything) {
+  if (!interval) return null;
+  if (Number(interval.to.cost) > 0) return interval.to;
+  return everything.find((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date > interval.from.date && e.date <= interval.to.date) || null;
+}
+
+const fmtNum = (n, dp = 1) => Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+
+function changePill(delta, fmt, id) {
+  if (delta === null || !isFinite(delta)) return el('span', { class: 'pill', id }, '–');
+  if (Math.abs(delta) < 0.005) return el('span', { class: 'pill', id }, 'No change');
+  const up = delta > 0;
+  // More use / more spending shows in red, less in green.
+  return el('span', { class: 'pill ' + (up ? 'up' : 'down'), id }, `${up ? '▲' : '▼'} ${fmt(Math.abs(delta))}`);
+}
+
+function stat(label, value, small, id) {
+  return el('div', { class: 'period-stat', id }, el('span', { class: 'stat-label' }, label), el('span', { class: 'v' }, value, small ? el('small', {}, ` ${small}`) : null));
+}
+
+function periodDetail(interval, prev, everything) {
+  const unit = interval.unit || 'kWh';
+  const bill = billFor(interval, everything);
+  const prevBill = billFor(prev, everything);
+  const cost = bill ? Number(bill.cost) : null;
+  const perUnit = cost !== null && interval.used > 0 ? cost / interval.used : null;
+  const dUsed = prev ? interval.used - prev.used : null;
+  const dCost = cost !== null && prevBill ? cost - Number(prevBill.cost) : null;
+  const pct = prev && prev.used > 0 ? ` (${dUsed >= 0 ? '+' : '−'}${Math.round(Math.abs(dUsed / prev.used) * 100)}%)` : '';
+  const photo = bill && bill.photos && bill.photos[0] ? bill.photos[0].blob : null;
+  const body = el('div', { class: 'period-body' },
+    el('div', { class: 'period-stats' },
+      stat('Used', fmtNum(interval.used), unit, 'pd-used'),
+      stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
+      cost !== null ? stat('Bill', money(cost), null, 'pd-cost') : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
+      perUnit !== null ? stat('Cost per ' + unit, `${fmtNum(perUnit * 100, 1)}p`, null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
+    ),
+    el('div', { class: 'period-change', id: 'pd-change' },
+      el('span', {}, 'vs previous:'),
+      prev ? changePill(dUsed, (v) => `${fmtNum(v)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'First period'),
+      prev ? changePill(dCost, (v) => money(v), 'pd-change-cost') : null
+    ),
+    bill
+      ? el('div', { class: 'period-bill', id: 'pd-bill' },
+          photo ? el('img', { src: photoURL(photo), alt: 'Bill photo', id: 'pd-bill-thumb' }) : el('span', { class: 'pb-icon' }, icon('file', 20)),
+          el('div', { class: 'pb-text' }, el('strong', {}, bill.title || 'Bill'), `${niceDate(bill.date)}${perUnit !== null ? ' · incl. standing charge' : ''}`),
+          el('a', { class: 'btn small', href: `#/view/${bill.id}`, id: 'pd-open-bill' }, 'Open bill'))
+      : el('div', { class: 'period-bill none', id: 'pd-bill' }, el('div', { class: 'pb-text' }, 'No bill logged for this period.'),
+          el('a', { class: 'btn small ghost', href: '#/new/meter' }, 'Add bill'))
+  );
+  return { title: `${niceDate(interval.from.date)} – ${niceDate(interval.to.date)}`, sub: `${Math.round(interval.days)} days`, body };
+}
+
+function monthDetail(month, prevMonth, source) {
+  const items = source.filter((e) => (e.date || '').startsWith(month.key) && Number(e.cost) > 0).sort((a, b) => Number(b.cost) - Number(a.cost));
+  const delta = prevMonth ? month.value - prevMonth.value : null;
+  const body = el('div', { class: 'period-body' },
+    el('div', { class: 'period-stats' },
+      stat('Spent', money(month.value), null, 'md-total'),
+      stat('Entries', String(items.length), items.length === 1 ? 'with a cost' : 'with costs', 'md-count')
+    ),
+    el('div', { class: 'period-change', id: 'md-change' }, el('span', {}, `vs ${prevMonth ? prevMonth.title.split(' ')[0] : 'previous'}:`), changePill(delta, (v) => money(v), 'md-change-cost')),
+    items.length
+      ? el('ul', { class: 'period-items', id: 'md-items', 'aria-label': 'Biggest costs' },
+          items.slice(0, 3).map((e) => el('li', {}, el('a', { href: `#/view/${e.id}` }, el('span', {}, e.title || 'Untitled'), el('span', {}, money(e.cost))))),
+          items.length > 3 ? el('li', { class: 'chart-hint' }, `+ ${items.length - 3} more`) : null)
+      : el('p', { class: 'chart-hint' }, 'Nothing spent this month.')
+  );
+  return { title: month.title, sub: `${money(month.value)} spent`, body };
 }
 
 // One row in the list.
@@ -567,6 +675,13 @@ const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought
 function renderChooser() {
   app.replaceChildren(
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
+    el('a', { class: 'scan-choice', href: '#/scan', id: 'scan-choice' },
+      el('span', { class: 'scan-choice-icon' }, icon('scan', 26)),
+      el('span', { class: 'scan-choice-text' },
+        el('span', { class: 'choice-label' }, 'Scan receipt or bill'),
+        el('span', { class: 'choice-blurb' }, 'Photo or PDF — fills in the details for you')),
+      icon('chevron', 20)),
+    el('p', { class: 'chooser-or' }, 'or add by hand'),
     el(
       'div',
       { class: 'chooser' },
@@ -582,6 +697,131 @@ function renderChooser() {
 }
 
 // ---------------------------------------------------------------------
+// SCAN: read a receipt or bill and pre-fill the form
+// ---------------------------------------------------------------------
+// Everything happens on the phone: PDFs are read with PDF.js (their text
+// layer, or OCR if it's a scanned PDF) and photos with Tesseract OCR. Both
+// libraries live in vendor/ and are only loaded when you open this screen,
+// so the rest of the app stays quick. The service worker keeps a copy so
+// scanning works offline too.
+let pendingScan = null; // { type, fields, photos, parsed } handed to renderForm
+
+function renderScan() {
+  const cameraInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, id: 'scan-camera-input' });
+  const fileInput = el('input', { type: 'file', accept: 'image/*,application/pdf,.pdf', hidden: true, id: 'scan-file-input' });
+  const body = el('div', { class: 'scan-body', id: 'scan-body' });
+  const offline = el('p', { class: 'scan-offline', id: 'scan-offline' });
+  ocrReady().then((ready) => {
+    offline.replaceChildren(icon(ready ? 'check' : 'download', 16), ready ? 'Works offline — nothing leaves this phone' : 'Nothing leaves this phone. The reader downloads once (about 8 MB) for offline use.');
+  });
+
+  function picker(error) {
+    body.replaceChildren(
+      ...[error ? el('div', { class: 'banner warn', id: 'scan-error', role: 'alert' }, icon('alert', 20), el('div', {}, el('strong', {}, 'Couldn’t read that'), el('p', {}, error))) : null,
+      el('div', { class: 'scan-hero' },
+        el('div', { class: 'scan-art', 'aria-hidden': 'true' }, el('span', { class: 'scan-doc' }, el('i'), el('i'), el('i'), el('i')), el('span', { class: 'scan-beam' })),
+        el('h2', {}, 'Snap it, we’ll fill it in'),
+        el('p', {}, 'Take a photo of a receipt, or choose a bill PDF or screenshot. You’ll check everything before it’s saved.')),
+      el('div', { class: 'scan-actions' },
+        el('button', { type: 'button', class: 'btn btn-lg', id: 'scan-camera', onclick: () => cameraInput.click() }, icon('camera', 20), 'Take photo'),
+        el('button', { type: 'button', class: 'btn btn-lg secondary', id: 'scan-pick', onclick: () => fileInput.click() }, icon('file', 20), 'Choose photo or PDF')),
+      offline].filter(Boolean)
+    );
+  }
+
+  async function go(file) {
+    if (!file) return;
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    const bar = el('span', { class: 'scan-bar-fill' });
+    const status = el('p', { class: 'scan-status', id: 'scan-status', 'aria-live': 'polite' }, 'Getting ready…');
+    const preview = el('div', { class: 'scan-preview' + (isPdf ? ' is-pdf' : '') }, el('span', { class: 'scan-beam' }));
+    if (!isPdf) preview.prepend(el('img', { src: photoURL(file), alt: '' }));
+    else preview.prepend(el('span', { class: 'scan-pdf-icon' }, icon('file', 40), el('span', {}, file.name || 'PDF')));
+    body.replaceChildren(
+      el('div', { class: 'scan-reading', id: 'scan-reading' },
+        preview,
+        el('h2', {}, 'Reading…'),
+        el('div', { class: 'scan-bar', role: 'progressbar', 'aria-label': 'Reading progress', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0', id: 'scan-progress' }, bar),
+        status,
+        el('button', { type: 'button', class: 'btn ghost', onclick: () => { cancelled = true; picker(); } }, 'Cancel'))
+    );
+    let cancelled = false;
+    const progress = (f, msg) => {
+      const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);
+      bar.style.width = pct + '%';
+      bar.parentElement.setAttribute('aria-valuenow', String(pct));
+      if (msg) status.textContent = msg;
+    };
+    try {
+      const [scan, parse] = await Promise.all([import('./scan.js'), import('./parse.js')]);
+      const read = await scan.readFile(file, progress);
+      if (cancelled) return;
+      progress(1, 'Picking out the details…');
+      const parsed = parse.parseDocument(read.text);
+      // Keep a copy of the picture with the entry, like a normal photo.
+      const source = isPdf ? await canvasToBlob(read.canvas) : file;
+      const photos = [{ id: db.newId(), blob: await compressImage(source) }];
+      scan.releaseOcr(); // free the OCR engine's memory
+      if (cancelled) return;
+      const type = parsed.kind === 'bill' ? 'meter' : 'receipt';
+      pendingScan = { type, parsed, photos, source: read.source, fields: scanFields(parsed, type) };
+      location.hash = `#/new/${type}`;
+    } catch (err) {
+      console.warn('scan failed', err);
+      if (cancelled) return;
+      const heic = /heic|heif/i.test(file.type + file.name);
+      picker(heic ? 'iPhone HEIC photos can’t be read here. Take the photo with “Take photo”, or save it as JPEG first.' : 'That file couldn’t be opened. Try a clearer photo, or a PDF.');
+    }
+  }
+  cameraInput.addEventListener('change', () => { go(cameraInput.files[0]); cameraInput.value = ''; });
+  fileInput.addEventListener('change', () => { go(fileInput.files[0]); fileInput.value = ''; });
+
+  picker();
+  app.replaceChildren(
+    el('div', { class: 'scan', id: 'scan' },
+      screenHead('Scan receipt or bill', { back: { href: '#/new', label: 'Add' }, sub: 'Photo, screenshot or PDF' }),
+      body, cameraInput, fileInput)
+  );
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('No image'))), 'image/jpeg', 0.9));
+}
+
+// Turn what the parser found into form fields.
+function scanFields(p, type) {
+  const f = { title: p.title || '', date: p.date || todayISO(), cost: p.total != null ? Number(p.total).toFixed(2) : null, supplier: p.supplier || '', notes: p.notes || '' };
+  if (type === 'meter') {
+    f.meterValue = p.meter && p.meter.closing != null ? p.meter.closing : null;
+    f.meterUnit = (p.meter && p.meter.unit) || 'kWh';
+  }
+  return f;
+}
+
+// The "check these details" banner at the top of a scanned form.
+function scanHint(scan) {
+  const p = scan.parsed;
+  const want = [['supplier', 'supplier'], ['date', 'date'], ['total', 'total']];
+  if (scan.type === 'meter') want.push(['reading', 'meter reading']);
+  const missing = want.filter(([k]) => !p.found[k]).map(([, label]) => label);
+  return el('div', { class: 'scan-hint', id: 'scan-hint', role: 'status' },
+    icon('sparkle', 20),
+    el('div', {},
+      el('strong', {}, 'Check these details'),
+      el('p', {}, `Filled in from your ${scan.source === 'pdf-text' ? 'PDF' : 'scan'} — tinted fields were read automatically. ` +
+        (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.'))));
+}
+const listText = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} or ${a[a.length - 1]}`);
+
+// Has the service worker already stored the OCR files (so scanning works offline)?
+async function ocrReady() {
+  try {
+    if (!('caches' in window)) return false;
+    return Boolean(await caches.match('vendor/tesseract/eng.traineddata.gz'));
+  } catch { return false; }
+}
+
+// ---------------------------------------------------------------------
 // FORM: add or edit an entry
 // ---------------------------------------------------------------------
 async function renderForm(type, id) {
@@ -593,6 +833,10 @@ async function renderForm(type, id) {
   } else {
     entry = { id: null, type, title: '', date: todayISO(), cost: null, supplier: '', notes: '', dueDate: null, meterValue: null, meterUnit: '', photos: [] };
   }
+  // Coming from the scanner? Start from what it read (used once).
+  const scan = !id && pendingScan && pendingScan.type === type ? pendingScan : null;
+  pendingScan = null;
+  if (scan) Object.assign(entry, scan.fields, { photos: scan.photos });
   const section = getSection(entry.type);
   // A working copy of the photo list; only saved when you press Save.
   let photos = [...(entry.photos || [])];
@@ -608,6 +852,7 @@ async function renderForm(type, id) {
       el('a', { class: 'back', href: id ? `#/view/${id}` : '#/new', onclick: (ev) => { ev.preventDefault(); history.back(); } }, icon('back', 20), 'Back'),
       el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title' }, `${id ? 'Edit' : 'New'} ${section.single.toLowerCase()}`))
     ),
+    scan ? scanHint(scan) : null,
     field('Title *', el('input', { name: 'title', required: true, value: entry.title, maxlength: '200', autocomplete: 'off' })),
     field('Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() })),
     field(
@@ -742,8 +987,15 @@ async function renderForm(type, id) {
     location.replace(`#/view/${saved.id}`);
   });
 
+  if (scan) {
+    // Tint the fields the scanner filled in, so it's clear what to check.
+    for (const name of Object.keys(scan.fields)) {
+      const input = form.elements[name];
+      if (input && String(scan.fields[name] ?? '') !== '') input.classList.add('prefilled');
+    }
+  }
   app.replaceChildren(form);
-  if (!id) form.elements.title.focus();
+  if (!id && !scan) form.elements.title.focus();
 }
 
 // "£1,200.50" -> 1200.5 ; "" -> null ; "abc" -> undefined (invalid)
@@ -954,4 +1206,11 @@ db.requestPersistentStorage();
 // "serviceWorker in navigator" checks the browser supports it.
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Service worker failed', err));
+  // A little while after start-up, ask the service worker to fetch the
+  // scanner files in the background (skipped on "data saver").
+  const warm = () => {
+    if (navigator.connection && navigator.connection.saveData) return;
+    navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-ocr' }));
+  };
+  addEventListener('load', () => setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(warm, { timeout: 10000 }) : warm()), 4000));
 }

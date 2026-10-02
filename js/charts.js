@@ -11,7 +11,7 @@
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
-export function barChart(bars, { height = 150, format = (v) => String(v), onSelect, selected = -1, unitLabel = '' } = {}) {
+export function barChart(bars, { height = 150, format = (v) => String(v), onSelect, selected = -1, unitLabel = '', describe } = {}) {
   const W = 340;
   const H = height;
   const top = 18, bottom = 22;
@@ -48,7 +48,9 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
     const y = top + plotH - h;
     const cls = 'chart-bar' + (i === selected ? ' is-selected' : '') + (b.muted ? ' is-muted' : '');
     // a wide invisible hit area makes small bars easy to tap
-    svg += `<g class="chart-col" data-i="${i}"><rect x="${slot * i}" y="0" width="${slot}" height="${H}" fill="transparent"/>`;
+    // Each column is a keyboard-focusable "button" when the chart is interactive.
+    const a11y = onSelect ? ` tabindex="${i === selected || (selected < 0 && i === bars.length - 1) ? 0 : -1}" role="button" aria-pressed="${i === selected}" aria-label="${esc(describe ? describe(b, v) : `${b.title || b.label}: ${format(v)}`)}"` : '';
+    svg += `<g class="chart-col" data-i="${i}"${a11y}><rect x="${slot * i}" y="0" width="${slot}" height="${H}" fill="transparent" class="chart-hit"/>`;
     if (h > 0) svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="${Math.min(5, barW / 2)}" class="${cls}"/>`;
     if (over) {
       const zy = top + plotH * 0.35;
@@ -63,8 +65,26 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
   box.className = 'chart';
   box.innerHTML = svg; // safe: every dynamic piece above goes through esc()
   if (onSelect) {
-    box.querySelectorAll('.chart-col').forEach((g) => g.addEventListener('click', () => onSelect(Number(g.dataset.i))));
+    const cols = [...box.querySelectorAll('.chart-col')];
+    cols.forEach((g) => {
+      const i = Number(g.dataset.i);
+      g.addEventListener('click', () => onSelect(i));
+      // Enter/Space picks the bar; arrow keys move along the chart (roving tabindex).
+      g.addEventListener('keydown', (ev) => {
+        let to = null;
+        if (ev.key === 'Enter' || ev.key === ' ') to = i;
+        else if (ev.key === 'ArrowRight' || ev.key === 'ArrowUp') to = Math.min(cols.length - 1, i + 1);
+        else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowDown') to = Math.max(0, i - 1);
+        else if (ev.key === 'Home') to = 0;
+        else if (ev.key === 'End') to = cols.length - 1;
+        if (to === null) return;
+        ev.preventDefault();
+        onSelect(to);
+        cols[to].focus();
+      });
+    });
   }
+  box.select = (i) => selectBar(box, i);
   if (capped) {
     const note = document.createElement('p');
     note.className = 'chart-note';
@@ -72,6 +92,19 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
     box.append(note);
   }
   return box;
+}
+
+// Highlight bar i without redrawing the chart (keeps keyboard focus).
+export function selectBar(box, i) {
+  box.querySelectorAll('.chart-col').forEach((g) => {
+    const on = Number(g.dataset.i) === i;
+    g.querySelector('.chart-bar')?.classList.toggle('is-selected', on);
+    g.querySelector('.chart-label')?.classList.toggle('is-selected', on);
+    if (g.hasAttribute('role')) {
+      g.setAttribute('aria-pressed', String(on));
+      g.setAttribute('tabindex', on ? '0' : '-1');
+    }
+  });
 }
 
 // A small trend line (used for "last bills").
