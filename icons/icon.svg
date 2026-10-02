@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F47B4A"/>
+      <stop offset="1" stop-color="#B93A0C"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <g transform="translate(256 256) scale(1.0) translate(-256 -262)">
+    <!-- house outline -->
+    <path d="M128 250 L256 140 L384 250 V372 Q384 400 356 400 H156 Q128 400 128 372 Z"
+          fill="none" stroke="#fff" stroke-width="34" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- the hearth flame -->
+    <path transform="translate(0 -12)" d="M256 256 C 282 286 304 306 304 340 A 48 48 0 0 1 208 340 C 208 318 220 302 232 290 C 234 306 242 316 252 320 C 246 296 246 276 256 256 Z"
+          fill="#FFF1E6"/>
+  </g>
+</svg>

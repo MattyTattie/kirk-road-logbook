@@ -17,7 +17,9 @@
 // CACHE_NAME (e.g. v1 -> v2). Chrome sees sw.js has changed, installs the
 // new version, downloads fresh copies of all files, and deletes the old cache.
 
-const CACHE_NAME = 'kirk-road-logbook-v1';
+// v2 = the Hearthbook redesign (new look, dashboard, charts, dark mode).
+// (The old 'kirk-road-logbook-v1' cache is deleted automatically on activate.)
+const CACHE_NAME = 'hearthbook-v2';
 
 // Every file the app needs to run. If you add a new file, add it here too.
 const APP_SHELL = [
@@ -34,6 +36,13 @@ const APP_SHELL = [
   './js/backup.js',
   './js/utils.js',
   './js/report.js',
+  './js/config.js',
+  './js/icons.js',
+  './js/charts.js',
+  './js/stats.js',
+  './js/theme.js',
+  './fonts/inter-latin.woff',
+  './icons/icon.svg',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',

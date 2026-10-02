@@ -11,17 +11,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Kirk Road Logbook – Report</title>
+    <title>Hearthbook – Report</title>
     <link rel="manifest" href="manifest.json" />
-    <meta name="theme-color" content="#1a3a6b" />
-    <link rel="icon" href="icons/icon-192.png" />
+    <meta name="theme-color" content="#f6f4ef" />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+    <link rel="preload" href="fonts/inter-latin.woff" as="font" type="font/woff" crossorigin />
     <link rel="stylesheet" href="report.css" />
   </head>
   <body>
     <!-- The toolbar has class "no-print" so it doesn't appear on paper -->
     <div class="toolbar no-print">
       <a href="index.html#/export" class="tbtn">← Back</a>
-      <button id="print-btn" class="tbtn primary" type="button">🖨️ Print / Save as PDF</button>
+      <button id="print-btn" class="tbtn primary" type="button">Print / Save as PDF</button>
     </div>
     <div id="report"><p>Loading…</p></div>
     <script type="module" src="js/report.js"></script>

@@ -4,19 +4,22 @@
 // It loads every entry, groups them by section, adds up the costs, and
 // draws a simple document. Photos are shown as small thumbnails.
 
-import { SECTIONS, getSection, ADDRESS, SOON_DAYS } from './sections.js';
+import { SECTIONS, getSection, SOON_DAYS } from './sections.js';
+import { APP_NAME, ADDRESS } from './config.js';
 import { getAllEntries } from './db.js';
 import { el, money, totalCost, niceDate, daysUntil, dueText, newestFirst } from './utils.js';
 
 async function build() {
   const entries = (await getAllEntries()).sort(newestFirst);
   const root = document.getElementById('report');
+  document.title = `${APP_NAME} – Report`;
 
   const parts = [
     el(
       'header',
       { class: 'report-head' },
-      el('h1', {}, 'Property Logbook'),
+      el('div', { class: 'brandline' }, el('img', { src: 'icons/icon.svg', alt: '', width: '28', height: '28' }), el('span', {}, APP_NAME)),
+      el('h1', {}, 'Home logbook report'),
       el('div', { class: 'address' }, ADDRESS),
       el('div', { class: 'meta' }, `Report produced ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} · ${entries.length} entries`)
     ),

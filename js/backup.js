@@ -10,7 +10,11 @@
 
 import { getAllEntries, saveManyEntries, setMeta } from './db.js';
 import { blobToDataURL, dataURLToBlob } from './photos.js';
+import { APP_NAME, APP_SLUG } from './config.js';
 
+// NEVER change FORMAT: it's how a restore recognises a backup file, and it
+// must keep matching every backup you've already made (the app used to be
+// called "Kirk Road Logbook"; the name inside the file stays the same).
 const FORMAT = 'kirk-road-logbook-backup';
 const FORMAT_VERSION = 1;
 
@@ -40,7 +44,7 @@ export async function exportBackup() {
   const json = JSON.stringify(backup);
   const blob = new Blob([json], { type: 'application/json' });
   const today = new Date().toISOString().slice(0, 10);
-  const filename = `kirk-road-logbook-backup-${today}.json`;
+  const filename = `${APP_SLUG}-backup-${today}.json`;
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -69,7 +73,7 @@ export async function importBackup(file) {
     throw new Error('That file is not a valid backup (it is not JSON).');
   }
   if (!data || data.format !== FORMAT || !Array.isArray(data.entries)) {
-    throw new Error('That file does not look like a Kirk Road Logbook backup.');
+    throw new Error(`That file does not look like a ${APP_NAME} backup.`);
   }
 
   // Check and convert everything FIRST, then save in one go. That way a

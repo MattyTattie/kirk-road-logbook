@@ -1,4 +1,8 @@
-# Kirk Road Logbook — how it works
+# Hearthbook — how it works
+
+*(Formerly "Kirk Road Logbook". Only the look and name changed: your data,
+the database and the backup file format are exactly the same, so old
+backups restore as before.)*
 
 A beginner's guide to this little app: what each file does, how your data
 moves around, and how to change things.
@@ -8,7 +12,7 @@ moves around, and how to change things.
 > clear Chrome's *site data* / *storage* for this app (Settings → Apps →
 > Chrome → Storage → Clear, or Chrome → Settings → Site settings → All sites →
 > Clear & reset), uninstall Chrome, or lose the phone, **the logbook is gone**.
-> Tap **💾 Backup → Download backup file** regularly (the app nags you after
+> Tap **Backup** (bottom bar) **→ Download backup file** regularly (the app nags you after
 > 30 days) and copy that file somewhere else — email it to yourself or put it
 > on Google Drive. "Clear cache" alone is usually safe; "Clear storage/data" is not.
 
@@ -29,10 +33,16 @@ the browser runs. Change a file, reload, and you see the change.
 
 | File | What it does |
 |------|--------------|
-| `index.html` | The single page of the app. Nearly empty: a header and a `<main>` box that the JavaScript fills in. |
-| `styles.css` | All the looks: colours, sizes, big tap-friendly buttons. Colours are variables at the top (`--blue` …). |
-| `js/sections.js` | **The list of sections** (Jobs, Receipts, Warranties, Meter readings) plus settings like "60 days counts as soon" and the address. Start here when you want to change things. |
-| `js/app.js` | The main program. Draws each screen (list, add/edit form, detail, backup) and reacts to taps. |
+| `index.html` | The single page of the app. Nearly empty: a slim top bar, a `<main>` box that the JavaScript fills in, and the bottom navigation bar. |
+| `styles.css` | All the looks: colours (light **and** dark), type, cards, tap-friendly buttons, animations. Colours are variables at the top (`--brand`, `--bg` …). |
+| `js/config.js` | **The app's name and your home's label** (`APP_NAME`, `ADDRESS` = `'My home'` by default). Rename the app here. |
+| `js/sections.js` | **The list of sections** (Jobs, Receipts, Warranties, Meter readings) with their icon and colour, plus settings like "60 days counts as soon". Start here when you want to change things. |
+| `js/app.js` | The main program. Draws each screen (welcome, dashboard, list, add/edit form, detail, backup & settings) and reacts to taps. |
+| `js/stats.js` | The sums behind the dashboard: spend this year, monthly spend, next due item, meter usage per day, energy bills. |
+| `js/charts.js` | Tiny SVG bar charts and sparklines, drawn by our own code (no chart library, nothing downloaded, works offline). |
+| `js/icons.js` | The line icons, as plain SVG path strings. |
+| `js/theme.js` | Light / Dark / Auto appearance (remembered in `localStorage`). |
+| `fonts/inter-latin.woff` | The Inter typeface (Latin letters only, ~38 KB), stored with the app so it works offline. Licence: SIL Open Font License, see `fonts/LICENSE-Inter.txt`. |
 | `js/db.js` | Saves and loads entries in **IndexedDB**, the phone's built-in browser database. |
 | `js/photos.js` | Shrinks photos to max 1600 px JPEG before saving, and converts photos to/from text for backups. |
 | `js/backup.js` | Creates the backup `.json` file and restores from one. |
@@ -40,8 +50,8 @@ the browser runs. Change a file, reload, and you see the change.
 | `report.html`, `report.css`, `js/report.js` | The printable report. The Print button calls `window.print()`; choose **Save as PDF** as the printer. |
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
-| `icons/` | App icons (192 px, 512 px, and a "maskable" one Android can crop into a circle). Made by `make_icons.py`. |
-| `tests/test_app.py` | The automatic test that drives the app in a headless Chrome (see section 7). |
+| `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `screenshots.py` and `make_comparison.py` (phone screenshots). See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -92,7 +102,10 @@ An entry looks like this (photos are image Blobs):
 ```
 
 **Screens** are chosen by the part of the address after `#`
-(`#/list/all`, `#/new/receipt`, `#/edit/<id>`, `#/export`…). When it
+(`#/home`, `#/list/all`, `#/new/receipt`, `#/edit/<id>`, `#/export`…).
+The very first time the app opens with an empty logbook it shows a
+**welcome screen**; once dismissed it's remembered (in `localStorage`, not
+in your logbook data). If the phone already has entries it's skipped. When it
 changes, `render()` in `app.js` draws the matching screen. That's also why
 the phone's Back button works.
 
@@ -113,7 +126,9 @@ restoring twice doesn't make duplicates.
      id: 'insurance',          // stored with each entry – don't change it later
      label: 'Insurance',       // tab name
      single: 'Insurance policy',
-     icon: '📑',
+     icon: '📑',               // emoji used in the printed report
+     glyph: 'file',            // line icon in the app (any name from js/icons.js)
+     tone: 'slate',            // colour: indigo, teal, violet, amber, slate or brand
      showDue: true,            // show a date field…
      dueLabel: 'Renewal date', // …called this
      dueWord: 'renews',        // "renews in 20 days"
@@ -121,20 +136,28 @@ restoring twice doesn't make duplicates.
    },
    ```
 
-2. Open `sw.js` and change `CACHE_NAME` from `'kirk-road-logbook-v1'` to
-   `'kirk-road-logbook-v2'` (do this after **any** change, so phones fetch
+2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v2'` to
+   `'hearthbook-v3'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
-   new **📑 Insurance** tab, it appears in the "What do you want to add?"
+   new **Insurance** tab, it appears in the "What do you want to add?"
    chooser, in the report, and renewals within 60 days are highlighted —
    all from that one object.
 
 ### Other easy tweaks
 
-- **Main colour:** `--blue` at the top of `styles.css` (and `theme_color`
-  in `manifest.json`).
-- **"Soon" window (60 days) / backup reminder (30 days) / address:**
+- **App name:** `APP_NAME` / `APP_SHORT_NAME` in `js/config.js`, plus
+  `name` / `short_name` in `manifest.json` and the `<title>` in
+  `index.html` and `report.html` (those three can't read JavaScript).
+- **Home label** on the dashboard and report: `ADDRESS` in `js/config.js`
+  (default `'My home'`). Avoid putting your full postal address there if
+  you publish the code.
+- **Main colour:** `--brand` at the top of `styles.css` (light and dark
+  sets), and the colours at the top of `make_icons.py` for the icon.
+- **App icon:** edit the SVG in `make_icons.py`, then run
+  `python3 make_icons.py` (uses Playwright's Chromium to turn it into PNGs).
+- **"Soon" window (60 days) / backup reminder (30 days):**
   constants in `js/sections.js`.
 - **Photo size/quality:** `MAX_SIZE` and `QUALITY` in `js/photos.js`.
 - **Meter units offered:** the `['kWh', 'm³', …]` list in `js/app.js`.
@@ -167,7 +190,7 @@ restore it in the new copy.
 ## 7. Testing on a PC
 
 ```bash
-cd logbook-app
+cd logbook-redesign
 python -m http.server 8765        # then open http://localhost:8765 in Chrome
 ```
 
@@ -183,6 +206,22 @@ The automatic test (needs `pip install playwright` and
 python tests/test_app.py
 ```
 
-It adds one of each entry type with photos, searches, edits, deletes,
-checks warranty highlighting, exports a backup and restores it into a fresh
-browser profile, checks the report and offline mode.
+It goes through the welcome screen, adds one of each entry type with
+photos, checks the dashboard cards and chart, searches, edits, deletes,
+checks warranty highlighting, exports a backup (checking the format string
+is unchanged) and restores it into a fresh browser profile, checks the
+report, offline mode and dark mode, and finally restores the real 44-entry
+Gmail backup into another fresh profile. Use another port with
+`LOGBOOK_BASE=http://localhost:8766/ python tests/test_app.py`.
+
+`tests/test_upgrade.py` serves the original app and this one from the same
+address, saves data with the old one and checks the new one shows it all.
+
+## 8. What must never change (or old data/backups break)
+
+- `DB_NAME = 'kirk-road-logbook'`, `DB_VERSION` and the `entries` / `meta`
+  stores in `js/db.js`.
+- `FORMAT = 'kirk-road-logbook-backup'` and `FORMAT_VERSION` in
+  `js/backup.js`. (The backup *file name* now starts `hearthbook-backup-…`;
+  that's only a name — restore looks at what's inside.)
+- Section `id`s in `js/sections.js`.

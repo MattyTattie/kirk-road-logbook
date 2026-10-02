@@ -11,7 +11,9 @@
 //               once you have saved entries, or they'll lose their section!)
 //   label     – the name shown on screen (plural, for tabs and headings)
 //   single    – the name of one entry ("Add Job", "Edit Receipt"...)
-//   icon      – an emoji, so there's no image file to manage
+//   icon      – an emoji, used in the printed report and as a fallback
+//   glyph     – the name of the line icon drawn in the app (see icons.js)
+//   tone      – colour theme for the section (matches --tone-<name> in styles.css)
 //   showDue   – true if the form should show a date field for expiry / next due
 //   dueLabel  – the label for that date field
 //   dueWord   – the word used in "expires in 12 days" / "due in 12 days"
@@ -20,6 +22,8 @@
 export const SECTIONS = [
   {
     id: 'job',
+    glyph: 'wrench',
+    tone: 'indigo',
     label: 'Jobs',
     single: 'Job',
     icon: '🔧',
@@ -30,6 +34,8 @@ export const SECTIONS = [
   },
   {
     id: 'receipt',
+    glyph: 'receipt',
+    tone: 'teal',
     label: 'Receipts',
     single: 'Receipt',
     icon: '🧾',
@@ -38,6 +44,8 @@ export const SECTIONS = [
   },
   {
     id: 'warranty',
+    glyph: 'shield',
+    tone: 'violet',
     label: 'Warranties',
     single: 'Warranty',
     icon: '🛡️',
@@ -48,6 +56,8 @@ export const SECTIONS = [
   },
   {
     id: 'meter',
+    glyph: 'bolt',
+    tone: 'amber',
     label: 'Meter readings',
     single: 'Meter reading',
     icon: '⚡',
@@ -62,8 +72,10 @@ export const SOON_DAYS = 60;
 // How many days without a backup before we show the reminder.
 export const BACKUP_REMINDER_DAYS = 30;
 
-// The address printed at the top of the report.
-export const ADDRESS = 'Kirk Road';
+// The home's label (shown on the dashboard and report) now lives in
+// config.js together with the app name. Re-exported here so older code
+// that imported ADDRESS from sections.js keeps working.
+export { ADDRESS } from './config.js';
 
 // A small helper: find a section by its id. Returns a fallback if the id
 // is unknown (e.g. an old backup had a section you have since removed),
@@ -75,6 +87,8 @@ export function getSection(id) {
       label: id,
       single: id,
       icon: '📄',
+      glyph: 'file',
+      tone: 'slate',
       showDue: true,
       dueLabel: 'Date',
       dueWord: 'due',
