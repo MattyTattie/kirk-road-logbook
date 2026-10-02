@@ -27,7 +27,7 @@ import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
 import { exportBackup, importBackup } from './backup.js';
-import { el, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst } from './utils.js';
+import { el, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
@@ -792,7 +792,7 @@ function monthDetail(month, prevMonth, source, yearOnYear = false) {
     el('div', { class: 'period-change', id: 'md-change' }, el('span', {}, `vs ${prevMonth ? (yearOnYear ? prevMonth.title : prevMonth.title.split(' ')[0]) : 'previous'}:`), changePill(delta, (v) => money(v), 'md-change-cost')),
     items.length
       ? el('ul', { class: 'period-items', id: 'md-items', 'aria-label': 'Biggest costs' },
-          items.slice(0, 3).map((e) => el('li', {}, el('a', { href: `#/view/${e.id}` }, el('span', {}, e.title || 'Untitled'), el('span', {}, money(e.cost))))),
+          items.slice(0, 3).map((e) => el('li', {}, el('a', { href: `#/view/${e.id}` }, el('span', {}, e.title || 'Untitled'), el('span', {}, money(e.cost, e.currency))))),
           items.length > 3 ? el('li', { class: 'chart-hint' }, `+ ${items.length - 3} more`) : null)
       : el('p', { class: 'chart-hint' }, 'Nothing spent this month.')
   );
@@ -831,7 +831,7 @@ function entryCard(e) {
         : null,
       e.dueDate ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
     ),
-    e.cost ? el('div', { class: 'entry-cost' }, money(e.cost), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : null) : null
+    e.cost ? el('div', { class: 'entry-cost' }, money(e.cost, e.currency), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : null) : null
   );
 }
 
@@ -958,6 +958,7 @@ function canvasToBlob(canvas) {
 // Turn what the parser found into form fields.
 function scanFields(p, type) {
   const f = { title: p.title || '', date: p.date || todayISO(), cost: p.total != null ? Number(p.total).toFixed(2) : null, supplier: p.supplier || '', notes: p.notes || '' };
+  if (p.currency && p.currency !== 'GBP') f.currency = p.currency; // e.g. a holiday receipt in euros
   if (type === 'meter') {
     f.meterValue = p.meter && p.meter.closing != null ? p.meter.closing : null;
     f.meterUnit = (p.meter && p.meter.unit) || 'kWh';
@@ -977,7 +978,8 @@ function scanHint(scan) {
     el('div', {},
       el('strong', {}, 'Check these details'),
       el('p', {}, `Filled in from your ${scan.source === 'pdf-text' ? 'PDF' : 'scan'} — tinted fields were read automatically. ` +
-        (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.'))));
+        (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.')),
+      scan.fields.currency ? el('p', { id: 'scan-currency' }, `The amount is in ${scan.fields.currency === 'EUR' ? 'euros' : scan.fields.currency}. Totals count it as it is, so for exact £ totals type the £ amount from your bank statement and pick £.`) : null));
 }
 const listText = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} or ${a[a.length - 1]}`);
 
@@ -1041,12 +1043,15 @@ async function renderForm(type, id) {
     field(ins ? 'Start date *' : 'Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() })),
     ins
       ? null
-      : field(
-          'Cost £ (optional)',
-          // type="text" + inputmode="decimal" shows the number keypad but still
-          // lets us accept things like "£12.50" or "1,200".
-          el('input', { name: 'cost', inputmode: 'decimal', value: entry.cost ?? '', placeholder: '0.00', autocomplete: 'off' })
-        ),
+      : el('div', { class: 'row cost-row' },
+          field(
+            'Cost (optional)',
+            // type="text" + inputmode="decimal" shows the number keypad but still
+            // lets us accept things like "£12.50" or "1,200".
+            el('input', { name: 'cost', inputmode: 'decimal', value: entry.cost ?? '', placeholder: '0.00', autocomplete: 'off' })
+          ),
+          field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
+            CURRENCIES.map(([code, sym]) => el('option', { value: code, selected: (entry.currency || 'GBP') === code }, `${sym} ${code}`))))),
     ins ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' }))
   );
 
@@ -1200,11 +1205,13 @@ async function renderForm(type, id) {
       meterValue: section.showMeter ? meterValue : entry.meterValue ?? null,
       meterUnit: section.showMeter ? v('meterUnit') : entry.meterUnit || '',
       ...(tariff ? { tariff } : {}),
+      currency: ins ? undefined : v('currency') || entry.currency,
       photos,
       createdAt: entry.createdAt || now,
       updatedAt: now,
     };
     if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
+    if (!saved.currency || saved.currency === 'GBP' || ins) delete saved.currency; // pounds = no field (as before)
     await db.saveEntry(saved);
     sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
     toast('Saved');
@@ -1464,7 +1471,7 @@ async function renderDetail(id) {
   ].filter(([, value]) => value) : [
     ['Section', section.single, 'list'],
     ['Date', niceDate(e.date), 'calendar'],
-    ['Cost', e.cost ? money(e.cost) : null, 'receipt'],
+    ['Cost', e.cost ? money(e.cost, e.currency) + (e.currency && e.currency !== 'GBP' ? ` (${e.currency})` : '') : null, 'receipt'],
     ['Supplier / who', e.supplier, 'home'],
     ['Reading', e.meterValue !== null && e.meterValue !== undefined ? `${e.meterValue} ${e.meterUnit || ''}` : null, 'gauge'],
     ['Unit rate', tariff && tariff.rates.length ? ((r) => `${r.v} per kWh${r.from ? ` (new rate from ${shortDay(r.from)})` : ''}`)(rateText(tariff.rates)) : null, 'bolt'],
@@ -1480,7 +1487,7 @@ async function renderDetail(id) {
       { class: 'detail-hero', 'data-tone': section.tone },
       el('div', { class: 'detail-kicker' }, sectionBadge(section, 'sm'), el('span', {}, section.single), e.dueDate ? el('span', { class: 'pill ' + (dueClass || 'calm') }, dueText(section.dueWord || 'due', days)) : null),
       el('h1', { id: 'detail-title' }, e.title),
-      e.cost ? el('p', { class: 'detail-amount' }, money(e.cost), ins ? el('small', {}, e.costFreq === 'monthly' ? ' a month' : ' a year') : null) : null,
+      e.cost ? el('p', { class: 'detail-amount' }, money(e.cost, e.currency), ins ? el('small', {}, e.costFreq === 'monthly' ? ' a month' : ' a year') : null) : null,
       el('p', { class: 'detail-meta' }, (ins ? [e.supplier, e.policyNumber ? `Policy ${e.policyNumber}` : ''] : [niceDate(e.date), e.supplier]).filter(Boolean).join(' · '))
     ),
     el('dl', { class: 'details' }, rows.map(([k, val, g]) => el('div', { class: 'detail-row' }, el('dt', {}, icon(g, 18), k), el('dd', {}, val)))),

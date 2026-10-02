@@ -16,6 +16,8 @@
 //              // unit rates (pence/kWh) and standing charges (pence/day),
 //              // energy bills only; several when the tariff changed or for
 //              // day/night (Economy 7) meters
+//     currency: 'GBP' | 'EUR' | 'USD'  // what the amounts are in (holiday receipts)
+//     items: [{ name, qty, price }]    // receipt lines, when they can be read
 //     title, notes, found: { … }       // which fields we're confident about
 //   }
 //
@@ -74,10 +76,12 @@ export const SUPPLIERS = [
 ];
 
 // ---------- Dates ----------
-const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  // Spanish (holiday receipts): enero, abril, agosto, diciembre (the rest start the same as English)
+  ene: 1, abr: 4, ago: 8, dic: 12 };
 // OCR often reads O as 0 ("0ct") and l as 1 ("Ju1"), so month names allow those.
-const MON = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun[e]?|ju[l1](?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|[o0]ct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
-const DMY_WORDS = new RegExp(`\\b(\\d{1,2})\\s*(?:st|nd|rd|th)?\\s*(?:of\\s+)?${MON}\\s*,?\\s*(\\d{4}|\\d{2}\\b)?`, 'gi');
+const MON = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun[e]?|ju[l1](?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|[o0]ct(?:ober)?|nov(?:ember)?|dec(?:ember)?|ene(?:ro)?|febrero|marzo|abr(?:il)?|mayo|junio|julio|ago(?:sto)?|sept?iembre|octubre|noviembre|dic(?:iembre)?)\\.?';
+const DMY_WORDS = new RegExp(`\\b(\\d{1,2})\\s*(?:st|nd|rd|th)?\\s*(?:of\\s+|de\\s+)?${MON}\\s*,?\\s*(?:de\\s+)?(\\d{4}|\\d{2}\\b)?`, 'gi');
 const DMY_NUM = /\b(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}|\d{2})\b/g;
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -105,6 +109,11 @@ export function findDates(text, defaultYear) {
     if (!validDate(y, mo, d)) continue; // UK order: day/month/year
     out.push({ iso: iso(y, mo, d), index: m.index, end: m.index + m[0].length, hasYear: true });
   }
+  // 2026-07-30 (card terminals often print ISO dates)
+  for (const m of text.matchAll(/\b(20\d\d)-(\d{2})-(\d{2})\b/g)) {
+    const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    if (validDate(y, mo, d)) out.push({ iso: iso(y, mo, d), index: m.index, end: m.index + m[0].length, hasYear: true });
+  }
   return out.sort((a, b) => a.index - b.index);
 }
 
@@ -117,10 +126,14 @@ export function addDays(isoDate, n) {
 // ---------- Money ----------
 // "£1,234.56", "£ 390.20", "£17.757.94" (OCR turned a comma into a dot),
 // "-£23.07", "168.00".
-const MONEY = /(-)?\s?£\s?(-)?\s?(\d{1,3}(?:[,.]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2}))(?!\d)|(?<![\d.,£])(-)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?![\d%])/g;
-export function findAmounts(line) {
+// "€9.50" and "9,50 €" too; with { comma: true } (euro receipts) a bare
+// "11,90" is 11.90. Long digit runs (barcodes like 7622400008948) never count.
+const MONEY = /(-)?\s?[£€]\s?(-)?\s?(\d{1,3}(?:[,.]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2}))(?!\d)|(?<![\d.,£€])(-)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?![\d%])/g;
+export function findAmounts(line, { comma = false } = {}) {
   const out = [];
+  if (comma) line = line.replace(/(?<![\d.,])(\d{1,4}),(\d{2})(?![\d,.])/g, '$1.$2');
   for (const m of line.matchAll(MONEY)) {
+    if (/\d{8,}/.test(line.slice(Math.max(0, m.index - 8), m.index + m[0].length + 1).replace(/[.,]/g, ''))) continue;
     const raw = m[3] || m[5];
     const neg = !!(m[1] || m[2] || m[4]);
     // last separator followed by exactly 2 digits = pence; others are thousands
@@ -149,12 +162,14 @@ function detectSupplier(text) {
 }
 
 // Customer-address-ish lines we must never mistake for the shop's name.
-const NOT_A_NAME = /\b\d+[a-z]?\s+[a-z]+\s+(?:road|rd|street|st|avenue|ave|lane|drive|close|way|crescent|terrace|place|court|gardens)\b|address|united kingdom|^(mr|mrs|ms|miss|dr)\b|\b[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}\b|invoice|receipt|statement|page \d|smell gas|power cut|tel\b|phone|e-?mail|www\.|https?:|@|order|customer|account|vat|date|total|bill to|deliver|ship|^your\b|^\W*$/i;
+const NOT_A_NAME = /\b\d+[a-z]?\s+[a-z]+\s+(?:road|rd|street|st|avenue|ave|lane|drive|close|way|crescent|terrace|place|court|gardens)\b|address|united kingdom|^(mr|mrs|ms|miss|dr)\b|\b[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}\b|invoice|receipt|statement|page \d|smell gas|power cut|tel\b|phone|e-?mail|www\.|https?:|@|order|customer|account|vat|date|total|bill to|deliver|ship|^your\b|^\W*$|comunitario|factura|\bfact\b|ticket|datos|vuelo|extranjero|\biva\b|cliente|tarjeta|art[ií]culos|descrip|precio|cantidad|unidad/i;
 
 function fallbackSupplier(allLines) {
   // A line that looks like a company ("… Ltd", "… Limited") near the top…
   for (const l of allLines.slice(0, 25)) {
-    const m = l.match(/([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC))\b/);
+    const m = l.match(/([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC))\b/) ||
+      // European companies: "… S.L.", "… SA", "… GmbH", "… SRL", "… B.V."
+      l.match(/^([A-Z][A-Za-z&'’.\- ]{5,60}?)[\s,]+(?:S\.?L\.?U?|S\.?A\.?|GmbH|S\.?R\.?L\.?|S\.?A\.?S\.?|B\.?V\.?|Lda)\.?$/);
     if (m && !/trading name|registered|reg\.? office|customers ltd/i.test(l)) return tidyName(m[1]);
   }
   // …otherwise the first prominent line that isn't an address or boilerplate.
@@ -183,7 +198,7 @@ function pickDate(allLines, defaultYear) {
     /\b(invoice date|tax point date|date of invoice|bill date|statement date|receipt date|date issued|issue date)\b/i,
     /\bbill reference\b/i,
     /\b(order date|order placed|date ordered|purchase date|transaction date|sale date)\b/i,
-    /\bdate\b/i,
+    /\b(date|fecha|datum|data)\b/i,
   ];
   for (const re of tiers) {
     for (let i = 0; i < allLines.length; i++) {
@@ -205,7 +220,70 @@ function pickDate(allLines, defaultYear) {
   return any.length ? any[0].iso : '';
 }
 
-function pickTotal(allLines) {
+// Lines that say what was actually paid: the card slip ("CANTIDAD TOTAL:
+// 11,90", "IMPORTE: 11,90", "AMOUNT: £23.50") and the card line
+// ("PLANET MASTERCARD 11.90", "VISA DEBIT £23.50"). OCR mangles
+// "CANTIDAD" a lot ("CANTI0AD", "BANTIDAD", "EANTIOHD"), so it's loose.
+const PAID = /\b(?:\w{0,3}ant\w{0,4}\s*total|\w{0,6}[a4][d0o]\s+total\s*:|importe(?:\s+total)?|total\s+a\s+pagar|a\s+pagar|total\s+pagado|amount|total\s+paid|amount\s+paid|paid|pagado|montant|betrag)\b\s*:?|\b(?:master\s*car[dlu]|visa(?:\s+debit)?|maestro|amex|american\s+express|debit\s+card|credit\s+card|card\s+payment|contactless|apple\s+pay|google\s+pay|tarjeta|efectivo|cash)\b/i;
+const NOT_PAID = /tipo\s+de|type|moneda|currency|change|cambio|cashback|\bpan\b|aid\b|auth|number|no\.|saving|discount|descuento/i;
+const DISCOUNT = /-\s?[£€]?\s?\d+[.,]\d{2}\b|\b(?:discount|descuento|dto\.?|promo(?:ci[oó]n)?|offer|oferta|saving|you saved|ahorro|\d\s*(?:for|x|por)\s*[£€]?\d+[.,]\d{2})\b/i;
+
+// What did you actually pay? The amount on the card/payment lines, checked
+// against the "Total" lines: on a receipt with an offer the first "Total"
+// is before the discount ("Total EUR 19.00", "2 for 11.90 -7.10",
+// "Total EUR 11.90"), so prefer the paid amount, and otherwise the LAST
+// total after a discount.
+function pickPaid(allLines, opts) {
+  const paid = [], totals = [];
+  let lastDiscount = -1;
+  allLines.forEach((l, i) => {
+    if (DISCOUNT.test(l)) lastDiscount = i;
+    const m = l.match(PAID);
+    if (m && !NOT_PAID.test(l.slice(0, m.index + m[0].length + 2))) {
+      const a = findAmounts(l.slice(m.index), opts).filter((x) => x.value > 0);
+      if (a.length) paid.push({ i, value: a[a.length - 1].value });
+    }
+    const t = l.match(/\btota[l1\]|]\b/i);
+    if (t && !/sub\s?-?tota|tota[l1]\s*(?:vat|tax|iva|net|ex\b|excl|savings?|discount)/i.test(l)) {
+      const a = findAmounts(l.slice(t.index), opts).filter((x) => x.value > 0);
+      if (a.length) totals.push({ i, value: a[a.length - 1].value });
+    }
+  });
+  if (paid.length) {
+    // Candidates: the paid amounts, and any total after a discount. The
+    // winner is the amount printed most often on the receipt (the final
+    // total, the card line, the card slip and the offer all repeat it; an
+    // OCR slip like "1.30" for "11.90" appears just once). Ties: paid lines
+    // first, then the later line.
+    const seen = new Map();
+    for (const l of allLines) for (const a of findAmounts(l, opts)) seen.set(a.value, (seen.get(a.value) || 0) + 1);
+    const cands = [...paid.map((c) => ({ ...c, paid: 1 })), ...totals.filter((t) => lastDiscount >= 0 && t.i > lastDiscount).map((c) => ({ ...c, paid: 0 }))];
+    const key = (c) => [seen.get(c.value) || 0, c.paid, c.i];
+    const better = (a, b) => { const x = key(a), y = key(b); for (let k = 0; k < 3; k++) if (x[k] !== y[k]) return x[k] > y[k]; return false; };
+    let best = cands[0];
+    for (const c of cands) if (better(c, best)) best = c;
+    return { value: best.value, how: 'paid' };
+  }
+  if (totals.length > 1 && lastDiscount > totals[0].i) {
+    const after = totals.filter((t) => t.i > lastDiscount);
+    if (after.length) return { value: after[after.length - 1].value, how: 'last-total' };
+  }
+  // Only the pre-offer total survived OCR, but the offer says it all:
+  // "Total 19.00" + "2 for 11.90" + exactly two items adding up to 19.00 -> 11.90.
+  const offer = allLines.join('\n').match(/\b(\d)\s*(?:for|x|por)\s*[£€]?\s?(\d+[.,]\d{2})/i);
+  if (offer && totals.length) {
+    const items = parseItems(allLines, opts), n = items.reduce((a, it) => a + it.qty, 0), sum = round2(items.reduce((a, it) => a + it.price, 0));
+    const p = Number(offer[2].replace(',', '.')), t = totals[totals.length - 1].value;
+    if (n === Number(offer[1]) && Math.abs(sum - t) < 0.01 && p < t) return { value: p, how: 'offer' };
+  }
+  return null;
+}
+
+function pickTotal(allLines, opts = {}) {
+  if (opts.foreign) {
+    const p = pickPaid(allLines, opts);
+    if (p) return p.value;
+  }
   const EXCLUDE = /sub\s?-?total|total\s*(?:vat|tax|goods|net|ex\b|excl|before|savings?|discount|of other credits|shipping)|vat\s*total|net\s*total|price before|save:|you saved|shipping charges/i;
   const tiers = [
     /\b(grand total|order total|total paid|amount paid|total price|total invoice|invoice total|total payable|total due|total to pay|gross total|total amount|total \(?inc(?:l|luding)?\.? vat\)?|amount due|balance due|balance to pay)\b/i,
@@ -218,15 +296,15 @@ function pickTotal(allLines) {
       const m = l.match(re);
       if (!m || EXCLUDE.test(l.slice(Math.max(0, m.index - 12), m.index + m[0].length + 12))) return;
       if (/last bill|previous balance|opening balance|balance on your last/i.test(l)) return;
-      let amts = findAmounts(l.slice(m.index));
-      if (!amts.length && re === tiers[0] && allLines[i + 1]) amts = findAmounts(allLines[i + 1]);
+      let amts = findAmounts(l.slice(m.index), opts);
+      if (!amts.length && re === tiers[0] && allLines[i + 1]) amts = findAmounts(allLines[i + 1], opts);
       if (amts.length) cands.push(amts[0].value);
     });
     const pos = cands.filter((v) => v > 0);
     if (pos.length) return Math.max(...pos);
   }
   // Last resort: the biggest £ amount on the page.
-  const all = allLines.flatMap((l) => findAmounts(l).filter((a) => a.pound && a.value > 0).map((a) => a.value));
+  const all = allLines.flatMap((l) => findAmounts(l, opts).filter((a) => a.pound && a.value > 0).map((a) => a.value));
   return all.length ? Math.max(...all) : null;
 }
 
@@ -252,6 +330,117 @@ function commonYear(text, fallback) {
   for (const m of text.matchAll(/\b(19[9]\d|20\d\d)\b/g)) counts[m[1]] = (counts[m[1]] || 0) + 1;
   const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
   return best ? Number(best[0]) : fallback;
+}
+
+// ---------- Holiday receipts: currency, airports, item lines ----------
+// Which currency are the amounts in? Whichever is mentioned most; pounds
+// when nothing else is (so every UK document stays exactly as before).
+export function detectCurrency(text) {
+  // "MONEDA DE TRANSACCION: EUR", "Currency: EUR", "Transaction currency EUR"
+  const said = text.match(/\b(?:moneda|divisa|currency|devise|w[äa]hrung|transacci[oó]n|transaction)\b[^\n]{0,25}?\b(GBP|EUR|USD)\b/i);
+  if (said) return said[1].toUpperCase();
+  const n = (re) => (text.match(re) || []).length;
+  const gbp = n(/£|\bGBP\b/g), eur = n(/€|\bEUR\b|\beuros?\b/gi), usd = n(/\bUSD\b|US\$/g);
+  if (eur > gbp && eur >= usd) return 'EUR';
+  if (usd > gbp) return 'USD';
+  return 'GBP';
+}
+
+// Airports you're likely to fly from on holiday (IATA code -> name).
+const AIRPORTS = {
+  LPA: 'Gran Canaria', TFS: 'Tenerife South', TFN: 'Tenerife North', ACE: 'Lanzarote', FUE: 'Fuerteventura', SPC: 'La Palma',
+  AGP: 'Malaga', ALC: 'Alicante', PMI: 'Palma', IBZ: 'Ibiza', MAH: 'Menorca', BCN: 'Barcelona', MAD: 'Madrid', VLC: 'Valencia',
+  SVQ: 'Seville', REU: 'Reus', GRO: 'Girona', LEI: 'Almeria', FAO: 'Faro', LIS: 'Lisbon', OPO: 'Porto', FNC: 'Madeira',
+  DLM: 'Dalaman', AYT: 'Antalya', BJV: 'Bodrum', HER: 'Heraklion', CHQ: 'Chania', RHO: 'Rhodes', CFU: 'Corfu', KGS: 'Kos',
+  ZTH: 'Zante', ATH: 'Athens', LCA: 'Larnaca', PFO: 'Paphos', MLA: 'Malta', DBV: 'Dubrovnik', SPU: 'Split', NCE: 'Nice',
+  CDG: 'Paris Charles de Gaulle', AMS: 'Amsterdam', FCO: 'Rome', NAP: 'Naples', VCE: 'Venice', MXP: 'Milan', PRG: 'Prague',
+  BUD: 'Budapest', KRK: 'Krakow', DUB: 'Dublin', KEF: 'Reykjavik', GVA: 'Geneva', SZG: 'Salzburg', INN: 'Innsbruck',
+  EDI: 'Edinburgh', GLA: 'Glasgow', ABZ: 'Aberdeen', INV: 'Inverness', MAN: 'Manchester', LHR: 'Heathrow', LGW: 'Gatwick', STN: 'Stansted',
+};
+const titleCase = (s) => s.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+
+// "Datos del vuelo: LS 0716 > LPA (ES) > EDI (GB)", "AEROPUERTO DE GRAN
+// CANARIA", "Gatwick Airport" -> { shop: 'Gran Canaria Airport shop', flight }
+function airportInfo(text) {
+  let from = '', to = '', flight = '';
+  const route = text.match(/\b([A-Z]{3})\s*(?:\(\s*[A-Z]{2}\s*\))?\s*(?:>|->|→)\s*([A-Z]{3})\b/);
+  if (route && (AIRPORTS[route[1]] || AIRPORTS[route[2]])) {
+    [, from, to] = route;
+    const before = text.slice(Math.max(0, route.index - 40), route.index);
+    const f = before.match(/\b([A-Z0-9]{2})\s?(\d{3,4})\b[^\n]*$/);
+    if (f) flight = `${f[1]}${f[2]}`;
+  }
+  let place = AIRPORTS[from] || '';
+  if (!place) {
+    const m = text.match(/\baeropuerto\s+(?:de\s+)?([a-záéíóúñ]+(?:\s+[a-záéíóúñ]+)?)/i) || text.match(/\b([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s+airport\b/);
+    if (m) {
+      const words = m[1].replace(/\s+(?:de|del|la|las|los)$/i, '');
+      const known = Object.values(AIRPORTS).find((n) => n.toLowerCase() === words.toLowerCase());
+      place = known || (/^[\p{L} ]{3,30}$/u.test(words) ? titleCase(words) : '');
+    }
+  }
+  // OCR garbles small print ("AEROPUERTO DE GRAN 1 ANARTA"): look for an
+  // airport name with up to 2 wrong letters (not UK ones - that's where
+  // you're flying to).
+  const airporty = /\b(aeropuerto|aeroporto|a[ée]roport|airport|flughafen|duty\s*free|datos del vuelo|vuelo|flight|boarding)\b|\(\s*GB\s*\)/i.test(text);
+  if (!place && airporty) {
+    const up = text.toUpperCase().replace(/[^A-Z]/g, '');
+    for (const [code, name] of Object.entries(AIRPORTS)) {
+      const n = name.toUpperCase().replace(/[^A-Z]/g, '');
+      if (n.length < 7 || ['EDI', 'GLA', 'ABZ', 'INV', 'MAN', 'LHR', 'LGW', 'STN'].includes(code)) continue;
+      for (let i = 0; i + n.length <= up.length && !place; i++) if (up[i] === n[0] && editDistance(up.slice(i, i + n.length), n) <= (n.length >= 10 ? 2 : 1)) place = name;
+      if (place) break;
+    }
+  }
+  if (!place && !flight) return airporty ? { shop: 'Airport shop', flight: '' } : null;
+  return { shop: place ? `${place} Airport shop` : 'Airport shop', flight: flight ? `${flight}${from ? ' ' + from + ' → ' + to : ''}` : (from ? `${from} → ${to}` : '') };
+}
+
+const editDistance = (a, b) => {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...new Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+};
+
+// Item lines between the column headings ("Descripcion … Precio",
+// "Description Qty Price") and the first total. A description may have
+// its numbers on the next line(s), as on this airport receipt:
+//   I 2359935001 MILKA CHOCO SWI
+//   7622400008948                  <- barcode (EAN), ignored
+//   0.00   1   9.50   9.50          <- IVA, quantity, unit price, price
+// Repeated items (even if OCR spelt them slightly differently) are added up.
+export function parseItems(allLines, opts = {}) {
+  const head = allLines.findIndex((l, i) => /\b(descrip\w*|description|item|art[ií]culos?)\b/i.test(l) && /\b(precio|price|importe|amount|qty|cantidad|cant\.?)\b/i.test(allLines.slice(i, i + 3).join(' ')));
+  if (head < 0) return [];
+  const items = [];
+  let pending = '';
+  for (let i = head + 1; i < allLines.length; i++) {
+    const l = allLines[i];
+    if (/\btota[l1\]|]\b|subtotal|\bsuma\b/i.test(l)) break;
+    if (/^\s*(?:iva|vat|cantidad|qty|precio|price|ean|unidad)\b/i.test(l)) continue;
+    const amts = findAmounts(l, opts);
+    const text = l.replace(/\b\d{4,}\b/g, ' ').replace(/^\s*[A-Z0-9]\s+/, ' ').replace(/[£€]?\s?-?\d+[.,]\d{2}\b/g, ' ').replace(/[^\p{L}&'\- ]/gu, ' ').replace(/\s+/g, ' ').trim();
+    const words = text.split(' ').filter((w) => w.length >= 2);
+    if (words.length && (text.match(/\p{L}/gu) || []).length >= 4 && !amts.length) { pending = text; continue; }
+    if (!amts.length) continue;
+    const name = words.length && (text.match(/\p{L}/gu) || []).length >= 4 ? text : pending;
+    if (!name) continue;
+    const price = amts[amts.length - 1].value;
+    if (price <= 0) { pending = ''; continue; }
+    const ints = l.replace(/\d+[.,]\d{2}/g, ' ').match(/(?<![\d.,])\d{1,2}(?![\d.,])/g);
+    let qty = ints ? Number(ints[ints.length - 1]) : 1;
+    if (amts.length >= 2) { const unit = amts[amts.length - 2].value; if (unit > 0 && Math.abs(unit * Math.round(price / unit) - price) < 0.01) qty = Math.round(price / unit); }
+    if (!(qty >= 1 && qty <= 99)) qty = 1;
+    items.push({ name: titleCase(name).slice(0, 60), qty, price: round2(price) });
+    pending = '';
+  }
+  const merged = [];
+  for (const it of items) {
+    const same = merged.find((m) => Math.abs(m.price / m.qty - it.price / it.qty) < 0.005 && editDistance(m.name.toLowerCase(), it.name.toLowerCase()) <= 2);
+    if (same) { same.qty += it.qty; same.price = round2(same.price + it.price); } else merged.push({ ...it });
+  }
+  return merged.length <= 20 ? merged : [];
 }
 
 // ---------- Energy bills ----------
@@ -387,10 +576,14 @@ export function parseDocument(text, { today = new Date() } = {}) {
   const sup = detectSupplier(clean);
   const looksEnergy = /\bkwh\b/i.test(clean) && /\b(meter|electricity|gas)\b/i.test(clean) && /\b(bill|statement|tariff|standing charge)\b/i.test(clean);
   const kind = (sup && sup.kind === 'energy') || (!sup && looksEnergy) ? 'bill' : 'receipt';
-  const supplier = sup ? sup.name : fallbackSupplier(allLines);
+  const currency = kind === 'bill' ? 'GBP' : detectCurrency(clean);
+  const foreign = currency !== 'GBP';
+  // (only for receipts in another currency: UK documents behave as before)
+  const airport = kind === 'receipt' && foreign ? airportInfo(clean) : null;
+  const supplier = sup ? sup.name : (airport && airport.shop) || fallbackSupplier(allLines);
   const reference = pickReference(clean);
 
-  const result = { kind, supplier, reference, date: '', total: null, meter: null, title: '', notes: '', found: {} };
+  const result = { kind, supplier, reference, date: '', total: null, currency, items: [], meter: null, title: '', notes: '', found: {} };
 
   if (kind === 'bill') {
     const { meter, total } = parseEnergy(allLines, clean, defaultYear);
@@ -412,10 +605,22 @@ export function parseDocument(text, { today = new Date() } = {}) {
     if (reference) bits.push(`Bill ref ${reference}`);
     result.notes = bits.join('. ') + (bits.length ? '.' : '');
   } else {
-    result.total = pickTotal(allLines);
+    const opts = { foreign, comma: currency === 'EUR' };
+    result.total = pickTotal(allLines, opts);
     result.date = pickDate(allLines, defaultYear);
     result.title = `${supplier || 'Receipt'}${reference ? ' order ' + reference : ' receipt'}`;
-    result.notes = reference ? `Ref ${reference}` : '';
+    const bits = [];
+    if (foreign) {
+      const card = (clean.match(/\b(master\s*car[dlu]|visa|maestro|amex|american express)\b/i) || [])[1];
+      bits.push(`Paid ${fmt(result.total, currency)} (${currency})${card ? ' by ' + (/master/i.test(card) ? 'Mastercard' : titleCase(card)) : ''}`);
+      result.items = parseItems(allLines, opts);
+      if (result.items.length) bits.push('Items: ' + result.items.map((it) => `${it.qty > 1 ? it.qty + ' × ' : ''}${it.name} ${it.qty > 1 ? '(' + fmt(it.price / it.qty, currency) + ' each)' : fmt(it.price, currency)}`).join(', '));
+      const off = allLines.map((l) => findAmounts(l, opts).filter((a) => a.value < 0)).flat();
+      if (off.length) bits.push(`Discount ${off.map((a) => '−' + fmt(-a.value, currency)).join(', ')}`);
+      if (airport && airport.flight) bits.push(`Flight ${airport.flight}`);
+    }
+    if (reference) bits.push(`Ref ${reference}`);
+    result.notes = bits.join('. ') + (foreign && bits.length ? '.' : '');
   }
   result.found = {
     supplier: !!sup,
@@ -425,6 +630,9 @@ export function parseDocument(text, { today = new Date() } = {}) {
   };
   return result;
 }
+
+const SYMBOL = { GBP: '£', EUR: '€', USD: '$' };
+const fmt = (v, cur) => (v == null ? '?' : `${SYMBOL[cur] || cur + ' '}${Number(v).toFixed(2)}`);
 
 // '2026-07-03' -> '3 Jul 2026'
 function ukDate(iso) {

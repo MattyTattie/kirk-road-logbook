@@ -30,11 +30,15 @@ export function el(tag, attrs = {}, ...children) {
   return node;
 }
 
-// Formats a number as pounds, e.g. 1234.5 -> "£1,234.50"
+// Formats a number as pounds, e.g. 1234.5 -> "£1,234.50". An entry from a
+// holiday can be in another currency (entry.currency, e.g. 'EUR' -> "€11.90").
 const gbp = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
-export function money(n) {
-  return gbp.format(n || 0);
+const other = {};
+export function money(n, currency) {
+  if (!currency || currency === 'GBP') return gbp.format(n || 0);
+  try { return (other[currency] ||= new Intl.NumberFormat('en-GB', { style: 'currency', currency })).format(n || 0); } catch { return gbp.format(n || 0); }
 }
+export const CURRENCIES = [['GBP', '£'], ['EUR', '€'], ['USD', '$']];
 
 // Adds up costs without the tiny rounding errors computers make with
 // decimals (0.1 + 0.2 = 0.30000000000000004!). We add whole pennies.

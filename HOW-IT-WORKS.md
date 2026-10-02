@@ -58,7 +58,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
 | `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
-| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `test_foreign_receipt.py` + `lpa-airport-receipt.jpg` (a holiday receipt in euros), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -182,12 +182,44 @@ How it reads the document, all on the phone:
 1. **PDF with real text** (most emailed bills): the text is read directly with
    pdf.js. This is exact.
 2. **Photo, screenshot or scanned PDF**: Tesseract OCR turns the picture into
-   text (about 1–4 seconds a page on a recent phone).
+   text (about 1–4 seconds a page on a recent phone). For a photo of a
+   receipt lying on a table or seat, `scan.js` first crops to the paper (the
+   biggest patch of light pixels) because a dark background can make the OCR
+   skip whole blocks, like the shop name. Tesseract then straightens tilted
+   text itself (`rotateAuto`).
 3. `js/parse.js` picks out the supplier (from a list of UK energy companies
    and shops, else the name at the top), the date, the total, and for energy
    bills the charges for the period, the period dates, kWh used and the
    opening and closing readings. A bill is dated on its closing-reading date
    (or the day after the period ends), the same way bills are logged here.
+
+**Holiday receipts (another currency).** When a receipt is mostly in euros
+(or dollars), for example "Total EUR 11.90" or "MONEDA DE TRANSACCION: EUR":
+
+- **Total:** the parser takes the amount you actually *paid*, i.e. the card
+  line ("PLANET MASTERCARD 11.90") or the card slip ("CANTIDAD TOTAL: 11,90").
+  If several lines disagree, it takes the amount the receipt repeats most.
+  It never takes a subtotal printed before an offer ("Total 19.00", then
+  "2 for 11.90 -7.10").
+- **Reading:** "11,90" is read as 11.90, and barcode numbers are ignored. It
+  understands the Spanish words Total, Importe, IVA, Fecha, Cantidad and
+  Precio, and dates like 14/08/26 or "3 de agosto de 2026".
+- **Shop name:** an airport shop is named after the airport, e.g. "Gran
+  Canaria Airport shop" (from "LPA (ES) > EDI (GB)" or "AEROPUERTO DE GRAN
+  CANARIA"). Other shops come from a company line ending in S.L., S.A.,
+  GmbH and so on.
+- **Notes:** the items, any discount and the flight go in the notes, e.g.
+  "Paid €11.90 (EUR) by Mastercard. Items: 2 × Milka Choco Swi (€9.50
+  each). Discount −€7.10. Flight LS0716 LPA → EDI."
+- **Currency:** the form's **Currency** box is set to € EUR. The entry
+  stores `currency: 'EUR'` as an extra field. The database, the backup
+  format and the Drive sync are unchanged, and older app versions show the
+  amount with a £. Pound entries have no `currency` field, exactly as before.
+- **Totals:** euro amounts count at face value. For exact £ totals, type the
+  £ amount from your bank statement and pick £.
+
+UK documents are read exactly as before. The currency and airport rules
+only apply when the receipt isn't in pounds.
 
 **Limits.** OCR can misread blurry photos, so always check the amounts. The
 first page of an EDF bill doesn't show the meter readings (they're on
@@ -267,8 +299,8 @@ renewal as a due date, and editing one there keeps the policy fields
    (Insurance is now built in like this. It also has `kind: 'insurance'`,
    which turns on the extra policy fields, and `soonDays: 30`.)
 
-2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v7'` to
-   `'hearthbook-v8'` (do this after **any** change, so phones fetch
+2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v8'` to
+   `'hearthbook-v9'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
@@ -368,6 +400,11 @@ original app (`OLD_APP`, default `http://localhost:8770/`) and the published
 v5 (`V5_APP`, default `http://localhost:8772/old/`) cope with insurance
 entries. `node tests/tariff_parse.mjs` checks the rate parsing.
 
+`tests/test_foreign_receipt.py` scans the Gran Canaria airport receipt photo
+(`tests/lpa-airport-receipt.jpg`), as taken and tilted 7° and 5°. It then
+checks similar Spanish receipts, and the scan → form → save → backup flow with
+the currency.
+
 `tests/test_upgrade.py` serves the original app and this one from the same
 address, saves data with the old one and checks the new one shows it all.
 
@@ -380,7 +417,7 @@ address, saves data with the old one and checks the new one shows it all.
   that's only a name — restore looks at what's inside.)
 - Section `id`s in `js/sections.js`.
 - When you change any app file, bump `CACHE_NAME` in `sw.js` (now
-  `hearthbook-v6`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
+  `hearthbook-v8`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
   in `vendor/` change.
 
 ## 9. Sharing one logbook with Google Drive (optional)

@@ -76,7 +76,7 @@ function itemRow(e, section) {
         ? el('div', { class: 'thumbs' }, e.photos.map((p) => el('img', { src: URL.createObjectURL(p.blob), alt: 'Photo' })))
         : null
     ),
-    e.cost ? el('div', { class: 'cost' }, money(e.cost) + (ins ? (e.costFreq === 'monthly' ? '/month' : '/year') : '')) : null
+    e.cost ? el('div', { class: 'cost' }, money(e.cost, e.currency) + (ins ? (e.costFreq === 'monthly' ? '/month' : '/year') : '')) : null
   );
 }
 
