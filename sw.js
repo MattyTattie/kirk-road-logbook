@@ -20,8 +20,10 @@
 // v2 = the Hearthbook redesign (new look, dashboard, charts, dark mode).
 // v3 = scan receipts/bills, swipeable chart detail cards.
 // v4 = optional Google Drive sync.
+// v5 = real Google IDs.
+// v6 = sync: one shared file (easier joining), sync details.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v5';
+const CACHE_NAME = 'hearthbook-v6';
 
 // The scanner's libraries (OCR engine + English model + PDF reader) are big
 // (~8 MB to download), so they get their OWN cache with its own version.

@@ -217,7 +217,7 @@ contain personal details) and compares it with what's in your logbook.
    ```
 
 2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v3'` to
-   `'hearthbook-v4'` (do this after **any** change, so phones fetch
+   `'hearthbook-v7'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
@@ -319,7 +319,7 @@ address, saves data with the old one and checks the new one shows it all.
   that's only a name — restore looks at what's inside.)
 - Section `id`s in `js/sections.js`.
 - When you change any app file, bump `CACHE_NAME` in `sw.js` (now
-  `hearthbook-v4`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
+  `hearthbook-v6`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
   in `vendor/` change.
 
 ## 9. Sharing one logbook with Google Drive (optional)
@@ -349,13 +349,19 @@ back. If both phones already have entries the first time they sync, they
 are combined by entry ID. Entries restored from the same backup on both
 phones are not duplicated.
 
-**What's in the folder:** `hearthbook-sync.json` (the text of every entry
-plus the tombstones) and `hearthbook-photos-1.json` … `-8.json` (the photos,
-spread over 8 files). Don't rename or delete them. Backups and restore work
-exactly as before. Sync uses the same database, plus two settings in the
-`meta` store (`sync` and `syncTombstones`) that backups don't include.
+**What's in the folder:** one file, `hearthbook-sync.json`. It holds the
+text of every entry, the tombstones and the photos. Don't rename or delete
+it. Backups and restore work exactly as before. Sync uses the same database,
+plus a few settings in the `meta` store (`sync`, `syncTombstones`,
+`syncCache`, `syncDiag`) that backups don't include.
 
-### Why "drive.file" permission, and why 9 fixed files
+*Older layout.* The first version of sync (2 Oct 2026) also made
+`hearthbook-photos-1.json` … `-8.json`. The phone that created them (Matthew's)
+moves their photos into `hearthbook-sync.json` the next time it syncs. Nothing
+is deleted. Once the Sync details show "layout: v2", those 8 files are no
+longer used and can be deleted from Drive if you like.
+
+### Why "drive.file" permission, and why one file
 
 Google offers two sensible levels of Drive permission ("scope"):
 
@@ -363,17 +369,28 @@ Google offers two sensible levels of Drive permission ("scope"):
 |---|---|---|
 | What the app can touch | Only files it created, or that you hand it in Google's file picker | Everything in your Drive |
 | Google's rating | Non-sensitive, no review needed | **Restricted**: to publish it needs Google's verification plus a paid yearly security assessment (CASA). In "Testing" mode it works for up to 100 named test users, with a warning screen |
-| Partner joining | Becca ticks the 9 Hearthbook files once in Google's picker | Becca just picks the folder |
-| File layout | A fixed set of 9 files | Could be one small file per entry and photo |
-| Cost | Adding a photo re-uploads one of the 8 photo files (each about ⅛ of all your photos, so a few MB as the logbook grows) | Uploads just that photo |
+| Partner joining | Becca taps one file once in Google's picker | Becca just picks the folder |
+| File layout | One shared file | Could be one small file per entry and photo |
+| Cost | Any change re-uploads the whole file (all photos: about 3 MB today, growing with every photo). Unchanged syncs only check the file's version, so they download nothing | Uploads just what changed |
 
 `drive.file` was chosen because it's the least access that works, and
 Google treats it as low risk. With `drive.file`, choosing a *folder* in the
-picker does **not** let the app see the files inside it, and Becca's phone
-can't see any *new* file your phone creates later. So the app makes all 9
-files on day one and never adds more. Becca picks them once and from then on
-everything syncs. Your own second phone (same Google account) finds them by
-itself.
+picker does **not** let the app see the files inside it (Google confirms
+this: the folder's `canListChildren` is false and listing it comes back
+empty). Becca's phone also can't see any *new* file your phone creates later.
+So everything lives in one file that Becca picks once.
+
+If the logbook gets so big that uploads feel slow on mobile data (roughly
+30 MB or more, i.e. hundreds of photos), the way out is the full `drive`
+permission with one file per photo. That's a one-line change to the scope
+plus a different file layout, and it brings Testing-mode warnings.
+
+**Sync details.** Under the sync card, *Sync details (for troubleshooting)*
+shows the layout, the shared file's id, what Google's picker last returned
+(the action, and each file's name, id, type, and whether it had a resource
+key), whether the app could then open each file, and, after **Refresh
+details**, every Hearthbook file the app can open. A screenshot of it is
+enough to diagnose most problems.
 
 **Verification.** Because `drive.file` is non-sensitive, you never need
 Google's app review. In **Testing** mode only the people you add as test
@@ -446,9 +463,10 @@ logbook**. Then type Becca's Gmail under *Share the folder with* → **Share**.
 **Becca:** open the email from Google once (so the folder shows in her
 "Shared with me"). Then Hearthbook → **Backup** → **Connect Google account**
 → her account → **Continue** → allow → **Join a logbook shared with me**.
-Google's file picker opens, listing the Hearthbook files: tick **all 9**
-(`hearthbook-sync.json` and `hearthbook-photos-1` … `8`) → **Select**. Done.
-If she misses one, the app says which and she taps Join again.
+Google's file picker opens, listing the Hearthbook files: tap
+**hearthbook-sync.json** (ignore any `hearthbook-photos-…` files) →
+**Select**. The app says "1 of 1 linked" and syncs. If it says "0 of 1",
+tap Join again. Each try remembers what's already linked.
 
 **Stopping:** Backup → **Disconnect this phone**. Entries stay on the phone
 and in Drive. To stop sharing entirely, un-share or delete the Hearthbook

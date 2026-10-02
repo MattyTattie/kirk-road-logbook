@@ -5,13 +5,16 @@
 // app works exactly as before (phone-only, offline).
 //
 // WHAT'S IN THE SHARED FOLDER ("Hearthbook" in Google Drive):
-//   hearthbook-sync.json        every entry's text (no photos), plus a
-//                               "tombstone" for each deleted entry
-//   hearthbook-photos-1…8.json  the photos, spread over 8 files by photo id
-// It's a fixed set of 9 files on purpose: with the low-privilege drive.file
-// permission, the app can only open files it created or that you picked in
-// Google's file picker. A fixed set means your partner picks them ONCE and
-// never has to again. (Section 9 of HOW-IT-WORKS.md explains the choice.)
+//   hearthbook-sync.json   ONE file: every entry's text, a "tombstone" for
+//                          each deleted entry, and the photos.
+// One file on purpose. The app uses the low-privilege drive.file
+// permission, so it can only open files it created or that you picked in
+// Google's file picker. Picking a folder does NOT unlock the files inside,
+// and the other phone can't see files created later. With a single file,
+// your partner picks it once and that's it.
+// (Version 1 of sync spread photos over 8 extra files. The first phone to
+// sync with this version copies them into hearthbook-sync.json; the old
+// files are left alone, and you can delete them later.)
 //
 // HOW TWO PHONES AGREE (per entry, "last write wins"):
 //   • every entry has updatedAt (set when you save it);
@@ -31,12 +34,14 @@ import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob } from './photos.js';
 
 export const INDEX_NAME = 'hearthbook-sync.json';
-export const PHOTO_BUCKETS = 8;
+export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
-export const ALL_NAMES = [INDEX_NAME, ...Array.from({ length: PHOTO_BUCKETS }, (_, i) => bucketName(i))];
+export const REQUIRED = [INDEX_NAME]; // what the person joining has to pick
 const FOLDER_NAME = 'Hearthbook';
 const STATE_KEY = 'sync'; // meta store: settings for this phone
 const TOMBS_KEY = 'syncTombstones'; // meta store: { entryId: deletedAtISO }
+const CACHE_KEY = 'syncCache'; // meta store: last-seen Drive file (text only), to skip re-downloading
+const DIAG_KEY = 'syncDiag'; // meta store: troubleshooting details
 const EPOCH = '1970-01-01T00:00:00.000Z';
 export const isConfigured = drive.isConfigured;
 
@@ -53,7 +58,7 @@ function setStatus(patch) {
 
 export const getConfig = async () => (await db.getMeta(STATE_KEY)) || { enabled: false };
 const saveConfig = (c) => db.setMeta(STATE_KEY, c);
-const ready = (c) => Boolean(c && c.enabled && c.files && c.files.index && c.files.buckets && c.files.buckets.length === PHOTO_BUCKETS);
+const ready = (c) => Boolean(c && c.enabled && c.files && c.files.index);
 
 function baseStatus(c) {
   return { account: c.account || null, folderName: (c.folder && c.folder.name) || '', owner: Boolean(c.folder && c.folder.owner), lastSync: c.lastSync || null };
@@ -65,6 +70,7 @@ export async function init() {
   const c = await getConfig();
   if (!drive.isConfigured()) return setStatus({ state: 'unconfigured' });
   if (!c.enabled) return setStatus({ state: 'off' });
+  drive.setResourceKeys(c.resourceKeys);
   setStatus({ ...baseStatus(c), state: ready(c) ? (navigator.onLine ? 'idle' : 'offline') : 'nofolder', message: '' });
   if (!started) {
     started = true;
@@ -111,46 +117,63 @@ export async function connect() {
   // Already connected to a shared logbook before (e.g. this is your
   // second phone, or you re-installed)? Use it straight away.
   const found = await findExisting();
-  if (found.complete) Object.assign(c, { folder: found.folder, files: found.files });
+  if (found) Object.assign(c, { folder: found.folder, files: found.files });
   await saveConfig(c);
   await init();
   if (ready(c)) await syncNow({ interactive: true });
   return c;
 }
 
-// Look for the shared files this app can already open.
-async function findExisting() {
-  const idx = await drive.list(`name = '${INDEX_NAME}' and trashed = false`);
-  let best = { complete: false, missing: ALL_NAMES };
-  for (const f of idx) {
-    const parent = (f.parents || [])[0];
-    if (!parent) continue;
-    const kids = await drive.list(`'${parent}' in parents and trashed = false`);
-    const byName = Object.fromEntries(kids.map((k) => [k.name, k.id]));
-    byName[INDEX_NAME] = f.id;
-    const missing = ALL_NAMES.filter((n) => !byName[n]);
-    let folder = { id: parent, name: 'Shared folder', owner: false };
-    try {
-      const m = await drive.getMeta(parent);
-      folder = { id: parent, name: m.name, owner: Boolean(m.capabilities && m.capabilities.canShare) };
-    } catch {} // with drive.file you often can't see a folder someone else made — that's fine
-    const files = { index: f.id, buckets: Array.from({ length: PHOTO_BUCKETS }, (_, i) => byName[bucketName(i)]) };
-    if (!missing.length) return { complete: true, folder, files };
-    if (missing.length < best.missing.length) best = { complete: false, missing, folder };
-  }
-  return best;
+// ---------- troubleshooting details ----------
+export async function getDiag() { return (await db.getMeta(DIAG_KEY)) || {}; }
+async function diag(patch) {
+  const d = { ...(await getDiag()), ...patch, at: new Date().toISOString() };
+  await db.setMeta(DIAG_KEY, d);
+  return d;
+}
+// Which Drive files can this app open right now? (Shown in "Sync details".)
+export async function refreshDiag() {
+  const c = await getConfig();
+  let accessible = [];
+  try {
+    accessible = (await drive.list(`trashed = false and name contains 'hearthbook'`)).map((f) => ({ id: f.id, name: f.name, parents: (f.parents || []).join(','), version: f.version, size: f.size }));
+  } catch (err) { accessible = [{ error: err.message }]; }
+  return diag({ accessible, files: c.files || null, layout: c.layout || null });
 }
 
-// Step 2a: "Start a new shared logbook" — creates the folder + files.
+// Look for the shared file this app can already open (yours, or one you
+// picked before). Uses a name search; the picker's own answer is used first
+// when joining (see joinShared), because searches can lag behind.
+async function findExisting() {
+  const idx = await drive.list(`name = '${INDEX_NAME}' and trashed = false`);
+  for (const f of idx) {
+    const parent = (f.parents || [])[0] || '';
+    const found = { files: { index: f.id }, folder: { id: parent, name: 'Shared folder', owner: Boolean(f.ownedByMe) } };
+    if (parent) {
+      try {
+        const m = await drive.getMeta(parent);
+        found.folder = { id: parent, name: m.name, owner: Boolean(m.capabilities && m.capabilities.canShare) };
+      } catch {} // with drive.file you often can't see a folder someone else made — fine
+      // Old (v1) photo files next to it, if this app can open them (for the move).
+      try {
+        const kids = await drive.list(`'${parent}' in parents and trashed = false`);
+        const buckets = Array.from({ length: LEGACY_BUCKETS }, (_, i) => (kids.find((k) => k.name === bucketName(i)) || {}).id || null);
+        if (buckets.some(Boolean)) found.files.buckets = buckets;
+      } catch {}
+    }
+    return found;
+  }
+  return null;
+}
+
+// Step 2a: "Start a new shared logbook" — creates the folder + the file.
 export async function createShared() {
   const c = await getConfig();
   setStatus({ state: 'syncing', message: 'Creating the Hearthbook folder…' });
   try {
     const folder = await drive.createFolder(FOLDER_NAME);
     const index = await drive.createJSON(INDEX_NAME, folder.id, emptyIndex());
-    const buckets = [];
-    for (let i = 0; i < PHOTO_BUCKETS; i++) buckets.push((await drive.createJSON(bucketName(i), folder.id, emptyBucket())).id);
-    Object.assign(c, { folder: { id: folder.id, name: folder.name || FOLDER_NAME, owner: true }, files: { index: index.id, buckets } });
+    Object.assign(c, { folder: { id: folder.id, name: folder.name || FOLDER_NAME, owner: true }, files: { index: index.id }, layout: 2 });
     await saveConfig(c);
   } catch (err) {
     await fail(err);
@@ -160,20 +183,59 @@ export async function createShared() {
   return syncNow({ interactive: true });
 }
 
-// Step 2b: "Join a shared logbook" — pick the files in Google's picker.
+// Step 2b: "Join a shared logbook" — pick hearthbook-sync.json in Google's
+// picker. We trust the picker's answer (file id) and check it directly,
+// rather than searching Drive afterwards. Picking several files at once,
+// or one at a time over several tries, both work: whatever is linked is
+// remembered.
 export async function joinShared() {
-  const picked = await drive.pickFiles({ query: 'hearthbook', title: `Select all ${ALL_NAMES.length} Hearthbook files` });
-  if (!picked) return { cancelled: true };
-  const found = await findExisting();
-  if (!found.complete) {
-    return { missing: found.missing };
-  }
   const c = await getConfig();
-  Object.assign(c, { folder: found.folder, files: found.files });
+  const linked = { ...(c.pendingLinks || {}) }; // name -> id, from earlier tries
+  let picked;
+  try {
+    picked = await drive.pickFiles({ query: 'hearthbook', title: 'Tap hearthbook-sync.json, then Select' });
+  } catch (err) {
+    await diag({ picker: { error: err.message } });
+    throw err;
+  }
+  const checks = [];
+  const keys = { ...(c.resourceKeys || {}) };
+  for (const d of picked.docs) if (d.resourceKey) keys[d.id] = d.resourceKey;
+  drive.setResourceKeys(keys);
+  for (const d of picked.docs) {
+    try {
+      const m = await drive.getMetaRetry(d.id);
+      checks.push({ id: d.id, name: m.name, ok: true, parent: (m.parents || [])[0] || d.parentId || '' });
+      if (m.name === INDEX_NAME) { linked[INDEX_NAME] = d.id; linked.parent = (m.parents || [])[0] || d.parentId || ''; }
+      const bi = Array.from({ length: LEGACY_BUCKETS }, (_, i) => bucketName(i)).indexOf(m.name);
+      if (bi >= 0) linked[m.name] = d.id;
+    } catch (err) {
+      checks.push({ id: d.id, name: d.name, ok: false, error: err.message });
+    }
+  }
+  // Nothing usable picked? Maybe it was linked before: try a search.
+  if (!linked[INDEX_NAME]) {
+    try { const f = await findExisting(); if (f) { linked[INDEX_NAME] = f.files.index; linked.parent = f.folder.id; } } catch {}
+  }
+  await diag({ picker: { action: picked.action, count: picked.docs.length, docs: picked.docs.map((d) => ({ id: d.id, name: d.name, mimeType: d.mimeType, resourceKey: Boolean(d.resourceKey) })) }, checks });
+  c.pendingLinks = linked;
+  c.resourceKeys = keys;
+  const have = REQUIRED.filter((n) => linked[n]).length;
+  if (picked.action === 'cancel' && !have) { await saveConfig(c); return { cancelled: true, have, of: REQUIRED.length }; }
+  if (have < REQUIRED.length) {
+    await saveConfig(c);
+    return { missing: REQUIRED.filter((n) => !linked[n]), have, of: REQUIRED.length, checks };
+  }
+  const buckets = Array.from({ length: LEGACY_BUCKETS }, (_, i) => linked[bucketName(i)] || null);
+  Object.assign(c, {
+    files: { index: linked[INDEX_NAME], ...(buckets.some(Boolean) ? { buckets } : {}) },
+    folder: { id: linked.parent || '', name: 'Shared folder', owner: false },
+  });
+  delete c.pendingLinks;
   await saveConfig(c);
   setStatus(baseStatus(c));
   await syncNow({ interactive: true });
-  return { ok: true };
+  return { ok: true, have, of: REQUIRED.length };
 }
 
 export async function invite(email) {
@@ -187,6 +249,7 @@ export async function disconnect() {
   clearTimeout(timer);
   await drive.revoke();
   await saveConfig({ enabled: false });
+  await db.setMeta(CACHE_KEY, null);
   setStatus({ state: drive.isConfigured() ? 'off' : 'unconfigured', account: null, folderName: '', lastSync: null, message: '' });
 }
 
@@ -228,26 +291,27 @@ async function syncCycle(interactive) {
 async function fail(err, c) {
   c = c || (await getConfig());
   console.warn('sync:', err);
+  try { await diag({ lastError: `${err.name || 'Error'}: ${err.message}` }); } catch {}
   if (err instanceof drive.AuthError) setStatus({ ...baseStatus(c), state: 'signin', message: err.message });
   else if (err instanceof drive.OfflineError || !navigator.onLine) setStatus({ ...baseStatus(c), state: 'offline', message: '' });
   else if (err instanceof drive.NotFoundError) setStatus({ ...baseStatus(c), state: 'error', message: 'The shared files can’t be found in Google Drive. They may have been deleted, or the folder is no longer shared with you.' });
   else setStatus({ ...baseStatus(c), state: 'error', message: err.message || String(err) });
 }
 
-const emptyIndex = () => ({ format: 'hearthbook-sync', version: 1, updatedAt: new Date().toISOString(), records: {}, tombstones: {}, photoIndex: {} });
+const emptyIndex = () => ({ format: 'hearthbook-sync', version: 2, updatedAt: new Date().toISOString(), records: {}, tombstones: {}, photos: {} });
 const emptyBucket = () => ({ format: 'hearthbook-photos', version: 1, photos: {} });
 function normIndex(d) {
   const e = emptyIndex();
   if (!d || d.format !== 'hearthbook-sync') return e;
-  return { ...e, ...d, records: d.records || {}, tombstones: d.tombstones || {}, photoIndex: d.photoIndex || {} };
+  return { ...e, ...d, records: d.records || {}, tombstones: d.tombstones || {}, photos: d.photos || {}, photoIndex: d.photoIndex || {} };
 }
 const normBucket = (d) => (d && d.photos ? d : emptyBucket());
 
-// Which photo file a photo lives in: a simple hash of its id.
+// Which v1 photo file a photo lived in: a simple hash of its id.
 export function bucketOf(photoId) {
   let h = 0;
   for (const ch of String(photoId)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return h % PHOTO_BUCKETS;
+  return h % LEGACY_BUCKETS;
 }
 
 // Entries saved before sync existed may lack updatedAt: treat them as old
@@ -290,62 +354,100 @@ export function plan(localEntries, localTombs, remote) {
 async function syncOnce(c) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const before = await drive.getMeta(c.files.index);
-    const remote = normIndex(await drive.readJSON(c.files.index));
+    // Unchanged since last time? Use our saved copy of the text and skip
+    // downloading the (photo-heavy) file.
+    const cache = await db.getMeta(CACHE_KEY);
+    let remote, full = false;
+    if (cache && cache.fileId === c.files.index && cache.version === before.version) {
+      remote = normIndex({ format: 'hearthbook-sync', ...cache.index, photos: {} });
+      remote.photoIds = cache.photoIds || [];
+    } else {
+      remote = normIndex(await drive.readJSON(c.files.index));
+      remote.photoIds = Object.keys(remote.photos);
+      full = true;
+    }
+    const download = async () => {
+      if (full) return;
+      const fresh = normIndex(await drive.readJSON(c.files.index));
+      remote.photos = fresh.photos;
+      remote.photoIds = Object.keys(fresh.photos);
+      full = true;
+    };
+
     const local = await db.getAllEntries();
     const localTombs = (await db.getMeta(TOMBS_KEY)) || {};
     const p = plan(local, localTombs, remote);
-
-    // Photos we need to download for entries coming from the other phone.
+    const localById = new Map(local.map((e) => [e.id, e]));
     const localBlobs = new Map();
     for (const e of local) for (const ph of e.photos || []) if (ph.blob) localBlobs.set(ph.id, ph.blob);
+
+    // Old v1 photo files (only readable by the phone that made them).
     const buckets = {};
-    const bucket = async (i) => (buckets[i] = buckets[i] || normBucket(await drive.readJSON(c.files.buckets[i])));
+    const legacy = async (id) => {
+      const i = remote.photoIndex[id] ?? bucketOf(id);
+      const fid = c.files.buckets && c.files.buckets[i];
+      if (!fid) return null;
+      try { buckets[i] = buckets[i] || normBucket(await drive.readJSON(fid)); } catch { buckets[i] = emptyBucket(); }
+      return buckets[i].photos[id] || null;
+    };
+    const remoteHas = new Set(remote.photoIds);
+    const photoData = async (id) => {
+      if (remoteHas.has(id)) { await download(); if (remote.photos[id]) return remote.photos[id]; }
+      return legacy(id);
+    };
+
+    // Entries to write here: the other phone's changes, plus repairs for
+    // entries whose photos didn't arrive last time (e.g. before the move).
+    const incoming = [...p.toLocal];
+    const incomingIds = new Set(incoming.map((r) => r.id));
+    for (const [id, rec] of Object.entries(p.records)) {
+      const l = localById.get(id);
+      if (!l || incomingIds.has(id) || stamp(l) !== stamp(rec)) continue;
+      const have = new Set((l.photos || []).filter((x) => x.blob).map((x) => x.id));
+      const canGet = (id) => remoteHas.has(id) || (c.files.buckets && remote.photoIndex[id] !== undefined);
+      if ((rec.photos || []).some((ph) => !have.has(ph.id) && canGet(ph.id))) incoming.push(rec);
+    }
     const toSave = [];
-    for (const r of p.toLocal) {
+    for (const r of incoming) {
       const photos = [];
       for (const ph of r.photos || []) {
         let blob = localBlobs.get(ph.id);
-        if (!blob) {
-          const i = remote.photoIndex[ph.id] ?? bucketOf(ph.id);
-          const data = (await bucket(i)).photos[ph.id];
-          if (data) blob = await dataURLToBlob(data);
-        }
+        if (!blob) { const data = await photoData(ph.id); if (data) blob = await dataURLToBlob(data); }
         if (blob) photos.push({ id: ph.id, blob });
       }
       toSave.push({ ...r, photos });
     }
 
-    // Photos to upload (new on this phone) and to remove (no longer used).
-    const photoIndex = { ...remote.photoIndex };
-    const adds = {}; // bucket -> {photoId: blob}
+    // Photos the shared file should hold = those used by live entries.
     const used = new Set();
     for (const rec of Object.values(p.records)) for (const ph of rec.photos || []) used.add(ph.id);
-    for (const id of used) {
-      if (photoIndex[id] !== undefined) continue;
-      const blob = localBlobs.get(id);
-      if (!blob) continue; // the other phone has it; it'll upload it
-      const i = bucketOf(id);
-      (adds[i] = adds[i] || {})[id] = blob;
-      photoIndex[id] = i;
-    }
-    const removes = {};
-    for (const [id, i] of Object.entries(photoIndex)) {
-      if (!used.has(id)) { (removes[i] = removes[i] || []).push(id); delete photoIndex[id]; }
-    }
-    const touched = new Set([...Object.keys(adds), ...Object.keys(removes)].map(Number));
+    const supplyable = [...used].filter((id) => !remoteHas.has(id) && (localBlobs.has(id) || (c.files.buckets && remote.photoIndex[id] !== undefined)));
+    const unused = [...remoteHas].filter((id) => !used.has(id));
+    const legacyLeft = Object.keys(remote.photoIndex).length > 0 || remote.version !== 2;
 
-    if (p.remoteChanged || touched.size) {
-      for (const i of touched) {
-        const b = normBucket(await drive.readJSON(c.files.buckets[i])); // fresh copy
-        for (const [id, blob] of Object.entries(adds[i] || {})) b.photos[id] = await blobToDataURL(blob);
-        for (const id of removes[i] || []) delete b.photos[id];
-        await drive.writeJSON(c.files.buckets[i], b);
+    if (p.remoteChanged || supplyable.length || unused.length || (legacyLeft && c.files.buckets)) {
+      await download(); // need the current photos to write the whole file back
+      const photos = {};
+      for (const id of used) {
+        let data = remote.photos[id];
+        if (!data && localBlobs.has(id)) data = await blobToDataURL(localBlobs.get(id));
+        if (!data) data = await legacy(id);
+        if (data) photos[id] = data;
       }
-      // If the other phone wrote the index while we were busy, start again
+      // v1 -> v2: keep pointers only for photos we still couldn't move.
+      const photoIndex = {};
+      for (const [id, i] of Object.entries(remote.photoIndex)) if (used.has(id) && !photos[id]) photoIndex[id] = i;
+      const out = { format: 'hearthbook-sync', version: 2, updatedAt: new Date().toISOString(), records: p.records, tombstones: p.tombstones, photos };
+      if (Object.keys(photoIndex).length) out.photoIndex = photoIndex;
+      // If the other phone wrote the file while we were busy, start again
       // with its version, so neither phone's changes are lost.
       const now = await drive.getMeta(c.files.index);
       if (now.version !== before.version) continue;
-      await drive.writeJSON(c.files.index, { ...remote, format: 'hearthbook-sync', version: 1, updatedAt: new Date().toISOString(), records: p.records, tombstones: p.tombstones, photoIndex });
+      const written = await drive.writeJSON(c.files.index, out);
+      await db.setMeta(CACHE_KEY, { fileId: c.files.index, version: written && written.version, index: { records: out.records, tombstones: out.tombstones, photoIndex: out.photoIndex || {}, version: 2 }, photoIds: Object.keys(photos) });
+      if (!c.layout || c.layout < 2) { c.layout = 2; await saveConfig(c); }
+    } else if (full) {
+      await db.setMeta(CACHE_KEY, { fileId: c.files.index, version: before.version, index: { records: remote.records, tombstones: remote.tombstones, photoIndex: remote.photoIndex, version: remote.version }, photoIds: remote.photoIds });
     }
 
     // Apply the other phone's changes here (unless you saved something
@@ -356,7 +458,8 @@ async function syncOnce(c) {
     const gone = p.deleteLocal.filter((id) => fresh.has(id) && stamp(fresh.get(id)) <= p.tombs[id]);
     for (const id of gone) await db.deleteEntry(id);
     await db.setMeta(TOMBS_KEY, p.tombs);
-    return { pulled: keep.length + gone.length, pushed: p.pushed };
+    const waiting = [...used].filter((id) => !localBlobs.has(id) && !keep.some((k) => (k.photos || []).some((x) => x.id === id))).length;
+    return { pulled: keep.length + gone.length, pushed: p.pushed, photosWaiting: waiting };
   }
   throw new Error('Google Drive kept changing while syncing. It will try again shortly.');
 }

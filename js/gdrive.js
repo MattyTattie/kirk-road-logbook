@@ -101,11 +101,21 @@ export async function revoke() {
 }
 
 // ---------- Drive REST ----------
+// Some shared files need a "resource key" sent with every request (Google
+// added these for link-shared files). The picker tells us the key; we
+// remember it here and send it for that file.
+const resourceKeys = {};
+export function setResourceKeys(map) { Object.assign(resourceKeys, map || {}); }
+function rkHeader() {
+  const pairs = Object.entries(resourceKeys).filter(([, k]) => k).map(([id, k]) => `${id}/${k}`);
+  return pairs.length ? { 'X-Goog-Drive-Resource-Keys': pairs.join(',') } : {};
+}
+
 async function call(url, { method = 'GET', body, headers = {}, raw = false } = {}) {
   const token = await getToken();
   let res;
   try {
-    res = await fetch(url, { method, body, headers: { Authorization: `Bearer ${token}`, ...headers } });
+    res = await fetch(url, { method, body, headers: { Authorization: `Bearer ${token}`, ...rkHeader(), ...headers } });
   } catch {
     throw new OfflineError();
   }
@@ -123,7 +133,7 @@ async function call(url, { method = 'GET', body, headers = {}, raw = false } = {
 }
 
 const q = (s) => encodeURIComponent(s);
-const FIELDS = 'id,name,version,modifiedTime,parents,mimeType,capabilities(canEdit,canShare)';
+const FIELDS = 'id,name,version,modifiedTime,parents,mimeType,size,resourceKey,ownedByMe,capabilities(canEdit,canShare)';
 
 export function whoAmI() {
   return call(`${API}/about?fields=${q('user(displayName,emailAddress)')}`).then((r) => r.user);
@@ -170,26 +180,57 @@ export function shareFolder(folderId, email) {
 // ---------- Google Picker ----------
 // The person joining picks the shared Hearthbook files once; that is what
 // gives this app (and only this app) access to them under drive.file.
-export async function pickFiles({ query = 'hearthbook', title = 'Select all the Hearthbook files' } = {}) {
+export async function pickFiles({ query = 'hearthbook-sync', title = 'Select the Hearthbook file', multiselect = true } = {}) {
   const token = await getToken();
   await loadScript('https://apis.google.com/js/api.js');
   await new Promise((resolve, reject) => window.gapi.load('picker', { callback: resolve, onerror: reject }));
   const P = window.google.picker;
+  const R = P.Response || {}, D = P.Document || {};
   return new Promise((resolve) => {
-    const view = new P.DocsView(P.ViewId.DOCS).setQuery(query).setMode(P.DocsViewMode.LIST).setIncludeFolders(false);
-    const picker = new P.PickerBuilder()
+    const view = new P.DocsView(P.ViewId.DOCS)
+      .setQuery(query)
+      .setMode(P.DocsViewMode.LIST)
+      .setIncludeFolders(false)
+      .setSelectFolderEnabled(false);
+    let builder = new P.PickerBuilder()
       .setAppId(GOOGLE_APP_ID)
       .setOAuthToken(token)
       .setDeveloperKey(GOOGLE_API_KEY)
-      .enableFeature(P.Feature.MULTISELECT_ENABLED)
+      .setOrigin(location.protocol + '//' + location.host)
       .enableFeature(P.Feature.SUPPORT_DRIVES)
       .addView(view)
-      .setTitle(title)
+      .setTitle(title);
+    if (multiselect) builder = builder.enableFeature(P.Feature.MULTISELECT_ENABLED);
+    const picker = builder
       .setCallback((data) => {
-        if (data.action === P.Action.PICKED) resolve((data.docs || []).map((d) => ({ id: d.id, name: d.name, parentId: d.parentId })));
-        else if (data.action === P.Action.CANCEL) resolve(null);
+        const action = data[R.ACTION] || data.action;
+        if (action === P.Action.PICKED) {
+          const docs = data[R.DOCUMENTS] || data.docs || [];
+          resolve({
+            action: 'picked',
+            docs: docs.map((d) => ({
+              id: d[D.ID] || d.id,
+              name: d[D.NAME] || d.name || '',
+              mimeType: d[D.MIME_TYPE] || d.mimeType || '',
+              parentId: d[D.PARENT_ID] || d.parentId || '',
+              resourceKey: d.resourceKey || d[D.RESOURCE_KEY] || '',
+            })),
+          });
+        } else if (action === P.Action.CANCEL) resolve({ action: 'cancel', docs: [] });
       })
       .build();
     picker.setVisible(true);
   });
+}
+
+// files.get, retrying a few times: right after picking, Google can take a
+// moment before the new permission is visible to the API.
+export async function getMetaRetry(id, tries = 4) {
+  for (let i = 0; ; i++) {
+    try { return await getMeta(id); }
+    catch (err) {
+      if (i >= tries - 1 || !(err instanceof NotFoundError || err.status === 403)) throw err;
+      await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+    }
+  }
 }

@@ -1035,8 +1035,10 @@ async function syncCard(cardHead) {
     el('li', {}, 'Each phone keeps its own full copy, so the app still works with no signal. Changes are swapped when you open the app, a few seconds after you save, and when you tap Sync now.'),
     el('li', {}, 'If you both change the same entry before syncing, the most recent save wins.'),
     el('li', {}, 'The app can only open its own Hearthbook files, nothing else in your Drive.'));
+  // A message stays for 10 seconds, even if the card redraws meanwhile.
+  if (syncMsg && !syncMsg.until) syncMsg.until = Date.now() + 10000;
+  if (syncMsg && syncMsg.until < Date.now()) syncMsg = null;
   const msg = syncMsg ? el('p', { class: 'sync-msg' + (syncMsg.bad ? ' bad' : ''), id: 'sync-msg', role: 'status' }, syncMsg.text) : null;
-  syncMsg = null;
 
   if (st.state === 'unconfigured') {
     add(head, el('p', {}, 'Off. Everything stays on this phone.'), help,
@@ -1057,7 +1059,7 @@ async function syncCard(cardHead) {
     add(head,
       el('ul', { class: 'sync-facts' }, el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who))),
       el('p', {}, 'Is this the first phone? Start a shared logbook. It creates a “Hearthbook” folder in your Drive and copies this phone’s entries into it. Then share the folder with your partner.'),
-      el('p', {}, 'If someone has already shared a Hearthbook folder with you, tap Join. Google’s file picker opens: tick all 9 files whose names start with “hearthbook” and tap Select. You only do this once.'),
+      el('p', {}, 'If someone has already shared a Hearthbook folder with you, tap Join. Google’s file picker opens: tap “hearthbook-sync.json” (ignore any other hearthbook files), then tap Select. You only do this once.'),
       el('div', { class: 'sync-actions' },
         el('button', { type: 'button', class: 'btn', id: 'sync-create', onclick: (ev) => busyBtn(ev.currentTarget, 'Creating…', async () => {
           await sync.createShared();
@@ -1066,11 +1068,12 @@ async function syncCard(cardHead) {
         el('button', { type: 'button', class: 'btn secondary', id: 'sync-join', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening picker…', async () => {
           const r = await sync.joinShared();
           if (r.cancelled) return;
-          if (r.missing) syncMsg = { text: `Some files weren’t selected: ${r.missing.join(', ')}. Tap Join again and tick all 9 files.`, bad: true };
-          else syncMsg = { text: 'Joined. Both phones now share one logbook.' };
+          if (r.missing) syncMsg = { text: `${r.have} of ${r.of} linked. ${r.missing.join(', ')} isn’t linked yet: tap Join again, tap that file, then Select. (If it keeps failing, open “Sync details” below and send a screenshot.)`, bad: true };
+          else syncMsg = { text: `${r.of} of ${r.of} linked. Joined: both phones now share one logbook.` };
         }) }, 'Join a logbook shared with me'),
         el('button', { type: 'button', class: 'btn link-btn', id: 'sync-disconnect', onclick: async () => { await sync.disconnect(); rerender(); } }, 'Cancel and sign out')),
-      msg);
+      msg,
+      await syncDetails());
     return card;
   }
 
@@ -1104,7 +1107,8 @@ async function syncCard(cardHead) {
         await sync.disconnect();
         rerender();
       } }, 'Disconnect this phone')),
-    el('details', { class: 'sync-more' }, el('summary', {}, 'How sync works'), help));
+    el('details', { class: 'sync-more' }, el('summary', {}, 'How sync works'), help),
+    await syncDetails());
   // Redraw this card when the sync status changes (while it's on screen).
   let off = null;
   setTimeout(() => {
@@ -1114,6 +1118,42 @@ async function syncCard(cardHead) {
     });
   }, 0);
   return card;
+}
+
+// "Sync details": what Google's picker returned and which Drive files this
+// app can open, so a problem can be diagnosed from a screenshot.
+async function syncDetails() {
+  const box = el('pre', { class: 'sync-diag', id: 'sync-diag' });
+  const fill = async () => {
+    const [c, d, st] = [await sync.getConfig(), await sync.getDiag(), sync.getStatus()];
+    const short = (id) => (!id ? '—' : String(id).length > 16 ? String(id).slice(0, 10) + '…' + String(id).slice(-4) : String(id));
+    const lines = [
+      `state: ${st.state}${st.message ? ' — ' + st.message : ''}`,
+      `account: ${(c.account && c.account.email) || '—'}`,
+      `layout: ${c.files && c.files.index ? "v" + (c.layout || 1) : "—"} · file: ${short(c.files && c.files.index)}`,
+      `old photo files: ${c.files && c.files.buckets ? c.files.buckets.filter(Boolean).length + ' of 8' : 'none'}`,
+      `last synced: ${c.lastSync || 'never'}`,
+      d.picker ? `picker: ${d.picker.error ? 'error ' + d.picker.error : `${d.picker.action}, ${d.picker.count} file(s)`}` : 'picker: not used yet',
+      ...((d.picker && d.picker.docs) || []).map((x) => `  · ${x.name || '(no name)'} ${short(x.id)} ${x.mimeType || ''}${x.resourceKey ? ' +key' : ''}`),
+      ...((d.checks || []).map((x) => `  check ${x.name || short(x.id)}: ${x.ok ? 'OK' : 'FAILED ' + x.error}`)),
+      d.accessible ? `app can open: ${d.accessible.length ? '' : 'nothing'}` : 'app can open: (tap Refresh)',
+      ...((d.accessible || []).map((x) => (x.error ? `  error ${x.error}` : `  · ${x.name} ${short(x.id)} v${x.version || '?'}${x.size ? ' ' + Math.round(x.size / 1024) + ' KB' : ''}`))),
+      d.lastError ? `last error: ${d.lastError}` : '',
+      d.at ? `details from: ${new Date(d.at).toLocaleString('en-GB')}` : '',
+    ].filter(Boolean);
+    box.textContent = lines.join('\n');
+  };
+  await fill();
+  return el('details', { class: 'sync-more', id: 'sync-details' },
+    el('summary', {}, 'Sync details (for troubleshooting)'),
+    box,
+    el('button', { type: 'button', class: 'btn secondary small', id: 'sync-diag-refresh', onclick: async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      try { await sync.refreshDiag(); } catch (err) { box.textContent += `\nrefresh failed: ${err.message}`; }
+      await fill();
+      btn.disabled = false;
+    } }, 'Refresh details'));
 }
 
 // The little chip in the top bar: "On this phone", or the sync status.
