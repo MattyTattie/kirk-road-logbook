@@ -3,6 +3,8 @@
 // =====================================================================
 // barChart(bars, options) gives back an element containing an <svg>.
 //   bars: [{ label: 'Jan', value: 123.45, title: 'January 2026' }, …]
+//   A bar may also have `compare` (e.g. the same month last year): it's drawn
+//   as a slim faded bar just behind, for a year-on-year view.
 //
 // One huge month (say, a new kitchen) would squash every other bar flat.
 // So if the biggest bar is much bigger than the next one, we cap the scale
@@ -20,7 +22,8 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
   const slot = W / n;
   const barW = Math.min(18, slot * 0.58);
 
-  const values = bars.map((b) => b.value || 0);
+  const values = bars.map((b) => Math.max(b.value || 0, b.compare || 0));
+  const hasCompare = bars.some((b) => b.compare != null);
   const sorted = [...values].sort((a, b) => b - a);
   let max = sorted[0] || 0;
   let capped = false;
@@ -51,6 +54,11 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
     // Each column is a keyboard-focusable "button" when the chart is interactive.
     const a11y = onSelect ? ` tabindex="${i === selected || (selected < 0 && i === bars.length - 1) ? 0 : -1}" role="button" aria-pressed="${i === selected}" aria-label="${esc(describe ? describe(b, v) : `${b.title || b.label}: ${format(v)}`)}"` : '';
     svg += `<g class="chart-col" data-i="${i}"${a11y}><rect x="${slot * i}" y="0" width="${slot}" height="${H}" fill="transparent" class="chart-hit"/>`;
+    if (hasCompare && b.compare > 0) {
+      const ch = Math.max(3, Math.min(1, b.compare / max) * plotH);
+      const cw = Math.max(4, barW * 0.55);
+      svg += `<rect x="${x - cw * 0.55}" y="${top + plotH - ch}" width="${cw}" height="${ch}" rx="${Math.min(3, cw / 2)}" class="chart-compare"/>`;
+    }
     if (h > 0) svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="${Math.min(5, barW / 2)}" class="${cls}"/>`;
     if (over) {
       const zy = top + plotH * 0.35;

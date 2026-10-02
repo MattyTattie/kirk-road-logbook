@@ -22,8 +22,9 @@
 // v4 = optional Google Drive sync.
 // v5 = real Google IDs.
 // v6 = sync: one shared file (easier joining), sync details.
+// v7 = Insurance section, unit rates & standing charge, year-on-year charts, no backup nag while synced.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v6';
+const CACHE_NAME = 'hearthbook-v7';
 
 // The scanner's libraries (OCR engine + English model + PDF reader) are big
 // (~8 MB to download), so they get their OWN cache with its own version.
@@ -72,6 +73,7 @@ const APP_SHELL = [
   './js/periodcard.js',
   './js/scan.js',
   './js/parse.js',
+  './js/tariff.js',
   './js/sync.js',
   './js/gdrive.js',
   './fonts/inter-latin.woff',

@@ -42,6 +42,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/charts.js` | Tiny SVG bar charts and sparklines, drawn by our own code (no chart library, nothing downloaded, works offline). |
 | `js/periodcard.js` | The swipeable detail card under the meter chart and the dashboard spending chart (see section 4b). |
 | `js/scan.js` | **Scan receipt or bill**: opens a PDF (pdf.js) or reads a photo with OCR (Tesseract). Only loaded when you open the scanner. |
+| `js/tariff.js` | Unit rates (pence per kWh) and standing charges (pence a day): reads them from bill notes and from what you type in the meter form. Small, so the main screens use it without loading the scanner. |
 | `js/parse.js` | Turns the scanned text into title, date, total, supplier and, for energy bills, the period and meter readings. Plain JavaScript, no browser needed (so it can be tested with Node). |
 | `js/sync.js` | **Optional Google Drive sync**: merges this phone's entries with the shared folder, entry by entry (section 9). Does nothing while sync is off. |
 | `js/gdrive.js` | Google sign-in, Drive file calls and the Google file picker. Google's scripts are only loaded once you tap Connect. |
@@ -57,7 +58,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
 | `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
-| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus two made-up sample documents `demo-receipt.png` / `demo-bill.pdf`. See section 7. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -126,9 +127,19 @@ restoring twice doesn't make duplicates.
 On the **Meters** screen, tap a bar in *Daily use between readings* (or
 Tab to it and press Enter/Space; the arrow keys, Home and End move along the
 bars). The bar is highlighted and a card opens with that period's dates,
-kWh used, average kWh a day, the bill and the cost per kWh (bill ÷ kWh, so
-it includes the standing charge), and the change from the period before
-(kWh and £). If a bill is logged for that period, its photo is shown with an
+kWh used, average kWh a day, the bill, the **unit rate** and **standing
+charge** from the bill (with what the standing charge cost for the period,
+before VAT), the **all-in cost per kWh** (bill ÷ kWh, so it includes the
+standing charge and VAT), and the change from the period before (kWh and £).
+
+Where the rates come from: the meter form's *Tariff from the bill* fields
+(filled in by the scanner, or typed: `21.074`, `Day 30.1, Night 15.2`, or
+`24.51 to 13 May, 21.074 from 14 May` when the price changed part way
+through). If those are empty, the app reads the bill's notes (e.g. "at
+21.074p/kWh … standing 57.972p/day"). A price change shows as
+`24.51p → 21.07p` with "new rate from 14 May"; day/night meters show
+`Day 30.10p · Night 15.20p`. Notes like "at 20.189/21.074p" (two rates, no
+dates) show as `20.19p / 21.07p`, "tariff changed in this period". If a bill is logged for that period, its photo is shown with an
 **Open bill** button; if not, the card says so and offers **Add bill**.
 
 The bill for a period is the closing reading itself if it has a cost (the
@@ -144,6 +155,17 @@ still scrolls the page.
 The dashboard's 12-month **Spending** chart has the same card: month total,
 number of entries with a cost, change from the month before, and the three
 biggest costs (tap one to open it).
+
+**Year picker / year on year.** Both charts have chips above them:
+*12 months* (or *Periods* on the Meters screen) and the last three years
+with data (2024, 2025, 2026). Pick a year and you get Jan–Dec bars for that
+year with the same months of the year before as slim grey bars behind them.
+The heading compares like with like: for this year it's January to the
+current month against the same months last year. On the Meters screen, kWh
+are spread evenly over the days between two readings and added up per
+calendar month (pale = no readings that month), and the card compares the
+month with the same month last year. Months with no logged bill count as
+£0, so gaps in the logbook (e.g. early 2025) make a year look cheaper.
 
 ## 4c. Scan a receipt or bill
 
@@ -195,6 +217,32 @@ read from your real bills and receipts (kept in
 `/workspace/logbook-scan-samples/`, *outside* the app folder because they
 contain personal details) and compares it with what's in your logbook.
 
+## 4d. Insurance
+
+**+ → Insurance policy.** Fields: type (Home / Car / Life / Other), insurer,
+policy number, cost and whether it's paid yearly or monthly, start date,
+**renewal date**, who's covered, notes, and photos or documents (choose a
+PDF and page 1 is kept as a picture). Leave the name empty and it becomes
+e.g. "Car insurance – Aviva".
+
+The Insurance list is sorted by renewal date and shows the total yearly cost
+(monthly premiums × 12). A renewal within **30 days** is highlighted, always
+appears under **Coming up** on the dashboard (even if three other things are
+due sooner), and the **Next due** card adds "… renews within 30 days".
+Premiums are a running cost, not one-off spending, so they're left out of the
+*Spent in* total and the Spending chart; the Insurance tile shows them per
+year instead.
+
+How it's stored (so nothing breaks): an ordinary entry with
+`type: 'insurance'`, the insurer in `supplier`, the start date in `date` and
+the renewal date in `dueDate`, plus `insType`, `policyNumber`, `costFreq`
+('annual'/'monthly') and `covered`. Same database, same backup format
+(version 1), and Drive sync carries every field. Older copies of the app
+(the original one and the published v5–v6) restore and sync these entries
+without errors: they show them as a plain "insurance" section with the
+renewal as a due date, and editing one there keeps the policy fields
+(tested in `tests/test_insurance.py`).
+
 ## 5. How to change something simple
 
 ### Example: add a new section "Insurance"
@@ -216,8 +264,11 @@ contain personal details) and compares it with what's in your logbook.
    },
    ```
 
-2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v3'` to
-   `'hearthbook-v7'` (do this after **any** change, so phones fetch
+   (Insurance is now built in like this. It also has `kind: 'insurance'`,
+   which turns on the extra policy fields, and `soonDays: 30`.)
+
+2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v7'` to
+   `'hearthbook-v8'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
@@ -237,8 +288,12 @@ contain personal details) and compares it with what's in your logbook.
   sets), and the colours at the top of `make_icons.py` for the icon.
 - **App icon:** edit the SVG in `make_icons.py`, then run
   `python3 make_icons.py` (uses Playwright's Chromium to turn it into PNGs).
-- **"Soon" window (60 days) / backup reminder (30 days):**
-  constants in `js/sections.js`.
+- **"Soon" window (60 days; insurance 30 via `soonDays`) / backup reminder (30 days):**
+  constants in `js/sections.js`. The backup reminder is hidden while Google
+  Drive sync is connected and has synced in the last 7 days without a
+  problem (`isHealthy()` in `js/sync.js`), because Drive then holds a full
+  copy, photos included. It comes back if sync is switched off, shows an
+  error or sign-in prompt, or hasn't synced for a week.
 - **Photo size/quality:** `MAX_SIZE` and `QUALITY` in `js/photos.js`.
 - **Meter units offered:** the `['kWh', 'm³', …]` list in `js/app.js`.
 
@@ -306,6 +361,12 @@ joining a shared logbook, edits, photos, deletes, offline, a clash, an
 expired sign-in and disconnecting:
 `LOGBOOK_BASE=http://localhost:8766/ python tests/test_sync.py`.
 `node tests/sync_plan.mjs` checks the merge rules on their own.
+
+`tests/test_insurance.py` checks the Insurance section, unit rates and
+standing charges, the year pickers, the EDF gap-fill backup, and that the
+original app (`OLD_APP`, default `http://localhost:8770/`) and the published
+v5 (`V5_APP`, default `http://localhost:8772/old/`) cope with insurance
+entries. `node tests/tariff_parse.mjs` checks the rate parsing.
 
 `tests/test_upgrade.py` serves the original app and this one from the same
 address, saves data with the old one and checks the new one shows it all.

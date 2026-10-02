@@ -18,6 +18,13 @@
 //   dueLabel  – the label for that date field
 //   dueWord   – the word used in "expires in 12 days" / "due in 12 days"
 //   showMeter – true if the form should show the meter value + unit fields
+//   soonDays  – (optional) how many days ahead counts as "soon" for this
+//               section, instead of SOON_DAYS below
+//   kind      – (optional) 'insurance' turns on the policy fields
+//
+// Older copies of the app don't know newer sections (e.g. Insurance). They
+// still open, back up and sync those entries using the fallback in
+// getSection() at the bottom, so nothing is lost.
 
 export const SECTIONS = [
   {
@@ -64,10 +71,45 @@ export const SECTIONS = [
     showDue: false,
     showMeter: true,
   },
+  {
+    // Policies: renewal date is stored in dueDate (so older app versions
+    // still show it as a due date), the insurer in supplier, and the start
+    // date in date. Extra fields: insType, policyNumber, costFreq, covered.
+    id: 'insurance',
+    glyph: 'umbrella',
+    tone: 'rose',
+    label: 'Insurance',
+    single: 'Insurance policy',
+    icon: '☂️',
+    kind: 'insurance',
+    showDue: true,
+    dueLabel: 'Renewal date',
+    dueWord: 'renews',
+    soonDays: 30,
+    showMeter: false,
+  },
 ];
+
+// Insurance policy types (stored as the short id).
+export const INSURANCE_TYPES = [
+  { id: 'home', label: 'Home' },
+  { id: 'car', label: 'Car' },
+  { id: 'life', label: 'Life' },
+  { id: 'other', label: 'Other' },
+];
+export const insuranceTypeLabel = (id) => (INSURANCE_TYPES.find((t) => t.id === id) || { label: 'Other' }).label;
+
+// Yearly cost of a policy: monthly premiums × 12.
+export function annualCost(e) {
+  const c = Number(e && e.cost) || 0;
+  return e && e.costFreq === 'monthly' ? Math.round(c * 1200) / 100 : c;
+}
 
 // How many days ahead counts as "coming up soon" (gets highlighted).
 export const SOON_DAYS = 60;
+
+// "Soon" window for one entry (insurance renewals: 30 days).
+export const soonDaysFor = (e) => getSection(e && e.type).soonDays || SOON_DAYS;
 
 // How many days without a backup before we show the reminder.
 export const BACKUP_REMINDER_DAYS = 30;

@@ -12,10 +12,16 @@
 //     reference,                       // order / invoice / bill number
 //     meter: { closing, closingDate, opening, openingDate, used, unit,
 //              periodStart, periodEnd } // energy bills only
+//     tariff: { rates: [{ p, label, from, to }], standing: [{ p, from, to }] }
+//              // unit rates (pence/kWh) and standing charges (pence/day),
+//              // energy bills only; several when the tariff changed or for
+//              // day/night (Economy 7) meters
 //     title, notes, found: { … }       // which fields we're confident about
 //   }
 //
 // Pure functions only (no browser APIs), so the tests can run it in Node.
+
+import { addRate } from './tariff.js';
 
 // ---------- Known suppliers ----------
 // kind 'energy' makes the scan a meter-reading/bill entry.
@@ -319,6 +325,50 @@ function parseEnergy(allLines, text, defaultYear) {
   return { meter, total };
 }
 
+
+// ---------- Tariff: unit rates and standing charges ----------
+// Lines like "Unit rate 21.074p/kWh", "Day unit rate 30.10p per kWh",
+// "Electricity used 264.13 kWh @ 24.510p/kWh", "Standing charge 57.972p/day",
+// "Standing charge 63.20p a day". A bill covering a tariff change has a
+// heading per part, e.g. "Engage Employee Jun27 (27 February 2026 - 2 March 2026)",
+// which tells us from when each rate applied.
+const RATE_LABEL = /\b(day|night|peak|off[- ]?peak|economy|heating|standard)\b/i;
+const tidyLabel = (w) => (w ? w[0].toUpperCase() + w.slice(1).toLowerCase().replace(/^off[- ]?peak$/, 'Off-peak') : '');
+const PENCE_KWH = /(\d{1,3}(?:\.\d{1,4})?)\s*p\s*(?:\/|per\s+)\s*kwh/i;
+const PENCE_DAY = /(\d{1,3}(?:\.\d{1,4})?)\s*p\s*(?:\/\s*day|a\s+day|per\s+day)/i;
+
+export function parseTariff(allLines, defaultYear = new Date().getFullYear()) {
+  const rates = [], standing = [];
+  let seg = null; // { from, to } of the tariff part we're reading
+  for (let i = 0; i < allLines.length; i++) {
+    let l = allLines[i];
+    // A tariff-part heading, possibly wrapped: "(3 December 2025 - 31 December" + "2025)"
+    if (/\(\s*\d{1,2}\s+[a-z]+\.?\s*(\d{4})?\s*-\s*\d{1,2}\s+[a-z]+/i.test(l)) {
+      const joined = /\d{4}\)/.test(l) ? l : l + ' ' + (allLines[i + 1] || '');
+      const ds = findDates(joined.slice(joined.indexOf('(')), defaultYear);
+      if (ds.length >= 2) {
+        let a = ds[0], b = ds[1];
+        if (!a.hasYear && b.hasYear) a = { ...a, iso: a.iso.replace(/^\d{4}/, b.iso.slice(0, 4)) };
+        seg = { from: a.iso, to: b.iso };
+      }
+    }
+    const lab = (l.match(RATE_LABEL) || [])[1];
+    const kwh = l.match(PENCE_KWH);
+    if (kwh && (/unit rate|rate\b|@|\bat\b/i.test(l))) {
+      const p = Number(kwh[1]);
+      if (p > 1 && p < 200) addRate(rates, { p, label: tidyLabel(lab && !/standard|heating/i.test(lab) ? lab : ''), ...(seg || {}) });
+    }
+    const day = /standing/i.test(l) && l.match(PENCE_DAY);
+    if (day) {
+      const p = Number(day[1]);
+      if (p > 1 && p < 500) addRate(standing, { p, ...(seg || {}) });
+    }
+  }
+  // A single part needs no dates.
+  for (const list of [rates, standing]) if (list.length === 1) { delete list[0].from; delete list[0].to; }
+  return { rates, standing };
+}
+
 const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const gbp = (n) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -346,6 +396,7 @@ export function parseDocument(text, { today = new Date() } = {}) {
     const { meter, total } = parseEnergy(allLines, clean, defaultYear);
     result.meter = meter;
     result.total = total;
+    result.tariff = parseTariff(allLines, defaultYear);
     // Convention in this logbook: a bill is dated on its closing reading
     // (which is the day after the period ends).
     result.date = meter.closingDate || (meter.periodEnd ? addDays(meter.periodEnd, 1) : pickDate(allLines, defaultYear));
@@ -355,6 +406,9 @@ export function parseDocument(text, { today = new Date() } = {}) {
     if (meter.periodStart) bits.push(`Period ${ukDate(meter.periodStart)} – ${ukDate(meter.periodEnd)}`);
     if (meter.used != null) bits.push(`Used ${meter.used} kWh`);
     if (meter.opening != null) bits.push(`Readings ${meter.opening} → ${meter.closing} kWh`);
+    const tr = result.tariff;
+    if (tr.rates.length) bits.push(`Unit rate ${tr.rates.map((r) => `${r.label ? r.label + ' ' : ''}${r.p}p/kWh${r.from && tr.rates.length > 1 ? ' from ' + ukDate(r.from) : ''}`).join(', ')}`);
+    if (tr.standing.length) bits.push(`Standing charge ${tr.standing.map((r) => `${r.p}p/day${r.from && tr.standing.length > 1 ? ' from ' + ukDate(r.from) : ''}`).join(', ')}`);
     if (reference) bits.push(`Bill ref ${reference}`);
     result.notes = bits.join('. ') + (bits.length ? '.' : '');
   } else {

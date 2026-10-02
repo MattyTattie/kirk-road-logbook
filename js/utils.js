@@ -80,7 +80,7 @@ export function dueText(word, days) {
   if (days > 90) return `${word} in about ${Math.round(days / 30.44)} months`;
   if (days > 0) return `${word} in ${days} days`;
   const ago = -days;
-  const past = word === 'expires' ? 'expired' : 'was due';
+  const past = word === 'expires' ? 'expired' : word === 'renews' ? 'renewal was due' : 'was due';
   return `${past} ${ago} day${ago === 1 ? '' : 's'} ago`;
 }
 

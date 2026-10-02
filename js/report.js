@@ -4,7 +4,7 @@
 // It loads every entry, groups them by section, adds up the costs, and
 // draws a simple document. Photos are shown as small thumbnails.
 
-import { SECTIONS, getSection, SOON_DAYS } from './sections.js';
+import { SECTIONS, getSection, soonDaysFor, insuranceTypeLabel, annualCost } from './sections.js';
 import { APP_NAME, ADDRESS } from './config.js';
 import { getAllEntries } from './db.js';
 import { el, money, totalCost, niceDate, daysUntil, dueText, newestFirst } from './utils.js';
@@ -33,12 +33,18 @@ async function build() {
     const section = getSection(type);
     const items = entries.filter((e) => e.type === type);
     if (!items.length) continue;
-    parts.push(el('h2', {}, el('span', {}, `${section.icon} ${section.label}`), el('span', {}, money(totalCost(items)))));
+    const sum = section.kind === 'insurance' ? `${money(totalCost(items.map((e) => ({ cost: annualCost(e) }))))} a year` : money(totalCost(items));
+    parts.push(el('h2', {}, el('span', {}, `${section.icon} ${section.label}`), el('span', {}, sum)));
     for (const e of items) parts.push(itemRow(e, section));
   }
 
   if (!entries.length) parts.push(el('p', { class: 'empty' }, 'No entries yet.'));
-  else parts.push(el('div', { class: 'grand', id: 'grand-total' }, `Total of all costs: ${money(totalCost(entries))}`));
+  else {
+    // Insurance premiums are a yearly running cost, shown under their own heading.
+    const policies = entries.filter((e) => e.type === 'insurance');
+    parts.push(el('div', { class: 'grand', id: 'grand-total' }, `Total of all costs: ${money(totalCost(entries.filter((e) => e.type !== 'insurance')))}`,
+      policies.length ? ` · insurance ${money(totalCost(policies.map((e) => ({ cost: annualCost(e) }))))} a year` : ''));
+  }
 
   root.replaceChildren(...parts);
 
@@ -50,8 +56,11 @@ async function build() {
 
 function itemRow(e, section) {
   const days = daysUntil(e.dueDate);
-  const cls = days === null ? '' : days < 0 ? 'expired' : days <= SOON_DAYS ? 'soon' : '';
-  const line = [niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
+  const cls = days === null ? '' : days < 0 ? 'expired' : days <= soonDaysFor(e) ? 'soon' : '';
+  const ins = section.kind === 'insurance';
+  const line = ins
+    ? [e.insType ? `${insuranceTypeLabel(e.insType)} insurance` : '', e.supplier, e.policyNumber ? `policy ${e.policyNumber}` : '', e.covered ? `covers ${e.covered}` : '', e.date ? `since ${niceDate(e.date)}` : ''].filter(Boolean).join(' · ')
+    : [niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
   return el(
     'div',
     { class: 'item' },
@@ -61,13 +70,13 @@ function itemRow(e, section) {
       el('div', { class: 'title' }, e.title),
       line ? el('div', { class: 'line' }, line) : null,
       e.meterValue !== null && e.meterValue !== undefined ? el('div', { class: 'line' }, `Reading: ${e.meterValue} ${e.meterUnit || ''}`) : null,
-      e.dueDate ? el('div', { class: 'line ' + cls }, `${section.dueWord === 'expires' ? 'Expires' : 'Next due'} ${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})`) : null,
+      e.dueDate ? el('div', { class: 'line ' + cls }, `${section.dueWord === 'expires' ? 'Expires' : section.dueWord === 'renews' ? 'Renews' : 'Next due'} ${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})`) : null,
       e.notes ? el('div', { class: 'notes' }, e.notes) : null,
       e.photos && e.photos.length
         ? el('div', { class: 'thumbs' }, e.photos.map((p) => el('img', { src: URL.createObjectURL(p.blob), alt: 'Photo' })))
         : null
     ),
-    e.cost ? el('div', { class: 'cost' }, money(e.cost)) : null
+    e.cost ? el('div', { class: 'cost' }, money(e.cost) + (ins ? (e.costFreq === 'monthly' ? '/month' : '/year') : '')) : null
   );
 }
 

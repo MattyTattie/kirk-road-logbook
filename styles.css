@@ -41,6 +41,7 @@
   --indigo: #4338ca; --indigo-soft: #eef0ff;
   --teal: #0f766e;   --teal-soft: #e3f4f1;
   --violet: #6d28d9; --violet-soft: #f3eeff;
+  --rose: #be123c;   --rose-soft: #ffe9ee;
   --amber: #b45309;  --amber-soft: #fff1d6;
   --slate: #475467;  --slate-soft: #eef0f3;
 
@@ -64,6 +65,7 @@
     --soon: #ffb86b; --soon-bg: #2e2416; --bad: #ff8b80; --bad-bg: #331b1a; --good: #6ee7a8; --good-bg: #13291f;
     --indigo: #a5b4fc; --indigo-soft: #23264a; --teal: #5eead4; --teal-soft: #12302d;
     --violet: #c4b5fd; --violet-soft: #2a2145; --amber: #fcd34d; --amber-soft: #33290f;
+    --rose: #fda4af; --rose-soft: #3a1820;
     --slate: #cbd2dc; --slate-soft: #252a33;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3); --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.5);
   }
@@ -76,6 +78,7 @@
   --soon: #ffb86b; --soon-bg: #2e2416; --bad: #ff8b80; --bad-bg: #331b1a; --good: #6ee7a8; --good-bg: #13291f;
   --indigo: #a5b4fc; --indigo-soft: #23264a; --teal: #5eead4; --teal-soft: #12302d;
   --violet: #c4b5fd; --violet-soft: #2a2145; --amber: #fcd34d; --amber-soft: #33290f;
+  --rose: #fda4af; --rose-soft: #3a1820;
   --slate: #cbd2dc; --slate-soft: #252a33;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3); --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.5);
 }
@@ -84,6 +87,7 @@
 [data-tone='indigo'] { --tone: var(--indigo); --tone-soft: var(--indigo-soft); }
 [data-tone='teal']   { --tone: var(--teal);   --tone-soft: var(--teal-soft); }
 [data-tone='violet'] { --tone: var(--violet); --tone-soft: var(--violet-soft); }
+[data-tone='rose']   { --tone: var(--rose);   --tone-soft: var(--rose-soft); }
 [data-tone='amber']  { --tone: var(--amber);  --tone-soft: var(--amber-soft); }
 [data-tone='slate']  { --tone: var(--slate);  --tone-soft: var(--slate-soft); }
 [data-tone='brand']  { --tone: var(--brand);  --tone-soft: var(--brand-soft); }
@@ -625,3 +629,33 @@ body.no-nav .bottom-nav { display: none; }
 .sync-invite .btn { flex: none; padding: 0 18px; }
 .sync-diag { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface-2); border-radius: 10px; padding: 10px; white-space: pre-wrap; word-break: break-all; margin: 8px 0; }
 .sync-more summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--text-2); font-size: 14px; }
+
+/* ---- Year picker + year-on-year charts ---- */
+.year-picker { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 10px; }
+.year-chip { border: 1px solid var(--line); background: var(--surface-2); color: var(--text-2); font: inherit; font-size: 0.82rem; font-weight: 600; padding: 5px 11px; border-radius: 999px; cursor: pointer; min-height: 32px; }
+.year-chip.active { background: var(--text); color: var(--surface); border-color: var(--text); }
+.year-chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.chart-compare { fill: var(--text-3); opacity: 0.38; }
+.chart-bar.is-muted { opacity: 0.4; }
+.chart-legend { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-3); margin: 2px 0 6px; }
+.chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.chart-legend i + i, .chart-legend i:not(:first-child) { margin-left: 8px; }
+.chart-legend .lg-now { background: var(--brand); }
+.meter-card .chart-legend .lg-now { background: var(--amber); }
+.chart-legend .lg-then { background: var(--text-3); opacity: 0.45; }
+.yoy { font-weight: 600; }
+.yoy.up { color: var(--bad); }
+.yoy.down { color: var(--good); }
+
+/* ---- Insurance ---- */
+.ins-types { display: grid; grid-template-columns: repeat(4, 1fr); }
+.radio-seg { position: relative; justify-content: center; }
+.radio-seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.radio-seg:has(input:checked) { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.radio-seg:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 1px; }
+.entry-cost small, .detail-amount small { font-size: 0.7em; font-weight: 600; color: var(--text-3); margin-left: 1px; }
+
+/* ---- Tariff fields on meter readings ---- */
+.tariff-fields { border: 1px solid var(--line); border-radius: 14px; padding: 4px 12px; margin: 4px 0 14px; background: var(--surface); }
+.tariff-fields summary { cursor: pointer; font-weight: 600; padding: 10px 0; color: var(--text-2); }
+.tariff-fields[open] summary { margin-bottom: 4px; }

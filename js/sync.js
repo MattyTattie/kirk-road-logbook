@@ -256,6 +256,17 @@ export async function disconnect() {
 // ---------- syncing ----------
 let running = null;
 let again = false;
+// "Connected and healthy": joined a shared file, synced within the last
+// 7 days and not currently showing a problem. Used to hide the backup
+// reminder (Drive holds a copy, photos included).
+export async function isHealthy() {
+  if (['error', 'signin', 'nofolder', 'unconfigured'].includes(status.state)) return false;
+  const c = await getConfig();
+  if (!ready(c) || !drive.isConfigured()) return false;
+  const last = c.lastSync ? Date.parse(c.lastSync) : 0;
+  return Date.now() - last < 7 * 86400000;
+}
+
 export function syncNow({ interactive = false } = {}) {
   if (running) { again = true; return running; }
   running = (async () => {

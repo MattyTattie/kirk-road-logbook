@@ -22,7 +22,7 @@
 // into the <main id="app"> box. A nice side effect: the phone's Back button
 // works, because each screen has its own address in the history.
 
-import { SECTIONS, getSection, SOON_DAYS, BACKUP_REMINDER_DAYS } from './sections.js';
+import { SECTIONS, getSection, SOON_DAYS, BACKUP_REMINDER_DAYS, soonDaysFor, INSURANCE_TYPES, insuranceTypeLabel, annualCost } from './sections.js';
 import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
@@ -31,7 +31,8 @@ import { el, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFir
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
-import { spendInYear, monthlySpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
+import { spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
+import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
 import * as sync from './sync.js';
 
@@ -43,6 +44,8 @@ const state = {
   query: '', // what's typed in the search box
   chartMode: 'all', // dashboard chart: 'all' spending or just 'bills'
   chartPick: -1, // which bar is tapped
+  chartYear: 0, // dashboard chart: 0 = last 12 months, or a calendar year
+  meterYear: 0, // meter chart: 0 = periods between readings, or a calendar year
 };
 
 // The name comes from config.js, so renaming is a one-line change.
@@ -168,6 +171,8 @@ function screenHead(title, { back, sub, id, action } = {}) {
 // "You haven't made a backup" banner, if it's due.
 async function backupReminder(count) {
   if (count === 0) return null;
+  // Drive sync keeps a copy in Google Drive, so no nagging while it's working.
+  if (await sync.isHealthy()) return null;
   const lastBackup = await db.getMeta('lastBackup');
   const days = lastBackup ? Math.floor((Date.now() - new Date(lastBackup)) / 86400000) : null;
   if (days !== null && days <= BACKUP_REMINDER_DAYS) return null;
@@ -285,6 +290,8 @@ async function renderHome() {
   // --- Next due / expiring ---
   const next = upcoming(everything)[0];
   const late = overdue(everything);
+  // Insurance renewing within its 30-day window is always flagged.
+  const renewSoon = upcoming(everything).filter((e) => e.type === 'insurance' && daysUntil(e.dueDate) <= soonDaysFor(e));
   const nextCard = el(
     'a',
     { class: 'stat-card', id: 'next-due', href: next ? `#/view/${next.id}` : '#/list/warranty' },
@@ -293,10 +300,13 @@ async function renderHome() {
       ? [
           el('span', { class: 'stat-value' }, niceDate(next.dueDate)),
           el('span', { class: 'stat-title' }, next.title),
-          el('span', { class: 'pill ' + (daysUntil(next.dueDate) <= SOON_DAYS ? 'soon' : 'calm'), title: dueText(getSection(next.type).dueWord || 'due', daysUntil(next.dueDate)) }, shortDue(daysUntil(next.dueDate))),
+          el('span', { class: 'pill ' + (daysUntil(next.dueDate) <= soonDaysFor(next) ? 'soon' : 'calm'), title: dueText(getSection(next.type).dueWord || 'due', daysUntil(next.dueDate)) }, shortDue(daysUntil(next.dueDate))),
         ]
       : [el('span', { class: 'stat-value muted' }, 'Nothing due'), el('span', { class: 'stat-title' }, 'Add warranty expiry or service dates to see them here.')],
-    late.length ? el('span', { class: 'stat-foot' }, `${late.length} expired / overdue`) : null
+    late.length ? el('span', { class: 'stat-foot' }, `${late.length} expired / overdue`) : null,
+    renewSoon.filter((e) => e !== next).length
+      ? el('span', { class: 'stat-foot', id: 'next-due-renewal' }, `${renewSoon.length === 1 ? renewSoon[0].title + ' renews' : renewSoon.length + ' policies renew'} within ${getSection('insurance').soonDays} days`)
+      : null
   );
 
   // --- Latest meter reading ---
@@ -343,14 +353,33 @@ async function renderHome() {
 
   // --- Spending chart ---
   const chartCard = el('section', { class: 'card chart-card', id: 'spend-chart', 'aria-labelledby': 'chart-title' });
+  const years = yearsWithData(everything).slice(-3); // e.g. 2024, 2025, 2026
+  if (state.chartYear && !years.includes(state.chartYear)) state.chartYear = 0;
   function drawChart() {
     const source = state.chartMode === 'bills' ? everything.filter((e) => e.type === 'meter') : everything;
-    const months13 = monthlySpend(source, 13); // one extra so the first month has a "previous"
-    const months = months13.slice(1);
+    const yr = state.chartYear;
+    let months, months13, sub;
+    if (yr) {
+      // One calendar year, with last year's same months as faded bars.
+      const prevYear = yearSpend(source, yr - 1);
+      months = yearSpend(source, yr).map((m, i) => ({ ...m, compare: prevYear[i].value, compareTitle: prevYear[i].title }));
+      months13 = prevYear; // in this view the "previous" month is the same month last year
+      // Compare like with like: this year so far vs the same months last year.
+      const upTo = yr === year ? new Date().getMonth() + 1 : 12;
+      const now = totalCost(months.slice(0, upTo).map((m) => ({ cost: m.value })));
+      const then = totalCost(prevYear.slice(0, upTo).map((m) => ({ cost: m.value })));
+      const total = totalCost(months.map((m) => ({ cost: m.value })));
+      const d = now - then;
+      sub = el('p', { class: 'card-sub', id: 'chart-sub' }, `${yr} · ${money(total)}`,
+        then > 0 ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'chart-yoy' }, ` ${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} vs ${yr - 1}${upTo < 12 ? ' (Jan–' + months[upTo - 1].short + ')' : ''}`) : el('span', { class: 'yoy', id: 'chart-yoy' }, ` · nothing in ${yr - 1} to compare`));
+    } else {
+      months13 = monthlySpend(source, 13); // one extra so the first month has a "previous"
+      months = months13.slice(1);
+      sub = el('p', { class: 'card-sub', id: 'chart-sub' }, `Last 12 months · ${money(totalCost(months.map((m) => ({ cost: m.value }))))}`);
+    }
     // Default to the latest month that actually has some spending.
     let pick = state.chartPick;
-    if (pick < 0) { pick = months.length - 1; while (pick > 0 && !months[pick].value) pick--; }
-    const total = totalCost(months.map((m) => ({ cost: m.value })));
+    if (pick < 0) { pick = yr === year ? new Date().getMonth() : months.length - 1; while (pick > 0 && !months[pick].value) pick--; }
     const seg = (mode, label) =>
       el('button', { type: 'button', class: 'seg-btn' + (state.chartMode === mode ? ' active' : ''), 'aria-pressed': String(state.chartMode === mode), 'data-mode': mode,
         onclick: () => { state.chartMode = mode; state.chartPick = -1; drawChart(); } }, label);
@@ -360,23 +389,28 @@ async function renderHome() {
       label: 'month',
       count: months.length,
       index: pick,
-      render: (i) => monthDetail(months[i], months13[i], source),
+      render: (i) => monthDetail(months[i], months13[i], source, Boolean(yr)),
       onChange: (i) => { state.chartPick = i; chart.select(i); },
     });
-    chart = barChart(months, { height: 150, selected: pick, format: (v) => money(v).replace(/\.\d\d$/, ''), onSelect: (i) => { state.chartPick = i; chart.select(i); card.show(i); } });
-    chartCard.replaceChildren(
+    chart = barChart(months, { height: 150, selected: pick, format: (v) => money(v).replace(/\.\d\d$/, ''),
+      describe: yr ? (bar, v) => `${bar.title}: ${money(v)}; ${bar.compareTitle}: ${money(bar.compare)}` : undefined,
+      onSelect: (i) => { state.chartPick = i; chart.select(i); card.show(i); } });
+    chartCard.replaceChildren(...[
       el('div', { class: 'card-head' },
-        el('div', {}, el('h2', { class: 'card-title', id: 'chart-title' }, 'Spending'), el('p', { class: 'card-sub' }, `Last 12 months · ${money(total)}`)),
+        el('div', {}, el('h2', { class: 'card-title', id: 'chart-title' }, 'Spending'), sub),
         el('div', { class: 'seg', role: 'group', 'aria-label': 'Chart shows' }, seg('all', 'All'), seg('bills', 'Bills'))
       ),
+      yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
+      yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
       card
-    );
+    ].filter(Boolean)); // (replaceChildren would print a null as "null")
   }
   drawChart();
 
   // --- Coming up & recent ---
   const soonList = upcoming(everything).slice(0, 3);
+  for (const e of renewSoon) if (!soonList.includes(e)) soonList.push(e);
   const recent = everything.slice(0, 4);
 
   app.replaceChildren(
@@ -389,7 +423,7 @@ async function renderHome() {
       el('div', { class: 'section-grid' }, SECTIONS.map((s) => sectionTile(s, everything))),
       soonList.length
         ? el('section', { class: 'group' },
-            el('div', { class: 'group-head' }, el('h2', {}, 'Coming up'), el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
+            el('div', { class: 'group-head' }, el('h2', {}, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
             el('div', { class: 'list' }, soonList.map(entryCard)))
         : null,
       el('section', { class: 'group' },
@@ -401,6 +435,12 @@ async function renderHome() {
 
 function sectionTile(s, everything) {
   const items = everything.filter((e) => e.type === s.id);
+  if (s.kind === 'insurance') {
+    const yearly = totalCost(items.map((e) => ({ cost: annualCost(e) })));
+    return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone },
+      sectionBadge(s), el('span', { class: 'tile-label' }, s.label),
+      el('span', { class: 'tile-meta' }, items.length ? `${items.length} · ${money(yearly).replace(/\.\d\d$/, '')}/yr` : 'None yet'));
+  }
   return el(
     'a',
     { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone },
@@ -427,7 +467,7 @@ async function renderList(type) {
   if (type === 'all') {
     const soon = everything.filter((e) => {
       const d = daysUntil(e.dueDate);
-      return d !== null && d >= 0 && d <= SOON_DAYS;
+      return d !== null && d >= 0 && d <= soonDaysFor(e);
     });
     if (soon.length) {
       screen.push(
@@ -450,7 +490,7 @@ async function renderList(type) {
     type: 'search',
     class: 'search',
     id: 'search',
-    placeholder: 'Search title, notes, supplier…',
+    placeholder: section && section.kind === 'insurance' ? 'Search insurer, policy number, notes…' : 'Search title, notes, supplier…',
     value: state.query,
     'aria-label': 'Search',
   });
@@ -465,12 +505,24 @@ async function renderList(type) {
     releasePhotoURLs();
     const q = state.query.trim().toLowerCase();
     const shown = q
-      ? inSection.filter((e) => [e.title, e.notes, e.supplier].some((f) => (f || '').toLowerCase().includes(q)))
+      ? inSection.filter((e) => [e.title, e.notes, e.supplier, e.policyNumber, e.covered].some((f) => (f || '').toLowerCase().includes(q)))
       : inSection;
+
+    // Insurance: soonest renewal first, with the yearly cost of all policies.
+    if (section && section.kind === 'insurance') {
+      const byRenewal = [...shown].sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+      summary.replaceChildren(
+        el('span', {}, `${shown.length} polic${shown.length === 1 ? 'y' : 'ies'}`),
+        el('span', { class: 'total' }, 'Yearly ', el('strong', { id: 'total' }, money(totalCost(shown.map((e) => ({ cost: annualCost(e) })))))));
+      list.replaceChildren(...(byRenewal.length ? byRenewal.map(entryCard)
+        : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
+            el('p', {}, q ? 'Nothing matches your search.' : 'No insurance policies yet. Tap + to add home, car or life cover and get a reminder before each renewal.'))]));
+      return;
+    }
 
     summary.replaceChildren(
       el('span', {}, `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`),
-      el('span', { class: 'total' }, 'Total ', el('strong', { id: 'total' }, money(totalCost(shown))))
+      el('span', { class: 'total' }, 'Total ', el('strong', { id: 'total' }, money(totalCost(shown.filter(isSpend)))))
     );
 
     if (shown.length === 0) {
@@ -496,7 +548,7 @@ async function renderList(type) {
       ...groups.flatMap((g) => [
         el('div', { class: 'month-head' },
           el('span', {}, g.key === 'undated' ? 'No date' : monthName(g.key)),
-          el('span', {}, money(totalCost(g.items)))),
+          el('span', {}, money(totalCost(g.items.filter(isSpend))))),
         ...g.items.map(entryCard),
       ])
     );
@@ -544,12 +596,51 @@ function meterInsights(everything) {
     hint.remove();
     slot.replaceChildren(card);
   };
-  if (intervals.length > 1) {
-    chart = barChart(
+  const years = yearsWithData(r).slice(-3);
+  if (state.meterYear && !years.includes(state.meterYear)) state.meterYear = 0;
+  const box = el('div', { class: 'meter-chart', id: 'meter-chart' });
+  function draw() {
+    card = null;
+    const yr = state.meterYear;
+    if (yr) {
+      // Calendar months of one year, with the same months last year faded behind.
+      const now = monthlyUsage(everything, yr), then = monthlyUsage(everything, yr - 1);
+      const months = now.map((m, i) => ({ ...m, value: m.value, compare: then[i].value, compareTitle: then[i].title, muted: m.days === 0 }));
+      const covered = (list) => list.filter((m) => m.days > 0);
+      const upTo = now.filter((m, i) => m.days > 0 && then[i].days > 0);
+      const sumNow = upTo.reduce((t, m) => t + m.value, 0);
+      const sumThen = upTo.reduce((t, m) => t + then[now.indexOf(m)].value, 0);
+      const pickM = (i) => {
+        chart.select(i);
+        if (card) return card.show(i);
+        card = periodCard({ id: 'period', label: 'month', count: 12, index: i, render: (k) => meterMonthDetail(now[k], then[k], unit, everything), onChange: (k) => chart.select(k) });
+        hint.remove();
+        slot.replaceChildren(card);
+      };
+      chart = barChart(months, { height: 120, selected: -1, format: (v) => Math.round(v).toLocaleString('en-GB'),
+        describe: (bar, v) => `${bar.title}: ${Math.round(v)} ${unit}; ${bar.compareTitle}: ${Math.round(bar.compare)} ${unit}`, onSelect: pickM });
+      const d = sumNow - sumThen;
+      box.replaceChildren(
+        yearPicker('meter-years', years, yr, (y) => { state.meterYear = y; draw(); }, 'Periods'),
+        el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `${unit} used per month in ${yr}`,
+          upTo.length ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'meter-yoy' }, ` · ${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(sumThen ? (d / sumThen) * 100 : 0))}% vs ${yr - 1} (${upTo.length} month${upTo.length === 1 ? '' : 's'} with readings in both)`) : el('span', { class: 'yoy', id: 'meter-yoy' }, ` · no ${yr - 1} readings to compare`)),
+        chart,
+        el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1), covered(now).length < 12 ? ' · pale = no readings' : ''),
+        hint, slot);
+      hint.textContent = 'Tap a month to compare it with last year';
+      slot.replaceChildren();
+      return;
+    }
+    hint.textContent = 'Tap a bar to see that period';
+    slot.replaceChildren();
+    chart = intervals.length > 1 ? barChart(
       intervals.map((i) => ({ label: new Date(i.to.date).toLocaleDateString('en-GB', { month: 'short' }).slice(0, 1), title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
       { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
-    );
+    ) : null;
+    box.replaceChildren(...(chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Periods') : null,
+      el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot].filter(Boolean) : []));
   }
+  draw();
   return el(
     'section',
     { class: 'card meter-card', id: 'meter-insights', 'aria-label': 'Meter summary' },
@@ -558,8 +649,34 @@ function meterInsights(everything) {
       el('div', {}, el('span', { class: 'stat-label' }, 'Daily use'), el('span', { class: 'stat-value' }, avg !== null ? avg.toFixed(1) : '–'), el('span', { class: 'stat-title' }, `${unit}/day, recent`)),
       el('div', {}, el('span', { class: 'stat-label' }, `Bills ${year}`), el('span', { class: 'stat-value' }, money(billsYear).replace(/\.\d\d$/, '')), el('span', { class: 'stat-title' }, `${b.filter((x) => (x.date || '').startsWith(String(year))).length} bills`))
     ),
-    chart ? [el('p', { class: 'card-sub chart-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot] : null
+    box
   );
+}
+
+// One calendar month of energy use, compared with the same month last year.
+function meterMonthDetail(m, prev, unit, everything) {
+  const bill = everything.find((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date && monthKeyOfBill(e) === m.key);
+  const d = m.days && prev.days ? m.value - prev.value : null;
+  const pct = d !== null && prev.value > 0 ? ` (${d >= 0 ? '+' : '−'}${Math.round(Math.abs(d / prev.value) * 100)}%)` : '';
+  const body = el('div', { class: 'period-body' },
+    el('div', { class: 'period-stats' },
+      m.days ? stat('Used', fmtNum(m.value, 0), unit, 'pd-used') : el('div', { class: 'period-stat', id: 'pd-used' }, el('span', { class: 'stat-label' }, 'Used'), el('span', { class: 'v muted-v' }, 'No readings')),
+      m.days ? stat('Average', fmtNum(m.value / m.days), `${unit}/day`, 'pd-perday') : null,
+      prev.days ? stat(prev.title, fmtNum(prev.value, 0), unit, 'pd-lastyear') : el('div', { class: 'period-stat', id: 'pd-lastyear' }, el('span', { class: 'stat-label' }, prev.title), el('span', { class: 'v muted-v' }, 'No readings')),
+      bill ? stat('Bill', money(bill.cost), null, 'pd-cost') : null
+    ),
+    el('div', { class: 'period-change', id: 'pd-change' }, el('span', {}, `vs ${prev.title}:`),
+      d !== null ? changePill(d, (v) => `${fmtNum(v, 0)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'Not enough readings')),
+    m.days && m.days < new Date(Number(m.key.slice(0, 4)), Number(m.key.slice(5)), 0).getDate()
+      ? el('p', { class: 'chart-hint' }, `Readings cover ${m.days} of this month’s days.`) : null
+  );
+  return { title: m.title, sub: m.days ? `${fmtNum(m.value, 0)} ${unit}` : 'No readings', body };
+}
+// The month a bill is "for": EDF bills dated the 3rd cover the month before.
+function monthKeyOfBill(e) {
+  const d = new Date(e.date);
+  if (d.getDate() <= 5) d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 // The bill that belongs to a period between two readings: the closing reading
@@ -585,6 +702,44 @@ function stat(label, value, small, id) {
   return el('div', { class: 'period-stat', id }, el('span', { class: 'stat-label' }, label), el('span', { class: 'v' }, value, small ? el('small', {}, ` ${small}`) : null));
 }
 
+// The unit rate(s) and standing charge of a bill: the Tariff fields if filled
+// in, otherwise read from the notes ("… at 21.074p/kWh … standing 57.972p/day").
+function tariffOf(bill) {
+  const t = bill.tariff && ((bill.tariff.rates || []).length || (bill.tariff.standing || []).length)
+    ? bill.tariff
+    : ratesFromText(bill.notes || '', { defaultYear: Number((bill.date || '').slice(0, 4)) || new Date().getFullYear() });
+  return t && (t.rates.length || t.standing.length) ? t : null;
+}
+const pence = (p) => `${fmtNum(p, 2)}p`;
+const shortDay = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+// "21.07p" · "24.51p → 21.07p" (tariff changed, with "from 14 May") · "Day 30.10p · Night 15.20p"
+function rateText(list) {
+  const one = (r) => `${r.label ? r.label + ' ' : ''}${pence(r.p)}`;
+  const froms = [...new Set(list.map((r) => r.from || r.to || ''))].sort();
+  if (froms.length > 1 && froms.every(Boolean)) {
+    // Price changed part way through: old → new, grouped by when each applied.
+    const groups = froms.map((f) => list.filter((r) => (r.from || r.to) === f));
+    const last = groups[groups.length - 1].find((r) => r.from);
+    return { v: groups.map((g) => g.map(one).join(' · ')).join(' → '), sub: last ? `new rate from ${shortDay(last.from)}` : 'tariff changed', from: last && last.from };
+  }
+  if (list.some((r) => r.label) || list.length === 1) return { v: list.map(one).join(' · '), sub: '' };
+  return { v: list.map(one).join(' / '), sub: 'tariff changed in this period' };
+}
+function tariffStats(t, days, unit) {
+  if (!t) return [];
+  const out = [];
+  if (t.rates.length) {
+    const r = rateText(t.rates);
+    out.push(stat(t.rates.length > 1 && !t.rates.some((x) => x.label) ? 'Unit rates' : 'Unit rate', r.v, r.sub || `per ${unit}`, 'pd-rate'));
+  }
+  if (t.standing.length) {
+    const r = rateText(t.standing);
+    const one = t.standing.length === 1 ? t.standing[0].p : null;
+    out.push(stat('Standing charge', r.v, one && days ? `a day · ${money((one * Math.round(days)) / 100)} for ${Math.round(days)} days before VAT` : r.sub || 'a day', 'pd-standing'));
+  }
+  return out;
+}
+
 function periodDetail(interval, prev, everything) {
   const unit = interval.unit || 'kWh';
   const bill = billFor(interval, everything);
@@ -595,12 +750,14 @@ function periodDetail(interval, prev, everything) {
   const dCost = cost !== null && prevBill ? cost - Number(prevBill.cost) : null;
   const pct = prev && prev.used > 0 ? ` (${dUsed >= 0 ? '+' : '−'}${Math.round(Math.abs(dUsed / prev.used) * 100)}%)` : '';
   const photo = bill && bill.photos && bill.photos[0] ? bill.photos[0].blob : null;
+  const tariff = bill ? tariffOf(bill) : null;
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
       stat('Used', fmtNum(interval.used), unit, 'pd-used'),
       stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
       cost !== null ? stat('Bill', money(cost), null, 'pd-cost') : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
-      perUnit !== null ? stat('Cost per ' + unit, `${fmtNum(perUnit * 100, 1)}p`, null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
+      ...tariffStats(tariff, interval.days, unit),
+      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(perUnit * 100, 1)}p`, tariff ? 'incl. standing & VAT' : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
     ),
     el('div', { class: 'period-change', id: 'pd-change' },
       el('span', {}, 'vs previous:'),
@@ -618,15 +775,21 @@ function periodDetail(interval, prev, everything) {
   return { title: `${niceDate(interval.from.date)} – ${niceDate(interval.to.date)}`, sub: `${Math.round(interval.days)} days`, body };
 }
 
-function monthDetail(month, prevMonth, source) {
-  const items = source.filter((e) => (e.date || '').startsWith(month.key) && Number(e.cost) > 0).sort((a, b) => Number(b.cost) - Number(a.cost));
+// "12 months | 2024 | 2025 | 2026" chips above a chart. 0 = the default view.
+function yearPicker(id, years, current, onPick, defaultLabel) {
+  const chip = (y, label) => el('button', { type: 'button', class: 'year-chip' + (current === y ? ' active' : ''), 'aria-pressed': String(current === y), 'data-year': String(y), onclick: () => onPick(y) }, label);
+  return el('div', { class: 'year-picker', id, role: 'group', 'aria-label': 'Choose year' }, chip(0, defaultLabel), years.map((y) => chip(y, String(y))));
+}
+
+function monthDetail(month, prevMonth, source, yearOnYear = false) {
+  const items = source.filter((e) => e.type !== 'insurance' && (e.date || '').startsWith(month.key) && Number(e.cost) > 0).sort((a, b) => Number(b.cost) - Number(a.cost));
   const delta = prevMonth ? month.value - prevMonth.value : null;
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
       stat('Spent', money(month.value), null, 'md-total'),
       stat('Entries', String(items.length), items.length === 1 ? 'with a cost' : 'with costs', 'md-count')
     ),
-    el('div', { class: 'period-change', id: 'md-change' }, el('span', {}, `vs ${prevMonth ? prevMonth.title.split(' ')[0] : 'previous'}:`), changePill(delta, (v) => money(v), 'md-change-cost')),
+    el('div', { class: 'period-change', id: 'md-change' }, el('span', {}, `vs ${prevMonth ? (yearOnYear ? prevMonth.title : prevMonth.title.split(' ')[0]) : 'previous'}:`), changePill(delta, (v) => money(v), 'md-change-cost')),
     items.length
       ? el('ul', { class: 'period-items', id: 'md-items', 'aria-label': 'Biggest costs' },
           items.slice(0, 3).map((e) => el('li', {}, el('a', { href: `#/view/${e.id}` }, el('span', {}, e.title || 'Untitled'), el('span', {}, money(e.cost))))),
@@ -642,14 +805,17 @@ function entryCard(e) {
   const days = daysUntil(e.dueDate);
   let dueClass = '';
   if (days !== null && days < 0) dueClass = ' expired';
-  else if (days !== null && days <= SOON_DAYS) dueClass = ' soon';
+  else if (days !== null && days <= soonDaysFor(e)) dueClass = ' soon';
 
   const thumb =
     e.photos && e.photos.length
       ? el('span', { class: 'thumb-wrap' }, el('img', { class: 'thumb', src: photoURL(e.photos[0].blob), alt: '' }), el('span', { class: 'thumb-tag', 'data-tone': section.tone }, icon(section.glyph, 12)))
       : el('div', { class: 'thumb placeholder', 'data-tone': section.tone }, icon(section.glyph, 24));
 
-  const details = [niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
+  const isIns = section.kind === 'insurance';
+  const details = isIns
+    ? [e.insType ? insuranceTypeLabel(e.insType) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
+    : [niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
 
   return el(
     'a',
@@ -665,14 +831,14 @@ function entryCard(e) {
         : null,
       e.dueDate ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
     ),
-    e.cost ? el('div', { class: 'entry-cost' }, money(e.cost)) : null
+    e.cost ? el('div', { class: 'entry-cost' }, money(e.cost), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : null) : null
   );
 }
 
 // ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
-const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Readings and energy bills' };
+const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Readings and energy bills', insurance: 'Home, car and life policies' };
 function renderChooser() {
   app.replaceChildren(
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
@@ -795,6 +961,7 @@ function scanFields(p, type) {
   if (type === 'meter') {
     f.meterValue = p.meter && p.meter.closing != null ? p.meter.closing : null;
     f.meterUnit = (p.meter && p.meter.unit) || 'kWh';
+    if (p.tariff && (p.tariff.rates.length || p.tariff.standing.length)) f.tariff = p.tariff;
   }
   return f;
 }
@@ -839,6 +1006,7 @@ async function renderForm(type, id) {
   pendingScan = null;
   if (scan) Object.assign(entry, scan.fields, { photos: scan.photos });
   const section = getSection(entry.type);
+  const ins = section.kind === 'insurance';
   // A working copy of the photo list; only saved when you press Save.
   let photos = [...(entry.photos || [])];
 
@@ -854,15 +1022,32 @@ async function renderForm(type, id) {
       el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title' }, `${id ? 'Edit' : 'New'} ${section.single.toLowerCase()}`))
     ),
     scan ? scanHint(scan) : null,
-    field('Title *', el('input', { name: 'title', required: true, value: entry.title, maxlength: '200', autocomplete: 'off' })),
-    field('Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() })),
-    field(
-      'Cost £ (optional)',
-      // type="text" + inputmode="decimal" shows the number keypad but still
-      // lets us accept things like "£12.50" or "1,200".
-      el('input', { name: 'cost', inputmode: 'decimal', value: entry.cost ?? '', placeholder: '0.00', autocomplete: 'off' })
-    ),
-    field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' }))
+    ins
+      ? el('div', { class: 'field' }, el('span', { class: 'label', id: 'ins-type-label' }, 'Type of cover'),
+          el('div', { class: 'seg seg-full ins-types', role: 'radiogroup', 'aria-labelledby': 'ins-type-label' },
+            INSURANCE_TYPES.map((t) => el('label', { class: 'seg-btn radio-seg' },
+              el('input', { type: 'radio', name: 'insType', value: t.id, checked: (entry.insType || 'home') === t.id }), t.label))))
+      : null,
+    field(ins ? 'Name (optional)' : 'Title *', el('input', { name: 'title', required: !ins, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : null),
+    ins ? field('Insurer *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Aviva' })) : null,
+    ins ? field('Policy number', el('input', { name: 'policyNumber', value: entry.policyNumber || '', autocomplete: 'off' })) : null,
+    ins
+      ? el('div', { class: 'row' },
+          field('Cost £', el('input', { name: 'cost', inputmode: 'decimal', value: entry.cost ?? '', placeholder: '0.00', autocomplete: 'off' })),
+          field('Paid', el('select', { name: 'costFreq' },
+            el('option', { value: 'annual', selected: entry.costFreq !== 'monthly' }, 'Yearly'),
+            el('option', { value: 'monthly', selected: entry.costFreq === 'monthly' }, 'Monthly'))))
+      : null,
+    field(ins ? 'Start date *' : 'Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() })),
+    ins
+      ? null
+      : field(
+          'Cost £ (optional)',
+          // type="text" + inputmode="decimal" shows the number keypad but still
+          // lets us accept things like "£12.50" or "1,200".
+          el('input', { name: 'cost', inputmode: 'decimal', value: entry.cost ?? '', placeholder: '0.00', autocomplete: 'off' })
+        ),
+    ins ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' }))
   );
 
   // Suggest suppliers you've used before (a "datalist" gives autocomplete).
@@ -880,17 +1065,28 @@ async function renderForm(type, id) {
       ),
       el('datalist', { id: 'unit-list' }, ['kWh', 'm³', 'litres', 'gallons'].map((u) => el('option', { value: u })))
     );
+    // Tariff from the bill. Several unit rates when the price changed part way
+    // through ("21.074 to 26 Feb, 20.189 from 27 Feb") or for day/night meters.
+    const t = entry.tariff || null;
+    form.append(
+      el('details', { class: 'tariff-fields', open: Boolean(t && (t.rates || []).length) || undefined },
+        el('summary', {}, 'Tariff from the bill (optional)'),
+        field('Unit rate(s), pence per kWh', el('input', { name: 'unitRates', value: t ? ratesToText(t.rates) : '', autocomplete: 'off', placeholder: 'e.g. 21.074  or  Day 30.1, Night 15.2' }),
+          'If the price changed in the period: “24.51 to 13 May, 21.074 from 14 May”.'),
+        field('Standing charge, pence per day', el('input', { name: 'standingCharge', value: t ? ratesToText(t.standing) : '', inputmode: 'decimal', autocomplete: 'off', placeholder: 'e.g. 57.972' })))
+    );
   }
   if (section.showDue) {
-    form.append(field(section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' })));
+    form.append(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : null));
   }
+  if (ins) form.append(field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Matthew & Rebecca' })));
   form.append(field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
 
   // --- Photos ---
   // Two hidden file pickers. capture="environment" opens the back camera
   // straight away; the other opens the gallery and allows several at once.
   const cameraInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, id: 'camera-input' });
-  const galleryInput = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, id: 'gallery-input' });
+  const galleryInput = el('input', { type: 'file', accept: 'image/*,application/pdf,.pdf', multiple: true, hidden: true, id: 'gallery-input' });
   const photoGrid = el('div', { class: 'photo-grid', id: 'photo-grid' });
   const busy = el('p', { class: 'hint', hidden: true }, 'Shrinking photo…');
 
@@ -911,7 +1107,15 @@ async function renderForm(type, id) {
     busy.hidden = false;
     for (const file of fileList) {
       try {
-        const blob = await compressImage(file);
+        let source = file;
+        // A PDF (policy document, bill): keep a picture of its first page.
+        if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
+          busy.textContent = 'Reading PDF…';
+          const scan = await import('./scan.js');
+          source = await canvasToBlob((await scan.renderPdfFirstPage(file)).canvas);
+        }
+        busy.textContent = 'Shrinking photo…';
+        const blob = await compressImage(source);
         photos.push({ id: db.newId(), blob });
       } catch (err) {
         alert(err.message);
@@ -924,12 +1128,12 @@ async function renderForm(type, id) {
   galleryInput.addEventListener('change', () => { addFiles([...galleryInput.files]); galleryInput.value = ''; });
 
   form.append(
-    el('div', { class: 'field' }, el('span', { class: 'label' }, 'Photos'), photoGrid, busy,
+    el('div', { class: 'field' }, el('span', { class: 'label' }, ins ? 'Photos & documents' : 'Photos'), photoGrid, busy,
       el(
         'div',
         { class: 'row' },
         el('button', { type: 'button', class: 'btn secondary', onclick: () => cameraInput.click() }, icon('camera', 20), 'Take photo'),
-        el('button', { type: 'button', class: 'btn secondary', onclick: () => galleryInput.click() }, icon('image', 20), 'Gallery')
+        el('button', { type: 'button', class: 'btn secondary', onclick: () => galleryInput.click() }, icon('image', 20), ins ? 'Gallery / PDF' : 'Gallery')
       ),
       cameraInput,
       galleryInput
@@ -954,8 +1158,13 @@ async function renderForm(type, id) {
     const v = (name) => (form.elements[name] ? form.elements[name].value.trim() : '');
     const showError = (msg) => { errorBox.textContent = msg; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); };
 
-    if (!v('title')) return showError('Please give it a title.');
-    if (!v('date')) return showError('Please choose a date.');
+    let title = v('title');
+    if (ins) {
+      if (!v('supplier')) return showError('Please enter the insurer.');
+      if (!title) title = `${insuranceTypeLabel(form.elements.insType.value)} insurance – ${v('supplier')}`;
+    }
+    if (!title) return showError('Please give it a title.');
+    if (!v('date')) return showError(ins ? 'Please choose the start date.' : 'Please choose a date.');
 
     const cost = parseMoney(v('cost'));
     if (cost === undefined) return showError('The cost should be a number, like 12.50');
@@ -964,12 +1173,25 @@ async function renderForm(type, id) {
       meterValue = Number(v('meterValue').replace(/,/g, ''));
       if (!isFinite(meterValue)) return showError('The meter reading should be a number.');
     }
+    let tariff = entry.tariff;
+    if (section.showMeter && form.elements.unitRates) {
+      const yr = Number(v('date').slice(0, 4));
+      const rates = ratesFromText(v('unitRates'), { bare: true, defaultYear: yr });
+      const stand = ratesFromText(v('standingCharge'), { bare: true, defaultYear: yr });
+      if (v('unitRates') && !rates) return showError('The unit rate should be a number of pence, like 21.074');
+      if (v('standingCharge') && !stand) return showError('The standing charge should be a number of pence, like 57.972');
+      tariff = rates || stand ? { rates: rates ? rates.rates : [], standing: stand ? stand.rates.map(({ label, ...r }) => r) : [] } : undefined;
+    }
+    const extra = ins
+      ? { insType: form.elements.insType.value, policyNumber: v('policyNumber'), costFreq: form.elements.costFreq.value, covered: v('covered') }
+      : {};
 
     const now = new Date().toISOString();
     const saved = {
       ...entry,
       id: entry.id || db.newId(),
-      title: v('title'),
+      ...extra,
+      title,
       date: v('date'),
       cost,
       supplier: v('supplier'),
@@ -977,10 +1199,12 @@ async function renderForm(type, id) {
       dueDate: section.showDue ? v('dueDate') || null : entry.dueDate || null,
       meterValue: section.showMeter ? meterValue : entry.meterValue ?? null,
       meterUnit: section.showMeter ? v('meterUnit') : entry.meterUnit || '',
+      ...(tariff ? { tariff } : {}),
       photos,
       createdAt: entry.createdAt || now,
       updatedAt: now,
     };
+    if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
     await db.saveEntry(saved);
     sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
     toast('Saved');
@@ -991,9 +1215,11 @@ async function renderForm(type, id) {
 
   if (scan) {
     // Tint the fields the scanner filled in, so it's clear what to check.
-    for (const name of Object.keys(scan.fields)) {
+    const filled = Object.keys(scan.fields);
+    if (scan.fields.tariff) filled.push(...(scan.fields.tariff.rates.length ? ['unitRates'] : []), ...(scan.fields.tariff.standing.length ? ['standingCharge'] : []));
+    for (const name of filled) {
       const input = form.elements[name];
-      if (input && String(scan.fields[name] ?? '') !== '') input.classList.add('prefilled');
+      if (input && String(input.value ?? '') !== '') input.classList.add('prefilled');
     }
   }
   app.replaceChildren(form);
@@ -1132,7 +1358,7 @@ async function syncDetails() {
       `account: ${(c.account && c.account.email) || '—'}`,
       `layout: ${c.files && c.files.index ? "v" + (c.layout || 1) : "—"} · file: ${short(c.files && c.files.index)}`,
       `old photo files: ${c.files && c.files.buckets ? c.files.buckets.filter(Boolean).length + ' of 8' : 'none'}`,
-      `last synced: ${c.lastSync || 'never'}`,
+      `last synced: ${c.lastSync ? new Date(c.lastSync).toLocaleString('en-GB') : 'never'}`,
       d.picker ? `picker: ${d.picker.error ? 'error ' + d.picker.error : `${d.picker.action}, ${d.picker.count} file(s)`}` : 'picker: not used yet',
       ...((d.picker && d.picker.docs) || []).map((x) => `  · ${x.name || '(no name)'} ${short(x.id)} ${x.mimeType || ''}${x.resourceKey ? ' +key' : ''}`),
       ...((d.checks || []).map((x) => `  check ${x.name || short(x.id)}: ${x.ok ? 'OK' : 'FAILED ' + x.error}`)),
@@ -1163,6 +1389,8 @@ function wireSyncChip() {
   if (!chip || !text) return;
   sync.onStatus((s) => {
     const on = !['off', 'unconfigured'].includes(s.state);
+    // Sync just finished OK: the backup reminder no longer applies.
+    if (s.state === 'idle') sync.isHealthy().then((ok) => ok && document.getElementById('backup-reminder')?.remove());
     chip.dataset.state = s.state;
     const svg = chip.querySelector('svg');
     if (svg) svg.replaceWith(icon(on ? 'backup' : 'lock', 14));
@@ -1220,14 +1448,27 @@ async function renderDetail(id) {
   const days = daysUntil(e.dueDate);
   let dueClass = '';
   if (days !== null && days < 0) dueClass = 'expired';
-  else if (days !== null && days <= SOON_DAYS) dueClass = 'soon';
+  else if (days !== null && days <= soonDaysFor(e)) dueClass = 'soon';
 
-  const rows = [
+  const ins = section.kind === 'insurance';
+  const premium = e.cost ? (e.costFreq === 'monthly' ? `${money(e.cost)} a month (${money(annualCost(e))} a year)` : `${money(e.cost)} a year`) : null;
+  const tariff = e.type === 'meter' ? tariffOf(e) : null;
+  const rows = ins ? [
+    ['Cover', e.insType ? `${insuranceTypeLabel(e.insType)} insurance` : 'Insurance', 'umbrella'],
+    ['Insurer', e.supplier, 'home'],
+    ['Policy number', e.policyNumber, 'file'],
+    ['Cost', premium, 'receipt'],
+    ['Started', niceDate(e.date), 'calendar'],
+    ['Renews', e.dueDate ? `${niceDate(e.dueDate)} (${dueText('renews', days)})` : null, 'clock'],
+    ['Covered', e.covered, 'lock'],
+  ].filter(([, value]) => value) : [
     ['Section', section.single, 'list'],
     ['Date', niceDate(e.date), 'calendar'],
     ['Cost', e.cost ? money(e.cost) : null, 'receipt'],
     ['Supplier / who', e.supplier, 'home'],
     ['Reading', e.meterValue !== null && e.meterValue !== undefined ? `${e.meterValue} ${e.meterUnit || ''}` : null, 'gauge'],
+    ['Unit rate', tariff && tariff.rates.length ? ((r) => `${r.v} per kWh${r.from ? ` (new rate from ${shortDay(r.from)})` : ''}`)(rateText(tariff.rates)) : null, 'bolt'],
+    ['Standing charge', tariff && tariff.standing.length ? rateText(tariff.standing).v + ' a day' : null, 'clock'],
     [section.dueWord === 'expires' ? 'Expires' : 'Next due', e.dueDate ? `${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})` : null, 'clock'],
   ].filter(([, value]) => value);
 
@@ -1239,14 +1480,14 @@ async function renderDetail(id) {
       { class: 'detail-hero', 'data-tone': section.tone },
       el('div', { class: 'detail-kicker' }, sectionBadge(section, 'sm'), el('span', {}, section.single), e.dueDate ? el('span', { class: 'pill ' + (dueClass || 'calm') }, dueText(section.dueWord || 'due', days)) : null),
       el('h1', { id: 'detail-title' }, e.title),
-      e.cost ? el('p', { class: 'detail-amount' }, money(e.cost)) : null,
-      el('p', { class: 'detail-meta' }, [niceDate(e.date), e.supplier].filter(Boolean).join(' · '))
+      e.cost ? el('p', { class: 'detail-amount' }, money(e.cost), ins ? el('small', {}, e.costFreq === 'monthly' ? ' a month' : ' a year') : null) : null,
+      el('p', { class: 'detail-meta' }, (ins ? [e.supplier, e.policyNumber ? `Policy ${e.policyNumber}` : ''] : [niceDate(e.date), e.supplier]).filter(Boolean).join(' · '))
     ),
     el('dl', { class: 'details' }, rows.map(([k, val, g]) => el('div', { class: 'detail-row' }, el('dt', {}, icon(g, 18), k), el('dd', {}, val)))),
     e.notes ? el('section', { class: 'notes-card' }, el('h2', { class: 'card-title' }, 'Notes'), el('p', { class: 'notes' }, e.notes)) : null,
     photos.length
       ? el('section', { class: 'photos-card' },
-          el('h2', { class: 'card-title' }, `Photos · ${photos.length}`),
+          el('h2', { class: 'card-title' }, `${ins ? 'Documents' : 'Photos'} · ${photos.length}`),
           el(
             'div',
             { class: 'photos-large' + (photos.length > 1 ? ' multi' : '') },

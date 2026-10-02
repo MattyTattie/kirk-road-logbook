@@ -16,9 +16,57 @@ export const monthName = (key) => {
 
 const hasNumber = (v) => v !== null && v !== undefined && v !== '' && isFinite(Number(v));
 
+// Insurance premiums are a running cost, not a one-off purchase (and a
+// policy's date is its start date, maybe years ago), so they're left out of
+// the spending totals and shown as a yearly cost on the Insurance list.
+export const isSpend = (e) => e.type !== 'insurance';
+
 // Total spent in a calendar year (every entry with a cost, bills included).
 export function spendInYear(entries, year) {
-  return totalCost(entries.filter((e) => (e.date || '').startsWith(String(year))));
+  return totalCost(entries.filter((e) => isSpend(e) && (e.date || '').startsWith(String(year))));
+}
+
+// Years that have any dated entries, plus this year, oldest first.
+export function yearsWithData(entries, now = new Date()) {
+  const ys = new Set([now.getFullYear()]);
+  for (const e of entries) { const y = Number((e.date || '').slice(0, 4)); if (y > 1990 && y <= now.getFullYear()) ys.add(y); }
+  return [...ys].sort();
+}
+
+// Spend per calendar month of one year, Jan → Dec.
+export function yearSpend(entries, year) {
+  const out = MONTHS.map((m, i) => {
+    const key = `${year}-${String(i + 1).padStart(2, '0')}`;
+    return { key, label: m.slice(0, 1), short: m, title: monthName(key), value: 0 };
+  });
+  for (const e of entries) {
+    if (!isSpend(e) || !(e.date || '').startsWith(String(year))) continue;
+    const m = out[Number(e.date.slice(5, 7)) - 1];
+    if (m) m.value = Math.round((m.value + (Number(e.cost) || 0)) * 100) / 100;
+  }
+  return out;
+}
+
+// Energy used per calendar month of one year (kWh), Jan → Dec. Each period
+// between two readings is spread evenly over its days, so a reading taken
+// on the 3rd counts mostly towards the month before. "days" says how many
+// days of that month are covered by readings (0 = no data).
+export function monthlyUsage(entries, year) {
+  const out = MONTHS.map((m, i) => {
+    const key = `${year}-${String(i + 1).padStart(2, '0')}`;
+    return { key, label: m.slice(0, 1), short: m, title: monthName(key), value: 0, days: 0, unit: '' };
+  });
+  const y0 = Date.UTC(year, 0, 1), y1 = Date.UTC(year + 1, 0, 1);
+  for (const iv of usageIntervals(entries)) {
+    const a = Date.parse(iv.from.date), b = Date.parse(iv.to.date);
+    if (b <= y0 || a >= y1) continue;
+    for (let t = Math.max(a, y0); t < Math.min(b, y1); t += 86400000) {
+      const m = out[new Date(t).getUTCMonth()];
+      m.value += iv.perDay; m.days += 1; m.unit = iv.unit;
+    }
+  }
+  for (const m of out) m.value = Math.round(m.value * 10) / 10;
+  return out;
 }
 
 // Spend per month for the last `count` months, oldest first.
@@ -31,6 +79,7 @@ export function monthlySpend(entries, count = 12, now = new Date()) {
   }
   const byKey = Object.fromEntries(out.map((m) => [m.key, m]));
   for (const e of entries) {
+    if (!isSpend(e)) continue;
     const m = byKey[(e.date || '').slice(0, 7)];
     if (m) m.value = Math.round((m.value + (Number(e.cost) || 0)) * 100) / 100;
   }
