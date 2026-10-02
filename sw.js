@@ -19,8 +19,9 @@
 
 // v2 = the Hearthbook redesign (new look, dashboard, charts, dark mode).
 // v3 = scan receipts/bills, swipeable chart detail cards.
+// v4 = optional Google Drive sync.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v3';
+const CACHE_NAME = 'hearthbook-v5';
 
 // The scanner's libraries (OCR engine + English model + PDF reader) are big
 // (~8 MB to download), so they get their OWN cache with its own version.
@@ -69,6 +70,8 @@ const APP_SHELL = [
   './js/periodcard.js',
   './js/scan.js',
   './js/parse.js',
+  './js/sync.js',
+  './js/gdrive.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',

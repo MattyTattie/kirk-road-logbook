@@ -43,6 +43,8 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/periodcard.js` | The swipeable detail card under the meter chart and the dashboard spending chart (see section 4b). |
 | `js/scan.js` | **Scan receipt or bill**: opens a PDF (pdf.js) or reads a photo with OCR (Tesseract). Only loaded when you open the scanner. |
 | `js/parse.js` | Turns the scanned text into title, date, total, supplier and, for energy bills, the period and meter readings. Plain JavaScript, no browser needed (so it can be tested with Node). |
+| `js/sync.js` | **Optional Google Drive sync**: merges this phone's entries with the shared folder, entry by entry (section 9). Does nothing while sync is off. |
+| `js/gdrive.js` | Google sign-in, Drive file calls and the Google file picker. Google's scripts are only loaded once you tap Connect. |
 | `vendor/` | The two bundled libraries for the scanner, with their licences (see section 4c). Nothing is fetched from the internet. |
 | `js/icons.js` | The line icons, as plain SVG path strings. |
 | `js/theme.js` | Light / Dark / Auto appearance (remembered in `localStorage`). |
@@ -55,7 +57,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
 | `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
-| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus two made-up sample documents `demo-receipt.png` / `demo-bill.pdf`. See section 7. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus two made-up sample documents `demo-receipt.png` / `demo-bill.pdf`. See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -297,6 +299,14 @@ cards, and scans a real EDF PDF bill and a receipt photo (checking the
 filled-in fields, the attached picture, a bad file, and scanning offline
 after the background download).
 
+`tests/test_sync.py` runs two phones (Matthew and Becca) against a fake,
+in-memory Google Drive (`tests/fake_drive.py`, which follows the same
+"drive.file" rules as the real one). It checks connecting, starting and
+joining a shared logbook, edits, photos, deletes, offline, a clash, an
+expired sign-in and disconnecting:
+`LOGBOOK_BASE=http://localhost:8766/ python tests/test_sync.py`.
+`node tests/sync_plan.mjs` checks the merge rules on their own.
+
 `tests/test_upgrade.py` serves the original app and this one from the same
 address, saves data with the old one and checks the new one shows it all.
 
@@ -309,5 +319,137 @@ address, saves data with the old one and checks the new one shows it all.
   that's only a name — restore looks at what's inside.)
 - Section `id`s in `js/sections.js`.
 - When you change any app file, bump `CACHE_NAME` in `sw.js` (now
-  `hearthbook-v3`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
+  `hearthbook-v4`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
   in `vendor/` change.
+
+## 9. Sharing one logbook with Google Drive (optional)
+
+Off unless you turn it on. With it off, the app is exactly as before:
+everything stays on the phone and nothing is sent anywhere.
+
+### What it does
+
+You and Becca each keep a full copy of the logbook on your own phone, so it
+still works with no signal. A folder called **Hearthbook** in Matthew's
+Google Drive, shared with Becca, is the meeting point. Each phone swaps
+changes with it:
+
+- when the app opens (and when you come back to it),
+- about 3 seconds after you save or delete something,
+- when you tap **Sync now** (Backup screen) or the status chip at the top
+  ("Synced 2 min ago"),
+- when the phone gets its signal back.
+
+**Clashes.** Changes are merged entry by entry. Becca editing the boiler
+entry while you add a receipt is not a clash; both arrive. Only if you both
+change *the same* entry before either phone syncs does the later save win
+(by the phone's clock). Deleting leaves a small "tombstone" note in the
+folder, so the delete reaches the other phone instead of the entry coming
+back. If both phones already have entries the first time they sync, they
+are combined by entry ID. Entries restored from the same backup on both
+phones are not duplicated.
+
+**What's in the folder:** `hearthbook-sync.json` (the text of every entry
+plus the tombstones) and `hearthbook-photos-1.json` … `-8.json` (the photos,
+spread over 8 files). Don't rename or delete them. Backups and restore work
+exactly as before. Sync uses the same database, plus two settings in the
+`meta` store (`sync` and `syncTombstones`) that backups don't include.
+
+### Why "drive.file" permission, and why 9 fixed files
+
+Google offers two sensible levels of Drive permission ("scope"):
+
+| | **drive.file** (what we use) | **drive** (full Drive) |
+|---|---|---|
+| What the app can touch | Only files it created, or that you hand it in Google's file picker | Everything in your Drive |
+| Google's rating | Non-sensitive, no review needed | **Restricted**: to publish it needs Google's verification plus a paid yearly security assessment (CASA). In "Testing" mode it works for up to 100 named test users, with a warning screen |
+| Partner joining | Becca ticks the 9 Hearthbook files once in Google's picker | Becca just picks the folder |
+| File layout | A fixed set of 9 files | Could be one small file per entry and photo |
+| Cost | Adding a photo re-uploads one of the 8 photo files (each about ⅛ of all your photos, so a few MB as the logbook grows) | Uploads just that photo |
+
+`drive.file` was chosen because it's the least access that works, and
+Google treats it as low risk. With `drive.file`, choosing a *folder* in the
+picker does **not** let the app see the files inside it, and Becca's phone
+can't see any *new* file your phone creates later. So the app makes all 9
+files on day one and never adds more. Becca picks them once and from then on
+everything syncs. Your own second phone (same Google account) finds them by
+itself.
+
+**Verification.** Because `drive.file` is non-sensitive, you never need
+Google's app review. In **Testing** mode only the people you add as test
+users can sign in (up to 100), and they see a short "this app is being
+tested" warning before agreeing. If that warning bothers you, you can press
+**Publish app**. With only `drive.file` that needs no review; the consent
+screen just won't show a logo. The "unverified app" warning and the
+100-user cap only apply to sensitive or restricted scopes, which this app
+doesn't use.
+
+**Sign-in.** There's no server, so Google gives the phone an access token
+that lasts about an hour. It's kept on the phone (`localStorage`) for that
+hour. After that, the next sync shows **Sign in to sync** and one tap fixes
+it (usually without typing anything). The app never opens a Google pop-up
+by itself.
+
+### One-time setup (about 15 minutes, on a computer)
+
+You need: Matthew's Google account, and Becca's Gmail address.
+
+1. Go to **https://console.cloud.google.com** and sign in as Matthew. If
+   asked, agree to the Google Cloud terms (it's free; no billing needed).
+2. Top bar → project list → **New project**. Name: `Hearthbook` → **Create**.
+   Make sure "Hearthbook" is selected in the top bar afterwards.
+3. Menu ☰ → **APIs & Services → Library**. Search **Google Drive API** →
+   **Enable**. Back to Library, search **Google Picker API** → **Enable**.
+4. Menu ☰ → **Google Auth Platform** (older name: *OAuth consent screen*) →
+   **Get started**:
+   - App name `Hearthbook`, user support email = your Gmail → Next
+   - Audience: **External** → Next
+   - Contact email: your Gmail → Next → tick the agreement → **Create**.
+5. **Audience** (left menu): leave Publishing status = **Testing**. Under
+   **Test users** → **Add users** → type your Gmail and Becca's Gmail →
+   **Save**.
+6. **Data Access** → **Add or remove scopes** → in the filter type
+   `drive.file` → tick **…/auth/drive.file** ("See, edit, create and delete
+   only the specific Google Drive files you use with this app") → **Update**
+   → **Save**.
+7. **Clients** → **Create client**:
+   - Application type: **Web application**, name `Hearthbook web`
+   - **Authorised JavaScript origins** → Add URI →
+     `https://mattytattie.github.io` (exactly that: no path, no slash at
+     the end). Optional for testing on a PC: also add
+     `http://localhost:8765`.
+   - Authorised redirect URIs: leave empty → **Create**.
+   - Copy the **Client ID** (ends in `.apps.googleusercontent.com`).
+8. Menu ☰ → **APIs & Services → Credentials** → **Create credentials → API
+   key**. Then edit the key:
+   - Application restrictions: **Websites** → add
+     `https://mattytattie.github.io/*`
+   - API restrictions: **Restrict key** → tick **Google Picker API** →
+     **Save**. Copy the key.
+9. Menu ☰ → **Cloud overview → Dashboard** (or **IAM & Admin →
+   Settings**): copy the **Project number** (digits only, not the ID).
+10. In `js/config.js` paste the three values into `GOOGLE_CLIENT_ID`,
+    `GOOGLE_API_KEY` and `GOOGLE_APP_ID`. Bump `CACHE_NAME` in `sw.js` and
+    publish the site as usual.
+
+(These values aren't secrets. They only work from your web address, and
+only for your test users. The API key only allows the picker.)
+
+### On the phones
+
+**Matthew (first):** Hearthbook → **Backup** → *Share with Google Drive* →
+**Connect Google account** → choose your account → Google says the app is in
+testing → **Continue** → allow the Drive permission → **Start a new shared
+logbook**. Then type Becca's Gmail under *Share the folder with* → **Share**.
+(Or share the Hearthbook folder from the Drive app as **Editor**.)
+
+**Becca:** open the email from Google once (so the folder shows in her
+"Shared with me"). Then Hearthbook → **Backup** → **Connect Google account**
+→ her account → **Continue** → allow → **Join a logbook shared with me**.
+Google's file picker opens, listing the Hearthbook files: tick **all 9**
+(`hearthbook-sync.json` and `hearthbook-photos-1` … `8`) → **Select**. Done.
+If she misses one, the app says which and she taps Join again.
+
+**Stopping:** Backup → **Disconnect this phone**. Entries stay on the phone
+and in Drive. To stop sharing entirely, un-share or delete the Hearthbook
+folder in Google Drive.

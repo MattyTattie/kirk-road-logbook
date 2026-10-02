@@ -122,6 +122,11 @@ a { color: var(--brand); }
 }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 750; font-size: 18px; letter-spacing: -0.02em; min-height: 44px; }
 .brand img { border-radius: 9px; box-shadow: 0 2px 6px rgba(194, 65, 12, 0.25); }
+button.private-chip { font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; min-height: 32px; }
+.private-chip[data-state='syncing'] svg { animation: spin 1s linear infinite; }
+.private-chip[data-state='idle'] { color: var(--good); }
+.private-chip[data-state='signin'], .private-chip[data-state='error'] { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+@keyframes spin { to { transform: rotate(360deg); } }
 .private-chip {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12.5px; font-weight: 600; color: var(--text-2);
@@ -594,3 +599,27 @@ body.no-nav .bottom-nav { display: none; }
 .scan-hint strong { font-size: 16px; }
 .scan-hint p { margin: 3px 0 0; font-size: 13.5px; color: var(--text-2); line-height: 1.4; }
 .field input.prefilled, .field textarea.prefilled { background: color-mix(in srgb, var(--brand) 9%, var(--surface)); border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
+
+/* ---------- Google Drive sync card ---------- */
+.sync-status { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 14px; background: var(--surface-2); margin: 10px 0; }
+.sync-status .dot { width: 10px; height: 10px; border-radius: 5px; flex: none; background: var(--text-3); }
+.sync-status[data-state='idle'] .dot { background: var(--good); }
+.sync-status[data-state='syncing'] .dot { background: var(--brand); animation: pulse 1s ease-in-out infinite; }
+.sync-status[data-state='offline'] .dot { background: var(--soon); }
+.sync-status[data-state='signin'] .dot, .sync-status[data-state='error'] .dot { background: var(--bad); }
+@keyframes pulse { 50% { opacity: 0.3; } }
+.sync-status strong { display: block; font-size: 15px; }
+.sync-status span { font-size: 13px; color: var(--text-2); }
+.sync-facts { list-style: none; padding: 0; margin: 6px 0 12px; display: grid; gap: 6px; font-size: 14px; }
+.sync-facts li { display: flex; justify-content: space-between; gap: 12px; }
+.sync-facts li span:first-child { color: var(--text-2); white-space: nowrap; }
+.sync-facts li span:last-child { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.sync-actions { display: grid; gap: 8px; }
+.sync-help { font-size: 13.5px; color: var(--text-2); line-height: 1.45; }
+.sync-help li { margin: 3px 0; }
+.sync-invite { display: flex; gap: 8px; margin-top: 4px; }
+.sync-invite input { flex: 1; min-width: 0; }
+.sync-msg { font-size: 13.5px; margin: 8px 0 0; }
+.sync-msg.bad { color: var(--bad); }
+.btn.link-btn { background: none; color: var(--bad); min-height: 44px; }
+.sync-invite .btn { flex: none; padding: 0 18px; }

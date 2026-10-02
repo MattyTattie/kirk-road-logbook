@@ -33,6 +33,7 @@ import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
 import { spendInYear, monthlySpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
+import * as sync from './sync.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -981,6 +982,7 @@ async function renderForm(type, id) {
       updatedAt: now,
     };
     await db.saveEntry(saved);
+    sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
     toast('Saved');
     // replace() instead of a normal link, so pressing Back afterwards
     // doesn't take you back into the form.
@@ -997,6 +999,161 @@ async function renderForm(type, id) {
   app.replaceChildren(form);
   if (!id && !scan) form.elements.title.focus();
 }
+
+// ---------------------------------------------------------------------
+// SYNC WITH GOOGLE DRIVE (settings card on the Backup screen)
+// ---------------------------------------------------------------------
+const SYNC_TEXT = {
+  idle: 'Up to date',
+  syncing: 'Syncing…',
+  offline: 'Offline — will sync when you’re back online',
+  signin: 'Sign in again to keep syncing',
+  error: 'Sync problem',
+  nofolder: 'Choose a shared logbook',
+};
+
+let syncMsg = null; // { text, bad } shown once under the buttons
+
+async function syncCard(cardHead) {
+  const st = sync.getStatus();
+  const card = el('section', { class: 'card sync-card', id: 'sync-card', 'data-state': st.state });
+  const add = (...kids) => card.append(...kids.flat().filter(Boolean));
+  const head = cardHead('backup', 'violet', 'Share with Google Drive');
+  const rerender = async () => { if (card.isConnected) card.replaceWith(await syncCard(cardHead)); };
+  const busyBtn = async (btn, label, fn) => {
+    btn.disabled = true;
+    const old = btn.innerHTML;
+    btn.textContent = label;
+    try { await fn(); } catch (err) { syncMsg = { text: err.message || String(err), bad: true }; }
+    btn.innerHTML = old;
+    btn.disabled = false;
+    rerender();
+  };
+  const help = el('ul', { class: 'sync-help' },
+    el('li', {}, 'Keeps one logbook on two phones, e.g. yours and your partner’s.'),
+    el('li', {}, 'Entries and photos are copied to a “Hearthbook” folder in your own Google Drive, which you share with them. No other company or server is involved.'),
+    el('li', {}, 'Each phone keeps its own full copy, so the app still works with no signal. Changes are swapped when you open the app, a few seconds after you save, and when you tap Sync now.'),
+    el('li', {}, 'If you both change the same entry before syncing, the most recent save wins.'),
+    el('li', {}, 'The app can only open its own Hearthbook files, nothing else in your Drive.'));
+  const msg = syncMsg ? el('p', { class: 'sync-msg' + (syncMsg.bad ? ' bad' : ''), id: 'sync-msg', role: 'status' }, syncMsg.text) : null;
+  syncMsg = null;
+
+  if (st.state === 'unconfigured') {
+    add(head, el('p', {}, 'Off. Everything stays on this phone.'), help,
+      el('p', { class: 'small muted', id: 'sync-unconfigured' }, 'Not set up in this copy of the app yet: it needs a free Google Cloud “client ID” first (HOW-IT-WORKS.md, section 9).'),
+      el('button', { type: 'button', class: 'btn secondary', disabled: true }, 'Connect Google account'));
+    return card;
+  }
+  if (st.state === 'off') {
+    add(head, el('p', {}, 'Off. Everything stays on this phone.'), help,
+      el('button', { type: 'button', class: 'btn', id: 'sync-connect', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening Google…', async () => {
+        await sync.connect();
+        syncMsg = { text: sync.getStatus().state === 'nofolder' ? 'Signed in. Now start a shared logbook, or join one.' : 'Connected.' };
+      }) }, 'Connect Google account'), msg);
+    return card;
+  }
+  const who = st.account ? `${st.account.name ? st.account.name + ' · ' : ''}${st.account.email}` : '—';
+  if (st.state === 'nofolder') {
+    add(head,
+      el('ul', { class: 'sync-facts' }, el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who))),
+      el('p', {}, 'Is this the first phone? Start a shared logbook. It creates a “Hearthbook” folder in your Drive and copies this phone’s entries into it. Then share the folder with your partner.'),
+      el('p', {}, 'If someone has already shared a Hearthbook folder with you, tap Join. Google’s file picker opens: tick all 9 files whose names start with “hearthbook” and tap Select. You only do this once.'),
+      el('div', { class: 'sync-actions' },
+        el('button', { type: 'button', class: 'btn', id: 'sync-create', onclick: (ev) => busyBtn(ev.currentTarget, 'Creating…', async () => {
+          await sync.createShared();
+          syncMsg = { text: 'Shared logbook created. Now share it: type your partner’s Gmail address below.' };
+        }) }, 'Start a new shared logbook'),
+        el('button', { type: 'button', class: 'btn secondary', id: 'sync-join', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening picker…', async () => {
+          const r = await sync.joinShared();
+          if (r.cancelled) return;
+          if (r.missing) syncMsg = { text: `Some files weren’t selected: ${r.missing.join(', ')}. Tap Join again and tick all 9 files.`, bad: true };
+          else syncMsg = { text: 'Joined. Both phones now share one logbook.' };
+        }) }, 'Join a logbook shared with me'),
+        el('button', { type: 'button', class: 'btn link-btn', id: 'sync-disconnect', onclick: async () => { await sync.disconnect(); rerender(); } }, 'Cancel and sign out')),
+      msg);
+    return card;
+  }
+
+  const stateText = st.state === 'error' ? st.message || SYNC_TEXT.error : SYNC_TEXT[st.state] || st.state;
+  const inviteInput = el('input', { type: 'email', id: 'sync-invite-email', placeholder: 'partner@gmail.com', autocomplete: 'off', 'aria-label': 'Email address to share with' });
+  add(head,
+    el('div', { class: 'sync-status', 'data-state': st.state, id: 'sync-status', role: 'status', 'aria-live': 'polite' },
+      el('span', { class: 'dot' }),
+      el('div', {}, el('strong', {}, stateText), el('span', { id: 'sync-last' }, `Last synced: ${sync.ago(st.lastSync)}`))),
+    el('ul', { class: 'sync-facts' },
+      el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who)),
+      el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`))),
+    el('div', { class: 'sync-actions' },
+      st.state === 'signin'
+        ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Signing in…', () => sync.syncNow({ interactive: true })) }, 'Sign in to Google again')
+        : el('button', { type: 'button', class: 'btn', id: 'sync-now', disabled: st.state === 'syncing', onclick: (ev) => busyBtn(ev.currentTarget, 'Syncing…', () => sync.syncNow({ interactive: true })) }, icon('backup', 20), 'Sync now'),
+      msg,
+      st.owner
+        ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'Share the folder with'),
+            el('div', { class: 'sync-invite' }, inviteInput,
+              el('button', { type: 'button', class: 'btn secondary', id: 'sync-invite', onclick: (ev) => busyBtn(ev.currentTarget, 'Sharing…', async () => {
+                const email = inviteInput.value.trim();
+                if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Please type a full email address.');
+                await sync.invite(email);
+                syncMsg = { text: `Shared with ${email}. Google emails them a link. On their phone, open ${APP_NAME} → Backup → Connect → Join.` };
+              }) }, 'Share')),
+            el('span', { class: 'hint' }, 'They get edit access to this one folder only. You can also share it from the Google Drive app.'))
+        : null,
+      el('button', { type: 'button', class: 'btn link-btn', id: 'sync-disconnect', onclick: async () => {
+        if (!confirm('Stop syncing on this phone?\n\nYour entries stay on this phone, and the shared folder stays in Google Drive. You can connect again later.')) return;
+        await sync.disconnect();
+        rerender();
+      } }, 'Disconnect this phone')),
+    el('details', { class: 'sync-more' }, el('summary', {}, 'How sync works'), help));
+  // Redraw this card when the sync status changes (while it's on screen).
+  let off = null;
+  setTimeout(() => {
+    off = sync.onStatus((s) => {
+      if (!card.isConnected) { if (off) off(); return; }
+      if (s.state !== card.dataset.state || s.lastSync !== st.lastSync) { if (off) off(); rerender(); }
+    });
+  }, 0);
+  return card;
+}
+
+// The little chip in the top bar: "On this phone", or the sync status.
+function wireSyncChip() {
+  const chip = document.getElementById('sync-chip');
+  const text = document.getElementById('sync-chip-text');
+  if (!chip || !text) return;
+  sync.onStatus((s) => {
+    const on = !['off', 'unconfigured'].includes(s.state);
+    chip.dataset.state = s.state;
+    const svg = chip.querySelector('svg');
+    if (svg) svg.replaceWith(icon(on ? 'backup' : 'lock', 14));
+    chip.dataset.syncs = String(s.count || 0); // how many syncs finished (handy for tests)
+    text.textContent = !on ? 'On this phone'
+      : s.state === 'idle' ? `Synced ${sync.ago(s.lastSync)}`
+      : s.state === 'syncing' ? 'Syncing…'
+      : s.state === 'offline' ? 'Offline'
+      : s.state === 'signin' ? 'Sign in to sync'
+      : s.state === 'nofolder' ? 'Finish sync setup'
+      : 'Sync problem';
+    chip.title = !on ? 'Your data stays on this phone' : 'Google Drive sync: tap to sync now';
+    chip.setAttribute('aria-label', on ? `Sync status: ${text.textContent}. Tap to sync now.` : 'Data stays on this phone. Open settings.');
+  });
+  chip.addEventListener('click', () => {
+    const s = sync.getStatus();
+    if (['off', 'unconfigured', 'nofolder', 'error'].includes(s.state)) location.hash = '#/export';
+    else sync.syncNow({ interactive: true });
+  });
+  // keep "Synced 3 min ago" fresh
+  setInterval(() => { const s = sync.getStatus(); if (s.state === 'idle') text.textContent = `Synced ${sync.ago(s.lastSync)}`; }, 30000);
+}
+
+// When the other phone's changes arrive, redraw the screen, but never
+// while you're in the middle of filling in a form.
+addEventListener('hearthbook:synced', () => {
+  if (!/^#\/(new|edit|scan)/.test(location.hash) && !document.querySelector('.period-card.dragging')) {
+    const y = scrollY;
+    render().then(() => scrollTo(0, y));
+  }
+});
 
 // "£1,200.50" -> 1200.5 ; "" -> null ; "abc" -> undefined (invalid)
 function parseMoney(text) {
@@ -1072,6 +1229,7 @@ async function renderDetail(id) {
             // Always ask first — there's no undo!
             if (!confirm(`Delete "${e.title}"? This cannot be undone.`)) return;
             await db.deleteEntry(e.id);
+            sync.recordDelete(e.id); // so the delete reaches the other phone too
             toast('Deleted');
             location.replace(`#/list/${e.type}`);
           },
@@ -1115,6 +1273,7 @@ async function renderExport() {
     if (!confirm('Restore from this backup?\n\nEntries in the backup will be added. Any entry that is already on this phone with the same ID will be replaced by the backup copy. Nothing else is deleted.')) return;
     try {
       const n = await importBackup(file);
+      sync.noteChange();
       markWelcomed();
       toast(`Restored ${n} entries`);
       location.hash = '#/list/all';
@@ -1161,6 +1320,7 @@ async function renderExport() {
         'Download backup file'
       )
     ),
+    await syncCard(cardHead),
     el(
       'section',
       { class: 'card' },
@@ -1191,7 +1351,7 @@ async function renderExport() {
       el('br'),
       '⚠️ Clearing Chrome’s site data or "storage" for this app deletes the whole logbook. Keep backups!'
     ),
-    el('p', { class: 'small muted footnote' }, `${APP_NAME} · everything stays on this phone`)
+    el('p', { class: 'small muted footnote' }, `${APP_NAME} · ${sync.getStatus().state === 'off' || sync.getStatus().state === 'unconfigured' ? 'everything stays on this phone' : 'synced through your own Google Drive'}`)
   );
 }
 
@@ -1201,6 +1361,8 @@ async function renderExport() {
 window.addEventListener('hashchange', render);
 render();
 db.requestPersistentStorage();
+wireSyncChip();
+sync.init();
 
 // Register the service worker (see sw.js) so the app works offline.
 // "serviceWorker in navigator" checks the browser supports it.
