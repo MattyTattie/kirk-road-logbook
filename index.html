@@ -1,0 +1,41 @@
+<!doctype html>
+<!--
+  index.html — the one and only page of the app.
+
+  It's deliberately almost empty: the header, and a <main> box that
+  app.js fills in with whichever screen you're on (list, form, etc.).
+-->
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Makes the page fit the phone's screen width instead of a zoomed-out desktop view -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Kirk Road Logbook</title>
+
+    <!-- The manifest tells Chrome "this is an installable app" (name, icons, colours) -->
+    <link rel="manifest" href="manifest.json" />
+    <!-- Colour of the phone's status bar / title bar -->
+    <meta name="theme-color" content="#1a3a6b" />
+    <link rel="icon" href="icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a href="#/list/all" class="brand">
+        <img src="icons/icon-192.png" alt="" width="32" height="32" />
+        <span>Kirk Road Logbook</span>
+      </a>
+      <a href="#/export" class="top-btn" id="export-nav" aria-label="Backup and report">💾 Backup</a>
+    </header>
+
+    <!-- app.js draws each screen in here -->
+    <main id="app">
+      <noscript>This app needs JavaScript switched on.</noscript>
+    </main>
+
+    <!-- type="module" lets us use "import" between our JavaScript files -->
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

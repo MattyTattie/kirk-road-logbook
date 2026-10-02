@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  report.html — a printable report of the whole logbook.
+
+  It reads the same database as the app (same website = same IndexedDB),
+  lays everything out like a document, and the "Print / Save as PDF"
+  button calls window.print(). On Android, Chrome's print screen has a
+  "Save as PDF" printer, so you get a PDF you can email or keep.
+-->
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kirk Road Logbook – Report</title>
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#1a3a6b" />
+    <link rel="icon" href="icons/icon-192.png" />
+    <link rel="stylesheet" href="report.css" />
+  </head>
+  <body>
+    <!-- The toolbar has class "no-print" so it doesn't appear on paper -->
+    <div class="toolbar no-print">
+      <a href="index.html#/export" class="tbtn">← Back</a>
+      <button id="print-btn" class="tbtn primary" type="button">🖨️ Print / Save as PDF</button>
+    </div>
+    <div id="report"><p>Loading…</p></div>
+    <script type="module" src="js/report.js"></script>
+  </body>
+</html>
