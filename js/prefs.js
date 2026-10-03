@@ -1,0 +1,88 @@
+// =====================================================================
+// prefs.js — settings that belong to THIS phone only.
+// =====================================================================
+// Kept in localStorage, never in the logbook database, so they are not
+// part of backups and never sync: each phone can hide or reorder sections,
+// opt in to reminders, etc. without changing anyone else's phone.
+//
+//   hearthbook.sections   { order: ['meter', 'job', ...], hidden: ['job'] }
+//   hearthbook.cheap      "00:00-07:00"  cheap overnight electricity hours
+//   hearthbook.notify     "on" once you've switched reminders on
+//   hearthbook.notified   { "<id>|<dueDate>|<30|7>": "2026-10-03" } reminders already shown
+//   hearthbook.toured     "yes" once the first-run tour is finished or skipped
+
+import { SECTIONS } from './sections.js';
+
+const read = (k, fallback) => { try { const v = localStorage.getItem(k); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } };
+const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const readRaw = (k, fallback = '') => { try { const v = localStorage.getItem(k); return v === null ? fallback : v; } catch { return fallback; } };
+const writeRaw = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+
+// ---------- sections: order + hidden ----------
+const SEC_KEY = 'hearthbook.sections';
+export function sectionPrefs() {
+  const p = read(SEC_KEY, {}) || {};
+  const ids = SECTIONS.map((s) => s.id);
+  // Known ids in the saved order first, then any new sections at the end.
+  const order = [...(Array.isArray(p.order) ? p.order.filter((id) => ids.includes(id)) : []), ...ids].filter((id, i, a) => a.indexOf(id) === i);
+  const hidden = Array.isArray(p.hidden) ? p.hidden.filter((id) => ids.includes(id)) : [];
+  return { order, hidden };
+}
+export function saveSectionPrefs({ order, hidden }) {
+  write(SEC_KEY, { order: [...order], hidden: [...new Set(hidden)] });
+  if (typeof dispatchEvent === 'function') dispatchEvent(new CustomEvent('hearthbook:prefs'));
+}
+// Sections in this phone's order (hidden ones left out unless asked).
+export function orderedSections({ includeHidden = false } = {}) {
+  const { order, hidden } = sectionPrefs();
+  return order.map((id) => SECTIONS.find((s) => s.id === id)).filter((s) => s && (includeHidden || !hidden.includes(s.id)));
+}
+export const isHidden = (id) => sectionPrefs().hidden.includes(id);
+export function setHidden(id, hide) {
+  const p = sectionPrefs();
+  p.hidden = hide ? [...p.hidden, id] : p.hidden.filter((x) => x !== id);
+  saveSectionPrefs(p);
+}
+export function moveSection(id, toIndex) {
+  const p = sectionPrefs();
+  const from = p.order.indexOf(id);
+  if (from < 0) return;
+  p.order.splice(from, 1);
+  p.order.splice(Math.max(0, Math.min(p.order.length, toIndex)), 0, id);
+  saveSectionPrefs(p);
+}
+export function setOrder(order) { const p = sectionPrefs(); p.order = order; saveSectionPrefs(p); }
+
+// ---------- cheap overnight hours (for the house picture's night sky) ----------
+const CHEAP_KEY = 'hearthbook.cheap';
+export const DEFAULT_CHEAP = '00:00-07:00';
+export function cheapHours() {
+  const m = /^(\d{1,2}):(\d\d)-(\d{1,2}):(\d\d)$/.exec(readRaw(CHEAP_KEY, DEFAULT_CHEAP)) || /^(\d{1,2}):(\d\d)-(\d{1,2}):(\d\d)$/.exec(DEFAULT_CHEAP);
+  return { start: Number(m[1]) * 60 + Number(m[2]), end: Number(m[3]) * 60 + Number(m[4]), text: `${m[1].padStart(2, '0')}:${m[2]}-${m[3].padStart(2, '0')}:${m[4]}` };
+}
+export function setCheapHours(text) {
+  if (!/^\d{1,2}:\d\d-\d{1,2}:\d\d$/.test(text)) return false;
+  writeRaw(CHEAP_KEY, text);
+  return true;
+}
+// Is this minute-of-day inside the cheap window? (Windows can wrap midnight.)
+export function inCheapHours(minutes, { start, end } = cheapHours()) {
+  return start <= end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
+}
+
+// ---------- reminders ----------
+export const remindersOn = () => readRaw('hearthbook.notify') === 'on';
+export const setRemindersOn = (on) => writeRaw('hearthbook.notify', on ? 'on' : 'off');
+export const notifiedLog = () => read('hearthbook.notified', {}) || {};
+export function markNotified(keys, today) {
+  const log = notifiedLog();
+  for (const k of keys) log[k] = today;
+  // Forget entries older than a year so the list stays small.
+  const cutoff = new Date(Date.now() - 366 * 86400000).toISOString().slice(0, 10);
+  for (const [k, d] of Object.entries(log)) if (d < cutoff) delete log[k];
+  write('hearthbook.notified', log);
+}
+
+// ---------- first-run tour ----------
+export const toured = () => readRaw('hearthbook.toured') === 'yes';
+export const markToured = () => writeRaw('hearthbook.toured', 'yes');

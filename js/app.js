@@ -35,6 +35,11 @@ import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, month
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
 import * as sync from './sync.js';
+import * as prefs from './prefs.js';
+import * as reminders from './reminders.js';
+import { countUp, transition, haptic, reducedMotion } from './motion.js';
+import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock, houseSettings } from './homeui.js';
+import { search as askSearch } from './search.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -78,16 +83,37 @@ const markWelcomed = () => { try { localStorage.setItem(WELCOME_KEY, 'yes'); } c
 // ---------------------------------------------------------------------
 // The router: pick a screen based on the address hash
 // ---------------------------------------------------------------------
+// Screens change with a soft View Transition where the browser has one
+// (motion.js), or the "slide in" animation below otherwise.
+let firstRender = true;
+let lastDepth = 0;
+// Only a tap on a link (tabs, back, tiles, cards) gets the transition;
+// saves and redirects swap the screen straight away.
+let linkTapAt = 0;
+document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[href^="#"]')) linkTapAt = performance.now(); }, true);
 async function render() {
-  releasePhotoURLs();
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, new: 2, scan: 2, view: 2, edit: 3 }[parts[0]] ?? 1;
+  const direction = depth < lastDepth ? 'back' : 'forward';
+  lastDepth = depth;
+  const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
+  if (firstRender) {
+    firstRender = false;
+    await drawScreen(parts, false);
+    document.body.classList.add('ready'); // fades the launch logo away (index.html)
+  } else if (vt) await transition(() => drawScreen(parts, true), { direction });
+  else await drawScreen(parts, false);
+}
+async function drawScreen(parts, viaTransition) {
+  releasePhotoURLs();
   const [page, arg] = parts;
   window.scrollTo(0, 0);
   setChrome(page, arg);
   try {
     if (page === 'new' && arg) await renderForm(arg, null);
     else if (page === 'new') renderChooser();
-    else if (page === 'scan') renderScan();
+    else if (page === 'scan') await renderScan(arg);
+    else if (page === 'search') renderSearch(arg ? decodeURIComponent(arg) : '');
     else if (page === 'edit') await renderForm(null, arg);
     else if (page === 'view') await renderDetail(arg);
     else if (page === 'export') await renderExport();
@@ -100,6 +126,7 @@ async function render() {
   }
   // Replay the gentle "slide in" animation for the new screen.
   app.classList.remove('screen-in');
+  if (viaTransition) return;
   void app.offsetWidth;
   app.classList.add('screen-in');
 }
@@ -118,15 +145,23 @@ function setChrome(page, arg) {
     if (on) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
+  applyNavPrefs();
   const add = document.getElementById('add');
   if (add) add.href = page === 'list' && arg && arg !== 'all' ? `#/new/${arg}` : '#/new';
   const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome' || page === 'scan';
   document.body.classList.toggle('no-nav', bare);
 }
 
+// Sections hidden on this phone also leave the bottom bar (prefs.js).
+function applyNavPrefs() {
+  const meter = document.getElementById('nav-meter');
+  if (meter) meter.hidden = prefs.isHidden('meter');
+}
+addEventListener('hearthbook:prefs', applyNavPrefs);
+
 // The pill-shaped section filters at the top of the list.
 function tabs(current) {
-  const all = [{ id: 'all', label: 'All', glyph: 'list', tone: 'brand' }, ...SECTIONS];
+  const all = [{ id: 'all', label: 'All', glyph: 'list', tone: 'brand' }, ...prefs.orderedSections()];
   return el(
     'nav',
     { class: 'tabs', 'aria-label': 'Sections' },
@@ -252,6 +287,8 @@ async function renderHome() {
     app.replaceChildren(
       el('div', { class: 'dash', id: 'dashboard' },
         head,
+        tourCard(), // first run: the tour shows even before anything is added
+        houseCard([]),
         el('div', { class: 'empty empty-hero' },
           el('div', { class: 'empty-art' }, icon('home', 44)),
           el('h2', {}, 'Your logbook is empty'),
@@ -261,7 +298,7 @@ async function renderHome() {
             el('a', { class: 'btn btn-lg secondary', href: '#/export' }, icon('upload', 20), 'Restore a backup')
           )
         ),
-        el('div', { class: 'section-grid' }, SECTIONS.map((s) => sectionTile(s, [], year)))
+        el('div', { class: 'section-grid' }, prefs.orderedSections().map((s) => sectionTile(s, [], year)))
       )
     );
     return;
@@ -279,7 +316,7 @@ async function renderHome() {
     el('p', { class: 'hero-value', id: 'spend-year' }, money(thisYear)),
     el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} this year · ${money(lastYear)} in ${year - 1}`),
     el('div', { class: 'hero-split' },
-      SECTIONS.map((s) => {
+      prefs.orderedSections().map((s) => {
         const v = spendInYear(everything.filter((e) => e.type === s.id), year);
         const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
         return v > 0 ? el('span', { class: 'hero-chip' }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
@@ -352,17 +389,10 @@ async function renderHome() {
   }
 
   // --- Section tiles: count and £ for the year picked in the chart
-  // (the "12 months" view shows this year). ---
-  const tilesTitle = el('h2', { id: 'tiles-title' });
-  const tilesGrid = el('div', { class: 'section-grid', id: 'section-tiles' });
-  const tiles = el('section', { class: 'group tiles-group', id: 'tiles', 'aria-labelledby': 'tiles-title' },
-    el('div', { class: 'group-head' }, tilesTitle), tilesGrid);
-  function drawTiles() {
-    const y = state.chartYear || year;
-    tilesTitle.textContent = y === year ? `This year (${y})` : `In ${y}`;
-    tiles.dataset.year = String(y);
-    tilesGrid.replaceChildren(...SECTIONS.map((s) => sectionTile(s, everything, y)));
-  }
+  // (the "12 months" view shows this year, "2026 so far"). Press and hold
+  // (or Edit) to hide / reorder sections on this phone (homeui.js). ---
+  const tiles = tilesSection({ everything, sectionTile, thisYear: year, onChange: () => { applyNavPrefs(); redrawHero(); } });
+  function drawTiles() { tiles.draw(state.chartYear || year); }
 
   // --- Spending chart ---
   const chartCard = el('section', { class: 'card chart-card', id: 'spend-chart', 'aria-labelledby': 'chart-title' });
@@ -427,24 +457,38 @@ async function renderHome() {
   for (const e of renewSoon) if (!soonList.includes(e)) soonList.push(e);
   const recent = everything.slice(0, 4);
 
-  app.replaceChildren(
-    el('div', { class: 'dash', id: 'dashboard' },
+  // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
+  const dash = el('div', { class: 'dash', id: 'dashboard' });
+  const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
+  function redrawHero() { hero.querySelector('.hero-split').replaceChildren(...prefs.orderedSections().map((s) => {
+    const v = spendInYear(everything.filter((e) => e.type === s.id), year);
+    const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
+    return v > 0 ? el('span', { class: 'hero-chip' }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
+  }).filter(Boolean)); }
+
+  dash.append(...[
       head,
+      ask,
+      tourCard(),
+      houseCard(everything),
       hero,
       await backupReminder(everything.length),
       el('div', { class: 'stat-grid' }, nextCard, meterCard, billCard),
       chartCard,
-      tiles,
+      tiles.element,
       soonList.length
-        ? el('section', { class: 'group' },
-            el('div', { class: 'group-head' }, el('h2', {}, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
-            el('div', { class: 'list' }, soonList.map(entryCard)))
+        ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
+            el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
+            el('div', { class: 'list' }, soonList.map(entryCard)),
+            remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
         : null,
       el('section', { class: 'group' },
         el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
-        el('div', { class: 'list' }, recent.map(entryCard)))
-    )
-  );
+        el('div', { class: 'list' }, recent.map(entryCard))),
+  ].filter(Boolean));
+  app.replaceChildren(dash);
+  const heroValue = document.getElementById('spend-year');
+  if (heroValue) countUp(heroValue, thisYear, (v) => money(v));
 }
 
 // One section tile on the home screen: how many and how much in one year.
@@ -511,8 +555,9 @@ async function renderList(type) {
     'aria-label': 'Search',
   });
   const summary = el('div', { class: 'summary', id: 'summary' });
-  const list = el('div', { class: 'list', id: 'list' });
-  screen.push(el('label', { class: 'search-wrap' }, icon('search', 20), search), summary, list);
+  const answerBox = el('div', { class: 'list-answer', id: 'list-answer' });
+  const list = el('div', { class: 'list stagger', id: 'list' });
+  screen.push(el('label', { class: 'search-wrap' }, icon('search', 20), search), answerBox, summary, list);
 
   // Draw (or redraw) just the list part. We call this on every key press
   // in the search box, instead of redrawing the whole screen, so the
@@ -520,9 +565,17 @@ async function renderList(type) {
   function drawList() {
     releasePhotoURLs();
     const q = state.query.trim().toLowerCase();
-    const shown = q
-      ? inSection.filter((e) => [e.title, e.notes, e.supplier, e.policyNumber, e.covered].some((f) => (f || '').toLowerCase().includes(q)))
-      : inSection;
+    // "Ask Hearthbook" matching (search.js): small typos, month / year words,
+    // and on All also section words ("bills 2025") and "when does … renew?".
+    const found = q ? askSearch(inSection, state.query, { sectionWords: type === 'all' }) : null;
+    const hits = found ? new Set(found.results.map((x) => x.entry)) : null;
+    const shown = hits ? inSection.filter((e) => hits.has(e)) : inSection;
+    answerBox.replaceChildren(...(found && found.answer && found.answer.kind === 'date'
+      ? [el('a', { class: 'answer-card', id: 'list-answer-card', href: `#/view/${found.answer.entry.id}` },
+          el('span', { class: 'badge badge-md', 'data-tone': getSection(found.answer.entry.type).tone }, icon(getSection(found.answer.entry.type).glyph, 22)),
+          el('div', { class: 'answer-text' }, el('span', { class: 'answer-title' }, found.answer.entry.title),
+            el('span', { class: 'answer-date' }, `${found.answer.verb} on ${niceDate(found.answer.date)}`)), icon('chevron', 18))]
+      : []));
 
     // Insurance: soonest renewal first, with the yearly cost of all policies.
     if (section && section.kind === 'insurance') {
@@ -571,6 +624,7 @@ async function renderList(type) {
   }
   search.addEventListener('input', () => {
     state.query = search.value;
+    list.classList.remove('stagger'); // cards only slide in when the screen opens
     drawList();
   });
   drawList();
@@ -852,6 +906,15 @@ function entryCard(e) {
 }
 
 // ---------------------------------------------------------------------
+// SEARCH: "Ask Hearthbook" on its own screen (app shortcut "Search")
+// ---------------------------------------------------------------------
+function renderSearch(initial = '') {
+  app.replaceChildren(
+    screenHead('Ask Hearthbook', { back: { href: '#/home', label: 'Home' }, sub: 'Search everything on this phone — or ask “when does … renew?”' }),
+    askBox({ getEntries: () => db.getAllEntries(), entryCard, autofocus: true, examples: true, initial }));
+}
+
+// ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
 const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Electricity bills and meter readings', insurance: 'Home, car and life policies' };
@@ -868,7 +931,7 @@ function renderChooser() {
     el(
       'div',
       { class: 'chooser' },
-      SECTIONS.map((s) =>
+      prefs.orderedSections().map((s) =>
         el('a', { class: 'choice', href: `#/new/${s.id}`, 'data-section': s.id, 'data-tone': s.tone },
           sectionBadge(s, 'lg'),
           el('span', { class: 'choice-label' }, s.single),
@@ -889,7 +952,20 @@ function renderChooser() {
 // scanning works offline too.
 let pendingScan = null; // { type, fields, photos, parsed } handed to renderForm
 
-function renderScan() {
+// A photo or PDF shared to Hearthbook from another app arrives through the
+// service worker (sw.js "share target"), which parks it in a cache.
+async function takeSharedFile() {
+  if (!('caches' in window)) return null;
+  const cache = await caches.open('hearthbook-share');
+  const res = await cache.match('./__shared__');
+  if (!res) return null;
+  await cache.delete('./__shared__');
+  const blob = await res.blob();
+  const name = decodeURIComponent(res.headers.get('X-File-Name') || 'shared');
+  return new File([blob], name, { type: blob.type || res.headers.get('Content-Type') || '' });
+}
+
+async function renderScan(arg) {
   const cameraInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, id: 'scan-camera-input' });
   const fileInput = el('input', { type: 'file', accept: 'image/*,application/pdf,.pdf', hidden: true, id: 'scan-file-input' });
   const body = el('div', { class: 'scan-body', id: 'scan-body' });
@@ -960,6 +1036,11 @@ function renderScan() {
   fileInput.addEventListener('change', () => { go(fileInput.files[0]); fileInput.value = ''; });
 
   picker();
+  if (arg === 'shared') {
+    const file = await takeSharedFile();
+    if (file && /^(image\/|application\/pdf)/.test(file.type || '') || (file && /\.pdf$/i.test(file.name))) setTimeout(() => go(file), 0);
+    else if (arg === 'shared') picker(file ? 'Hearthbook can read photos and PDFs. That file was a different kind.' : 'The shared file didn’t arrive. Try sharing it again, or choose it here.');
+  }
   app.replaceChildren(
     el('div', { class: 'scan', id: 'scan' },
       screenHead('Scan receipt or bill', { back: { href: '#/new', label: 'Add' }, sub: 'Photo, screenshot or PDF' }),
@@ -1645,8 +1726,13 @@ async function renderExport() {
       'section',
       { class: 'card' },
       cardHead('sun', 'amber', 'Appearance'),
-      el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark'))
+      el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark')),
+      houseSettings(),
+      el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} location.hash = '#/home'; } }, 'Show the quick tour again')
     ),
+    el('section', { class: 'card', id: 'reminders-card' }, cardHead('clock', 'rose', 'Reminders'),
+      remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => renderExport() })),
+    customiseCard(cardHead, applyNavPrefs),
     el(
       'p',
       { class: 'small muted footnote' },
@@ -1665,6 +1751,21 @@ async function renderExport() {
 // ---------------------------------------------------------------------
 window.addEventListener('hashchange', render);
 render();
+
+// Reminders: check when the app opens and whenever you come back to it.
+const checkReminders = () => reminders.check(() => db.getAllEntries()).catch(() => {});
+setTimeout(checkReminders, 1500);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkReminders(); });
+// The service worker asks us to open an entry when a reminder is tapped
+// and the app was already open.
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', (ev) => {
+  if (ev.data && ev.data.type === 'open' && typeof ev.data.hash === 'string' && ev.data.hash.startsWith('#/')) location.hash = ev.data.hash;
+});
+
+// A light tap of the vibration motor on the main buttons (Android).
+document.addEventListener('click', (ev) => {
+  if (ev.target.closest && ev.target.closest('.bottom-nav a, .btn:not(.link-btn), .year-chip, .seg-btn, .section-tile, .choice, .scan-choice, .h-part, #sync-chip, .tray-chip')) haptic();
+}, { passive: true });
 db.requestPersistentStorage();
 wireSyncChip();
 sync.init();

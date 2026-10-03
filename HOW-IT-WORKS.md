@@ -48,6 +48,12 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/gdrive.js` | Google sign-in, Drive file calls and the Google file picker. Google's scripts are only loaded once you tap Connect. |
 | `vendor/` | The two bundled libraries for the scanner, with their licences (see section 4c). Nothing is fetched from the internet. |
 | `js/icons.js` | The line icons, as plain SVG path strings. |
+| `js/prefs.js` | **Settings for this phone only** (in `localStorage`, never in backups or sync): which sections are hidden and their order, cheap overnight hours, reminders on/off and which reminders were already shown, and whether the quick tour was seen. |
+| `js/house.js` | The **house picture** on the home screen: an SVG drawing whose sky, window glow and roof flag follow your data. |
+| `js/homeui.js` | Home-screen parts: the house card, *Ask Hearthbook*, the quick tour, the editable section tiles, and the Settings cards for sections, reminders and cheap hours. |
+| `js/search.js` | **Ask Hearthbook**: searching every entry on the phone, with small typos allowed and simple questions ("when does the car insurance renew?"). Plain JavaScript, tested with Node. |
+| `js/reminders.js` | Reminder notifications for renewals, warranties and jobs due within 30 days. |
+| `js/motion.js` | Small animations: totals counting up, screen transitions, light vibration on taps. All switched off when the phone asks for reduced motion. |
 | `js/theme.js` | Light / Dark / Auto appearance (remembered in `localStorage`). |
 | `fonts/inter-latin.woff` | The Inter typeface (Latin letters only, ~38 KB), stored with the app so it works offline. Licence: SIL Open Font License, see `fonts/LICENSE-Inter.txt`. |
 | `js/db.js` | Saves and loads entries in **IndexedDB**, the phone's built-in browser database. |
@@ -58,7 +64,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
 | `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
-| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `test_foreign_receipt.py` + `lpa-airport-receipt.jpg` (a holiday receipt in euros), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `test_foreign_receipt.py` + `lpa-airport-receipt.jpg` (a holiday receipt in euros), `test_v10.py` (house picture, Ask, tour, customising sections, reminders, share target, motion), `search.mjs` and `reminders_house.mjs` (search, reminder and house-picture rules), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -299,8 +305,8 @@ renewal as a due date, and editing one there keeps the policy fields
    (Insurance is now built in like this. It also has `kind: 'insurance'`,
    which turns on the extra policy fields, and `soonDays: 30`.)
 
-2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v8'` to
-   `'hearthbook-v9'` (do this after **any** change, so phones fetch
+2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v9'` to
+   `'hearthbook-v10'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
@@ -415,9 +421,11 @@ address, saves data with the old one and checks the new one shows it all.
 - `FORMAT = 'kirk-road-logbook-backup'` and `FORMAT_VERSION` in
   `js/backup.js`. (The backup *file name* now starts `hearthbook-backup-…`;
   that's only a name — restore looks at what's inside.)
-- Section `id`s in `js/sections.js`.
+- Section `id`s in `js/sections.js`. (Hiding or reordering sections in
+  Settings only changes this phone's `localStorage`; the ids and the entries
+  stay exactly the same.)
 - When you change any app file, bump `CACHE_NAME` in `sw.js` (now
-  `hearthbook-v8`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
+  `hearthbook-v10`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
   in `vendor/` change.
 
 ## 9. Sharing one logbook with Google Drive (optional)
@@ -590,3 +598,64 @@ next ordinary tap anywhere in the app asks Google quietly for a new one
 If Google needs you to choose or agree again, the chip just says
 "Tap to sync" and the Backup screen shows "Continue syncing". Nothing is lost
 meanwhile: entries stay on the phone and sync after that tap.
+
+## 10. What's new in v10
+
+**Home heading.** The tiles say *2026 so far* for this year, or *In 2025*
+when you pick a past year.
+
+**House picture.** A drawing of an end-terrace house (generic, with no
+address). It changes like this:
+- **Sky:** it follows the time of day (dawn, day, dusk, evening). During
+  the *cheap overnight hours* it turns deep blue with stars. They default to
+  00:00–07:00; change them in Settings → Appearance.
+- **Windows:** they glow brighter when the latest electricity bill is above
+  your average bill, and dimmer when it's below.
+- **Roof flag:** it appears when anything is due within 30 days.
+- **Battery:** a gauge on the gable wall, which only appears once you log a
+  meter entry with "battery" in its title and the unit `%`.
+
+Tap the flag to jump to *Coming up*, the windows for Electricity bills, or
+the door for the Logbook. Animations stop when the phone asks for reduced
+motion.
+
+**Ask Hearthbook.** This is the search box on the home screen, under Search
+in the app shortcuts (`#/search`), and in the Logbook. It searches titles,
+shops and suppliers, notes (including the details a scan keeps), policy
+numbers and cover. It allows small typos and words you haven't finished
+typing. It also understands:
+- months and years ("January 2025 bill", "receipts this year")
+- section words (bill, receipt, warranty, insurance, job)
+- "when does X renew/expire/is due". These show an answer card with the date.
+
+It all runs on the phone. The full raw text of a scan isn't stored (that
+would change the backup format), only what the scanner puts in the entry.
+
+**Reminders.** Turn them on in Settings → Reminders, or with *Remind me*
+under Coming up. The app only asks Android for permission after you tap one
+of those, never by itself. When the app is opened or switched back to, it
+looks for renewals, warranty expiries and job dates within 30 days. It
+shows one notification per item at 30 days and one at 7 days. Tapping a
+notification opens that entry. Phones don't let a web app run in the
+background, so reminders only come when you open Hearthbook.
+
+**Customise sections.** Long-press a tile on the home screen (or tap
+*Edit*) to change them: the tiles wiggle, **−** hides a section, you drag
+tiles to reorder them, and the **+** chips put hidden sections back.
+Settings → *Home screen & sections* has the same thing as a tick list, with
+drag handles and ↑ ↓ buttons. A hidden section leaves the tiles, the add
+menu, the Logbook tabs and (for Electricity) the bottom bar. Its entries are
+never deleted: they still sync, back up, and show in *All* and in search.
+This setting is per phone.
+
+**Shortcuts and sharing.** Long-press the app icon for *Scan receipt*,
+*Add electricity bill* and *Search*. Once the app is installed, you can also
+share a photo or PDF from the gallery or an email to **Hearthbook**. The
+service worker keeps the file for a moment (cache `hearthbook-share`) and
+opens the scanner with it (`#/scan/shared`).
+
+**Polish.** Cards slide in, totals count up, and screens cross-fade with the
+View Transitions API when you tap a link (older browsers just switch
+screens). Key taps give a light vibration on Android. The logo shows briefly
+while the app starts. New phones get a 4-card quick tour, once, which you
+can skip and replay from Settings.

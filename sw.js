@@ -25,8 +25,11 @@
 // v7 = Insurance section, unit rates & standing charge, year-on-year charts, no backup nag while synced.
 // v8 = scanner: foreign receipts (EUR), auto-rotate and crop.
 // v9 = neutral sharing wording, "Electricity bills" section, home tiles follow the year picker, quiet Google sign-in refresh.
+// v10 = house picture, Ask Hearthbook, reminders, tour, customisable sections, app shortcuts, share target.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v9';
+const CACHE_NAME = 'hearthbook-v10';
+// Where a shared photo/PDF waits for the app to pick it up (share target).
+const SHARE_CACHE = 'hearthbook-share';
 
 // The scanner's libraries (OCR engine + English model + PDF reader) are big
 // (~8 MB to download), so they get their OWN cache with its own version.
@@ -78,6 +81,12 @@ const APP_SHELL = [
   './js/tariff.js',
   './js/sync.js',
   './js/gdrive.js',
+  './js/prefs.js',
+  './js/reminders.js',
+  './js/search.js',
+  './js/house.js',
+  './js/motion.js',
+  './js/homeui.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -98,7 +107,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME && n !== OCR_CACHE).map((n) => caches.delete(n))))
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME && n !== OCR_CACHE && n !== SHARE_CACHE).map((n) => caches.delete(n))))
       .then(() => self.clients.claim()) // start controlling open pages straight away
   );
 });
@@ -128,6 +137,12 @@ self.addEventListener('message', (event) => {
 //    go to the network (and save a copy for next time).
 self.addEventListener('fetch', (event) => {
   const request = event.request;
+  // A photo or PDF shared to Hearthbook (manifest "share_target"): keep the
+  // file in a cache and open the scanner, which picks it up from there.
+  if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/share-target')) {
+    event.respondWith(receiveShare(request));
+    return;
+  }
   // Only handle simple GET requests for our own files.
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
 
@@ -151,4 +166,51 @@ self.addEventListener('fetch', (event) => {
         });
     })
   );
+});
+
+// 4) SHARE TARGET: Android's Share sheet → Hearthbook. The phone POSTs the
+//    file here; nothing goes over the internet.
+async function receiveShare(request) {
+  try {
+    const form = await request.formData();
+    const file = form.getAll('media').find((f) => f && typeof f === 'object' && f.size > 0);
+    if (file) {
+      const cache = await caches.open(SHARE_CACHE);
+      await cache.put('./__shared__', new Response(file, { headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name || 'shared') } }));
+    }
+  } catch (err) {
+    console.warn('share failed', err);
+  }
+  return Response.redirect('./index.html#/scan/shared', 303);
+}
+
+// 5) REMINDERS: tapping a notification opens that entry, in the app window
+//    that's already open if there is one.
+async function openFromNotification(url) {
+  const target = new URL(url || './index.html#/home', self.location.href);
+  if (target.origin !== self.location.origin) return;
+  const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const win = wins.find((w) => new URL(w.url).origin === self.location.origin);
+  if (win) {
+    win.postMessage({ type: 'open', hash: target.hash });
+    if (win.focus) await win.focus();
+    return;
+  }
+  await self.clients.openWindow(target.href);
+}
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(openFromNotification(event.notification.data && event.notification.data.url));
+});
+// Tests can't tap a real notification, so they ask the worker to act as if
+// the newest one with this tag was tapped (same code path as above).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'test-notification-click') {
+    event.waitUntil(self.registration.getNotifications({ tag: event.data.tag }).then((list) => {
+      const n = list[0];
+      if (!n) return;
+      n.close();
+      return openFromNotification(n.data && n.data.url);
+    }));
+  }
 });
