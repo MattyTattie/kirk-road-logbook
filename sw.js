@@ -26,8 +26,9 @@
 // v8 = scanner: foreign receipts (EUR), auto-rotate and crop.
 // v9 = neutral sharing wording, "Electricity bills" section, home tiles follow the year picker, quiet Google sign-in refresh.
 // v10 = house picture, Ask Hearthbook, reminders, tour, customisable sections, app shortcuts, share target.
+// v11 = no cheap-rate chip/setting (night sky by the clock), shorter house, tiles + Coming up under it, smaller spending card.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v10';
+const CACHE_NAME = 'hearthbook-v11';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 

@@ -4,8 +4,8 @@
 // A generic end-of-terrace house (gable end, chimney, roof window on the
 // front slope), drawn as SVG so it's sharp, tiny and works offline.
 // It reacts to your logbook:
-//   • the sky follows the time of day, and turns deep blue with stars in
-//     the cheap overnight hours (Settings → Cheap overnight hours);
+//   • the sky follows the time of day: dawn, day, dusk, evening, and a
+//     deep blue starry night from 22:00 to 05:00;
 //   • the windows glow brighter when the latest electricity bill is above
 //     your average, dimmer when it's below;
 //   • a little flag flies on the roof when something is due within 30 days;
@@ -14,13 +14,11 @@
 // Tap the flag → Coming up, a window → Electricity bills, the door → Logbook.
 // Colours come from CSS (styles.css, "House picture") so dark mode works.
 
-import { inCheapHours } from './prefs.js';
-
-// Which sky? 'night' (cheap hours: stars), 'dawn', 'day', 'dusk', 'evening'.
-export function skyPhase(date, cheap) {
-  const m = date.getHours() * 60 + date.getMinutes();
-  if (inCheapHours(m, cheap)) return 'night';
-  const h = m / 60;
+// Which sky? By the clock only: 'night' (22:00–05:00, stars), 'dawn',
+// 'day', 'dusk', 'evening'.
+export function skyPhase(date) {
+  const h = date.getHours() + date.getMinutes() / 60;
+  if (h >= 22 || h < 5) return 'night';
   if (h >= 5 && h < 8) return 'dawn';
   if (h >= 8 && h < 17) return 'day';
   if (h >= 17 && h < 20) return 'dusk';
@@ -34,7 +32,7 @@ export function glowLevel(latest, average) {
   return Math.round(Math.max(0, Math.min(1, (r - 0.7) / 0.6)) * 100) / 100;
 }
 
-const STARS = [[24, 18, 1.2], [58, 34, 0.9], [92, 14, 1.4], [130, 40, 0.8], [168, 20, 1.1], [205, 12, 0.9], [244, 30, 1.3], [282, 16, 0.8], [318, 38, 1.1], [342, 12, 0.9], [40, 58, 0.7], [300, 60, 0.7], [112, 62, 0.6], [228, 54, 0.6]];
+const STARS = [[24, 36, 1.2], [58, 52, 0.9], [92, 32, 1.4], [130, 58, 0.8], [168, 38, 1.1], [205, 30, 0.9], [244, 48, 1.3], [282, 34, 0.8], [318, 56, 1.1], [342, 30, 0.9], [40, 76, 0.7], [300, 78, 0.7], [112, 80, 0.6], [228, 72, 0.6]];
 
 /**
  * houseSVG({ phase, glow, due, battery, labels }) → SVG markup string.
@@ -58,7 +56,7 @@ export function houseSVG({ phase = 'day', glow = 0.5, due = 0, battery = null } 
         <rect x="${x - 2}" y="${y + h}" width="${w + 4}" height="3" rx="1" class="hw-sill"/>
       </g>`;
   const pct = battery && isFinite(battery.pct) ? Math.max(0, Math.min(100, Math.round(battery.pct))) : null;
-  return `<svg class="house-svg" viewBox="0 0 360 190" role="group" aria-label="Your house" data-phase="${phase}" xmlns="http://www.w3.org/2000/svg">
+  return `<svg class="house-svg" viewBox="0 26 360 144" role="group" aria-label="Your house" data-phase="${phase}" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="${sky}" x1="0" y1="0" x2="0" y2="1">
         <stop offset="0" class="sky-top"/><stop offset="1" class="sky-bottom"/>
@@ -66,8 +64,8 @@ export function houseSVG({ phase = 'day', glow = 0.5, due = 0, battery = null } 
     </defs>
     <rect width="360" height="190" fill="url(#${sky})" class="h-sky"/>
     <g class="h-stars" aria-hidden="true">${STARS.map(([x, y, r], i) => `<circle cx="${x}" cy="${y}" r="${r}" style="--d:${i % 5}"/>`).join('')}</g>
-    <circle cx="118" cy="30" r="12" class="h-moon" aria-hidden="true"/><circle cx="124" cy="25.5" r="10" class="h-moon-cut" aria-hidden="true"/>
-    <circle cx="62" cy="44" r="16" class="h-sun" aria-hidden="true"/>
+    <circle cx="118" cy="44" r="11" class="h-moon" aria-hidden="true"/><circle cx="123.5" cy="40" r="9" class="h-moon-cut" aria-hidden="true"/>
+    <circle cx="62" cy="50" r="14" class="h-sun" aria-hidden="true"/>
     <path d="M0 150 C 60 128 120 140 180 134 S 300 124 360 140 V190 H0Z" class="h-hill" aria-hidden="true"/>
     <rect x="0" y="160" width="360" height="30" class="h-ground" aria-hidden="true"/>
 
@@ -88,7 +86,7 @@ export function houseSVG({ phase = 'day', glow = 0.5, due = 0, battery = null } 
       <path d="M166 55 H304" class="h-ridge"/>
       <!-- chimney on the gable end -->
       <rect x="296" y="34" width="15" height="26" class="h-chimney"/><rect x="294" y="31" width="19" height="5" class="h-chimney-top"/>
-      <g class="h-smoke" aria-hidden="true"><circle cx="304" cy="23" r="4"/><circle cx="309" cy="14" r="5"/><circle cx="302" cy="5" r="6"/></g>
+      <g class="h-smoke" aria-hidden="true"><circle cx="306" cy="27" r="3"/><circle cx="313" cy="29" r="3.6"/><circle cx="320" cy="31" r="4.2"/></g>
       <!-- roof window (Velux style) on the front slope -->
       <path d="M206 63 H232 L227 79 H200Z" class="h-velux"/><path d="M209 65.5 H229 L225 76.5 H204Z" class="h-velux-glass"/>
       <rect x="150" y="122" width="128" height="3" class="h-band"/>

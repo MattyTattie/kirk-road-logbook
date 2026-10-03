@@ -864,3 +864,21 @@ body.ready #splash { animation: splash-out 0.3s ease 0.1s forwards; }
   ::view-transition-old(root), ::view-transition-new(root) { animation: none !important; }
   .tour-dots i { transition: none; }
 }
+
+/* =================================================================
+   v11: a smaller, calmer spending card (it sits below the tiles now,
+   so one big receipt doesn't shout over everything else)
+   ================================================================= */
+.hero {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; column-gap: 12px;
+  padding: 14px 16px; border-radius: var(--radius); color: var(--text);
+  background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+:root[data-theme='dark'] .hero { box-shadow: var(--shadow); }
+.hero::after { display: none; }
+.hero-label { grid-column: 1; color: var(--text-2); font-size: 13.5px; }
+.hero-value { grid-column: 2; grid-row: 1; margin: 0; font-size: 22px; letter-spacing: -0.02em; color: var(--brand); text-align: right; }
+.hero-sub { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; color: var(--text-2); }
+.hero-split { grid-column: 1 / -1; }
+.hero-chip { background: var(--surface-2); color: var(--text-2); font-size: 12px; padding: 4px 9px; }
+.house-card { margin-bottom: 16px; }

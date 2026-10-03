@@ -38,7 +38,7 @@ import * as sync from './sync.js';
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
 import { countUp, transition, haptic, reducedMotion } from './motion.js';
-import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock, houseSettings } from './homeui.js';
+import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock } from './homeui.js';
 import { search as askSearch } from './search.js';
 
 const app = document.getElementById('app');
@@ -471,10 +471,6 @@ async function renderHome() {
       ask,
       tourCard(),
       houseCard(everything),
-      hero,
-      await backupReminder(everything.length),
-      el('div', { class: 'stat-grid' }, nextCard, meterCard, billCard),
-      chartCard,
       tiles.element,
       soonList.length
         ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
@@ -482,6 +478,10 @@ async function renderHome() {
             el('div', { class: 'list' }, soonList.map(entryCard)),
             remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
         : null,
+      await backupReminder(everything.length),
+      hero,
+      el('div', { class: 'stat-grid' }, nextCard, meterCard, billCard),
+      chartCard,
       el('section', { class: 'group' },
         el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
         el('div', { class: 'list' }, recent.map(entryCard))),
@@ -1727,7 +1727,6 @@ async function renderExport() {
       { class: 'card' },
       cardHead('sun', 'amber', 'Appearance'),
       el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark')),
-      houseSettings(),
       el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} location.hash = '#/home'; } }, 'Show the quick tour again')
     ),
     el('section', { class: 'card', id: 'reminders-card' }, cardHead('clock', 'rose', 'Reminders'),

@@ -6,7 +6,6 @@
 // opt in to reminders, etc. without changing anyone else's phone.
 //
 //   hearthbook.sections   { order: ['meter', 'job', ...], hidden: ['job'] }
-//   hearthbook.cheap      "00:00-07:00"  cheap overnight electricity hours
 //   hearthbook.notify     "on" once you've switched reminders on
 //   hearthbook.notified   { "<id>|<dueDate>|<30|7>": "2026-10-03" } reminders already shown
 //   hearthbook.toured     "yes" once the first-run tour is finished or skipped
@@ -53,22 +52,9 @@ export function moveSection(id, toIndex) {
 }
 export function setOrder(order) { const p = sectionPrefs(); p.order = order; saveSectionPrefs(p); }
 
-// ---------- cheap overnight hours (for the house picture's night sky) ----------
-const CHEAP_KEY = 'hearthbook.cheap';
-export const DEFAULT_CHEAP = '00:00-07:00';
-export function cheapHours() {
-  const m = /^(\d{1,2}):(\d\d)-(\d{1,2}):(\d\d)$/.exec(readRaw(CHEAP_KEY, DEFAULT_CHEAP)) || /^(\d{1,2}):(\d\d)-(\d{1,2}):(\d\d)$/.exec(DEFAULT_CHEAP);
-  return { start: Number(m[1]) * 60 + Number(m[2]), end: Number(m[3]) * 60 + Number(m[4]), text: `${m[1].padStart(2, '0')}:${m[2]}-${m[3].padStart(2, '0')}:${m[4]}` };
-}
-export function setCheapHours(text) {
-  if (!/^\d{1,2}:\d\d-\d{1,2}:\d\d$/.test(text)) return false;
-  writeRaw(CHEAP_KEY, text);
-  return true;
-}
-// Is this minute-of-day inside the cheap window? (Windows can wrap midnight.)
-export function inCheapHours(minutes, { start, end } = cheapHours()) {
-  return start <= end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
-}
+// (v10 had a "cheap overnight hours" setting for the house picture; v11
+// dropped it, so tidy away its old key.)
+try { localStorage.removeItem('hearthbook.cheap'); } catch {}
 
 // ---------- reminders ----------
 export const remindersOn = () => readRaw('hearthbook.notify') === 'on';

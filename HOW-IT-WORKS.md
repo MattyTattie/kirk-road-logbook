@@ -48,9 +48,9 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/gdrive.js` | Google sign-in, Drive file calls and the Google file picker. Google's scripts are only loaded once you tap Connect. |
 | `vendor/` | The two bundled libraries for the scanner, with their licences (see section 4c). Nothing is fetched from the internet. |
 | `js/icons.js` | The line icons, as plain SVG path strings. |
-| `js/prefs.js` | **Settings for this phone only** (in `localStorage`, never in backups or sync): which sections are hidden and their order, cheap overnight hours, reminders on/off and which reminders were already shown, and whether the quick tour was seen. |
+| `js/prefs.js` | **Settings for this phone only** (in `localStorage`, never in backups or sync): which sections are hidden and their order, reminders on/off and which reminders were already shown, and whether the quick tour was seen. |
 | `js/house.js` | The **house picture** on the home screen: an SVG drawing whose sky, window glow and roof flag follow your data. |
-| `js/homeui.js` | Home-screen parts: the house card, *Ask Hearthbook*, the quick tour, the editable section tiles, and the Settings cards for sections, reminders and cheap hours. |
+| `js/homeui.js` | Home-screen parts: the house card, *Ask Hearthbook*, the quick tour, the editable section tiles, and the Settings cards for sections and reminders. |
 | `js/search.js` | **Ask Hearthbook**: searching every entry on the phone, with small typos allowed and simple questions ("when does the car insurance renew?"). Plain JavaScript, tested with Node. |
 | `js/reminders.js` | Reminder notifications for renewals, warranties and jobs due within 30 days. |
 | `js/motion.js` | Small animations: totals counting up, screen transitions, light vibration on taps. All switched off when the phone asks for reduced motion. |
@@ -305,8 +305,8 @@ renewal as a due date, and editing one there keeps the policy fields
    (Insurance is now built in like this. It also has `kind: 'insurance'`,
    which turns on the extra policy fields, and `soonDays: 30`.)
 
-2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v9'` to
-   `'hearthbook-v10'` (do this after **any** change, so phones fetch
+2. Open `sw.js` and change `CACHE_NAME`, e.g. from `'hearthbook-v10'` to
+   `'hearthbook-v11'` (do this after **any** change, so phones fetch
    the new files instead of the saved old copy).
 
 3. Reload the app (you may need to close and reopen it once). You'll have a
@@ -425,7 +425,7 @@ address, saves data with the old one and checks the new one shows it all.
   Settings only changes this phone's `localStorage`; the ids and the entries
   stay exactly the same.)
 - When you change any app file, bump `CACHE_NAME` in `sw.js` (now
-  `hearthbook-v10`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
+  `hearthbook-v11`). Only bump `OCR_CACHE` (`hearthbook-ocr-v1`) if the files
   in `vendor/` change.
 
 ## 9. Sharing one logbook with Google Drive (optional)
@@ -606,9 +606,9 @@ when you pick a past year.
 
 **House picture.** A drawing of an end-terrace house (generic, with no
 address). It changes like this:
-- **Sky:** it follows the time of day (dawn, day, dusk, evening). During
-  the *cheap overnight hours* it turns deep blue with stars. They default to
-  00:00–07:00; change them in Settings → Appearance.
+- **Sky:** it follows the clock only: dawn (05–08), day (08–17), dusk
+  (17–20), evening (20–22), and a deep blue starry night from 22:00 to 05:00.
+  (v11 removed v10's "cheap rate" chip and its setting.)
 - **Windows:** they glow brighter when the latest electricity bill is above
   your average bill, and dimmer when it's below.
 - **Roof flag:** it appears when anything is due within 30 days.
@@ -659,3 +659,11 @@ View Transitions API when you tap a link (older browsers just switch
 screens). Key taps give a light vibration on Android. The logo shows briefly
 while the app starts. New phones get a 4-card quick tour, once, which you
 can skip and replay from Settings.
+
+## 11. v11 home layout
+
+From top to bottom: greeting, Ask Hearthbook, the house picture (now
+shorter), the five section tiles, *Coming up*, the backup reminder (if any),
+a smaller *Spent in …* card, the stat cards, the Spending chart, and Recent.
+The spending total is now a plain card, so one big receipt no longer
+dominates the screen.

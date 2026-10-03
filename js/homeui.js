@@ -21,7 +21,6 @@ const daysTo = (iso, now = new Date()) => {
   const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
   return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
 };
-const hhmm = (min) => `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
 // ---------------------------------------------------------------------
 // House picture
@@ -42,15 +41,11 @@ export function houseCard(everything) {
   const card = el('section', { class: 'house-card', id: 'house', 'aria-label': 'Your house at a glance' });
   const draw = () => {
     const now = new Date();
-    const cheap = prefs.cheapHours();
-    const phase = skyPhase(now, cheap);
+    const phase = skyPhase(now);
     const f = houseFacts(everything, now);
     const pic = el('div', { class: 'house-pic' });
     pic.innerHTML = houseSVG({ phase, glow: f.glow, due: f.due, battery: f.battery });
     const chips = [];
-    chips.push(el('span', { class: 'hc-chip' + (phase === 'night' ? ' night' : ''), id: 'house-sky' },
-      icon(phase === 'night' || phase === 'evening' ? 'moon' : 'sun', 14),
-      phase === 'night' ? `Cheap rate now · until ${hhmm(cheap.end)}` : `Cheap rate ${hhmm(cheap.start)}–${hhmm(cheap.end)}`));
     if (f.latest && f.average) {
       const pct = Math.round((Number(f.latest.cost) / f.average - 1) * 100);
       chips.push(el('a', { class: 'hc-chip', href: '#/list/meter', id: 'house-bill' }, icon('bolt', 14),
@@ -354,17 +349,4 @@ export function remindersBlock({ compact = false, getEntries, rerender = () => {
     }
   }
   return el('div', { class: 'reminders-block' }, status, note, el('div', { class: 'stack' }, btns));
-}
-
-export function houseSettings() {
-  const c = prefs.cheapHours();
-  const start = el('input', { type: 'time', id: 'cheap-start', value: hhmm(c.start), 'aria-label': 'Cheap rate starts' });
-  const end = el('input', { type: 'time', id: 'cheap-end', value: hhmm(c.end), 'aria-label': 'Cheap rate ends' });
-  const saved = el('span', { class: 'small muted', id: 'cheap-saved', 'aria-live': 'polite' });
-  const save = () => { if (prefs.setCheapHours(`${start.value}-${end.value}`)) saved.textContent = 'Saved'; };
-  start.addEventListener('change', save); end.addEventListener('change', save);
-  return el('div', { class: 'field' },
-    el('span', { class: 'label' }, 'Cheap overnight hours (house picture)'),
-    el('div', { class: 'cheap-row' }, start, el('span', {}, 'to'), end, saved),
-    el('span', { class: 'hint' }, 'The sky on the home screen turns starry during these hours, e.g. an off-peak or EV tariff. Only on this phone.'));
 }
