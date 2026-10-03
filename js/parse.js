@@ -180,7 +180,7 @@ function fallbackSupplier(allLines) {
   }
   return '';
 }
-// "Matthew Mcintosh Matthew Mcintosh" = a two-column address block, not a shop.
+// "Jane Smith Jane Smith" = a two-column address block, not a shop.
 const repeats = (s) => /^(.{3,})\s+\1$/i.test(s.trim());
 // Strip OCR crumbs: "i' Linnorie Firewood bs!" -> "Linnorie Firewood".
 function tidyName(s) {

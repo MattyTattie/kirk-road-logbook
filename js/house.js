@@ -1,15 +1,16 @@
 // =====================================================================
 // house.js — the "living" house picture at the top of the home screen.
 // =====================================================================
-// A generic end-of-terrace house (gable end, chimney, roof window on the
-// front slope), drawn as SVG so it's sharp, tiny and works offline.
+// One simple, generic house seen straight on (v12): a single front wall,
+// pitched roof, chimney, a door and four windows. Drawn as SVG so it's
+// sharp, tiny and works offline.
 // It reacts to your logbook:
 //   • the sky follows the time of day: dawn, day, dusk, evening, and a
 //     deep blue starry night from 22:00 to 05:00;
 //   • the windows glow brighter when the latest electricity bill is above
 //     your average, dimmer when it's below;
 //   • a little flag flies on the roof when something is due within 30 days;
-//   • a battery gauge on the gable wall, only once there's battery data
+//   • a battery gauge beside the house, only once there's battery data
 //     (a meter entry with "battery" in its title and the unit "%").
 // Tap the flag → Coming up, a window → Electricity bills, the door → Logbook.
 // Colours come from CSS (styles.css, "House picture") so dark mode works.
@@ -69,56 +70,47 @@ export function houseSVG({ phase = 'day', glow = 0.5, due = 0, battery = null } 
     <path d="M0 150 C 60 128 120 140 180 134 S 300 124 360 140 V190 H0Z" class="h-hill" aria-hidden="true"/>
     <rect x="0" y="160" width="360" height="30" class="h-ground" aria-hidden="true"/>
 
-    <!-- the neighbour's half of the terrace (left) -->
-    <g class="h-neighbour" aria-hidden="true">
-      <path d="M40 96 L80 66 H150 V160 H40Z" class="hn-wall"/>
-      <path d="M34 98 L80 62 H150 V70 H83 L42 102Z" class="hn-roof"/>
-      <rect x="58" y="104" width="22" height="24" rx="2" class="hn-win"/><rect x="104" y="104" width="22" height="24" rx="2" class="hn-win"/>
-      <rect x="58" y="134" width="22" height="20" rx="2" class="hn-win"/>
-    </g>
+    <!-- a simple tree on the left -->
+    <g class="h-tree" aria-hidden="true"><rect x="70" y="128" width="5" height="32" rx="1" class="h-trunk"/><circle cx="72.5" cy="120" r="17" class="h-leaves"/><circle cx="62" cy="130" r="10" class="h-leaves"/><circle cx="83" cy="131" r="10" class="h-leaves"/></g>
 
-    <!-- our house, seen from the front-left: front wall, front roof slope, gable end on the right -->
+    <!-- our house, straight on: one front wall, a pitched roof, a chimney -->
     <g class="h-home">
-      <path d="M278 160 V88 L302 58 L322 79 V151Z" class="h-gable-side"/>
-      <rect x="150" y="86" width="128" height="74" class="h-wall"/>
-      <path d="M144 89 L166 55 H304 L282 89Z" class="h-roof"/>
-      <path d="M282 89 L304 55 L326 81 L322 83 L304 61 L285 90Z" class="h-verge"/>
-      <path d="M166 55 H304" class="h-ridge"/>
-      <!-- chimney on the gable end -->
-      <rect x="296" y="34" width="15" height="26" class="h-chimney"/><rect x="294" y="31" width="19" height="5" class="h-chimney-top"/>
-      <g class="h-smoke" aria-hidden="true"><circle cx="306" cy="27" r="3"/><circle cx="313" cy="29" r="3.6"/><circle cx="320" cy="31" r="4.2"/></g>
-      <!-- roof window (Velux style) on the front slope -->
-      <path d="M206 63 H232 L227 79 H200Z" class="h-velux"/><path d="M209 65.5 H229 L225 76.5 H204Z" class="h-velux-glass"/>
-      <rect x="150" y="122" width="128" height="3" class="h-band"/>
+      <!-- chimney (drawn first so the roof overlaps its foot) -->
+      <rect x="214" y="44" width="15" height="40" class="h-chimney"/><rect x="212" y="41" width="19" height="5" class="h-chimney-top"/>
+      <g class="h-smoke" aria-hidden="true"><circle cx="223" cy="35" r="3"/><circle cx="230" cy="37" r="3.6"/><circle cx="237" cy="39" r="4.2"/></g>
+      <rect x="122" y="90" width="116" height="70" class="h-wall"/>
+      <path d="M110 93 L180 50 L250 93Z" class="h-roof"/>
+      <path d="M108 94 L180 49 L252 94" class="h-ridge" fill="none"/>
+      <rect x="122" y="90" width="116" height="3" class="h-band"/>
     </g>
 
-    <g class="h-path" aria-hidden="true"><path d="M180 161 L164 190 H218 L202 161Z"/></g>
-    <g class="h-bushes" aria-hidden="true"><circle cx="160" cy="158" r="9"/><circle cx="270" cy="157" r="10"/><circle cx="282" cy="160" r="7"/></g>
+    <g class="h-path" aria-hidden="true"><path d="M170 161 L156 190 H204 L190 161Z"/></g>
+    <g class="h-bushes" aria-hidden="true"><circle cx="128" cy="158" r="8"/><circle cx="232" cy="158" r="8"/><circle cx="242" cy="160" r="6"/></g>
 
     <a href="#/list/all" class="h-part h-door" aria-label="Front door: logbook">
       <title>Logbook</title>
-      <rect x="178" y="128" width="26" height="32" rx="12" ry="12" class="h-door-arch"/>
-      <rect x="178" y="140" width="26" height="20" class="h-door-arch"/>
-      <rect x="182" y="132" width="18" height="28" rx="9" class="h-door-panel"/>
-      <circle cx="196" cy="147" r="1.8" class="h-knob"/>
-      <rect x="174" y="158" width="34" height="3" rx="1" class="h-step"/>
+      <rect x="168" y="124" width="24" height="36" rx="11" ry="11" class="h-door-arch"/>
+      <rect x="168" y="138" width="24" height="22" class="h-door-arch"/>
+      <rect x="172" y="128" width="16" height="32" rx="8" class="h-door-panel"/>
+      <circle cx="184" cy="145" r="1.8" class="h-knob"/>
+      <rect x="164" y="158" width="32" height="3" rx="1" class="h-step"/>
     </a>
     <rect width="360" height="190" class="h-shade" aria-hidden="true" pointer-events="none"/>
     <a href="#/list/meter" class="h-part h-windows" aria-label="Windows: electricity bills">
       <title>Electricity bills</title>
-      ${win(162, 94, 30, 22, 0)}${win(236, 94, 30, 22, 1)}${win(236, 130, 30, 22, 2)}
+      ${win(134, 98, 26, 20, 0)}${win(200, 98, 26, 20, 1)}${win(134, 128, 26, 22, 2)}${win(200, 128, 26, 22, 3)}
     </a>
     ${due ? `<a href="#coming-up" class="h-part h-flag" data-due="${due}" aria-label="Flag: ${due} thing${due === 1 ? '' : 's'} due within 30 days">
       <title>Coming up</title>
-      <rect x="244" y="24" width="38" height="40" fill="#000" fill-opacity="0" class="h-hit"/>
-      <rect x="252" y="30" width="2.4" height="30" class="h-pole"/>
-      <path d="M254.4 31 C 262 28 266 36 276 33 V45 C 266 48 262 40 254.4 43Z" class="h-flag-cloth"/>
-      <text x="262" y="41.5" class="h-flag-num" aria-hidden="true">${due > 9 ? '9+' : due}</text>
+      <rect x="134" y="28" width="38" height="46" fill="#000" fill-opacity="0" class="h-hit"/>
+      <rect x="142" y="36" width="2.4" height="36" class="h-pole"/>
+      <path d="M144.4 37 C 152 34 156 42 166 39 V51 C 156 54 152 46 144.4 49Z" class="h-flag-cloth"/>
+      <text x="152" y="47.5" class="h-flag-num" aria-hidden="true">${due > 9 ? '9+' : due}</text>
     </a>` : ''}
 
     ${pct !== null ? `<g class="h-battery" id="house-battery" aria-label="Home battery ${pct}%" role="img">
-      <rect x="288" y="104" width="16" height="30" rx="3" class="hb-case"/><rect x="293" y="101" width="6" height="4" rx="1" class="hb-case"/>
-      <rect x="291" y="${107 + 24 * (1 - pct / 100)}" width="10" height="${24 * pct / 100}" rx="1.5" class="hb-fill"/>
+      <rect x="262" y="124" width="16" height="30" rx="3" class="hb-case"/><rect x="267" y="121" width="6" height="4" rx="1" class="hb-case"/>
+      <rect x="265" y="${127 + 24 * (1 - pct / 100)}" width="10" height="${24 * pct / 100}" rx="1.5" class="hb-fill"/>
     </g>` : '<g class="h-battery" id="house-battery" hidden></g>'}
   </svg>`;
 }

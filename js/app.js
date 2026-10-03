@@ -40,6 +40,9 @@ import * as reminders from './reminders.js';
 import { countUp, transition, haptic, reducedMotion } from './motion.js';
 import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock } from './homeui.js';
 import { search as askSearch } from './search.js';
+import { classify, addYears } from './autosort.js';
+import * as manuals from './manuals.js';
+import * as native from './native.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -93,7 +96,7 @@ let linkTapAt = 0;
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[href^="#"]')) linkTapAt = performance.now(); }, true);
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
-  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, new: 2, scan: 2, view: 2, edit: 3 }[parts[0]] ?? 1;
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, new: 2, scan: 2, view: 2, manual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
@@ -107,6 +110,7 @@ async function render() {
 async function drawScreen(parts, viaTransition) {
   releasePhotoURLs();
   const [page, arg] = parts;
+  if (pdfView && page !== 'manual') { try { pdfView.destroy(); } catch {} pdfView = null; }
   window.scrollTo(0, 0);
   setChrome(page, arg);
   try {
@@ -117,7 +121,9 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'edit') await renderForm(null, arg);
     else if (page === 'view') await renderDetail(arg);
     else if (page === 'export') await renderExport();
-    else if (page === 'list') await renderList(arg || 'all');
+    else if (page === 'list') await renderList(arg || 'all', /^\d{4}$/.test(parts[2] || '') ? Number(parts[2]) : 0);
+    else if (page === 'manuals') await renderManuals(arg ? decodeURIComponent(arg) : '');
+    else if (page === 'manual') await renderManualViewer(arg ? decodeURIComponent(arg) : '');
     else if (page === 'welcome') renderWelcome();
     else await renderHome();
   } catch (err) {
@@ -137,7 +143,7 @@ function setChrome(page, arg) {
   const tab =
     page === 'list' && arg === 'meter' ? 'meter'
     : page === 'list' || page === 'view' || page === 'new' ? 'list'
-    : page === 'export' ? 'export'
+    : page === 'export' || page === 'manuals' || page === 'manual' ? 'export'
     : 'home';
   document.querySelectorAll('.bottom-nav [data-tab]').forEach((a) => {
     const on = a.dataset.tab === tab;
@@ -148,7 +154,7 @@ function setChrome(page, arg) {
   applyNavPrefs();
   const add = document.getElementById('add');
   if (add) add.href = page === 'list' && arg && arg !== 'all' ? `#/new/${arg}` : '#/new';
-  const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome' || page === 'scan';
+  const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome' || page === 'scan' || page === 'manual';
   document.body.classList.toggle('no-nav', bare);
 }
 
@@ -160,7 +166,7 @@ function applyNavPrefs() {
 addEventListener('hearthbook:prefs', applyNavPrefs);
 
 // The pill-shaped section filters at the top of the list.
-function tabs(current) {
+function tabs(current, year = 0) {
   const all = [{ id: 'all', label: 'All', glyph: 'list', tone: 'brand' }, ...prefs.orderedSections()];
   return el(
     'nav',
@@ -168,7 +174,7 @@ function tabs(current) {
     all.map((s) =>
       el(
         'a',
-        { href: `#/list/${s.id}`, class: 'tab' + (s.id === current ? ' active' : ''), 'data-section': s.id, 'data-tone': s.tone, 'aria-current': s.id === current ? 'page' : null },
+        { href: `#/list/${s.id}${year ? '/' + year : ''}`, class: 'tab' + (s.id === current ? ' active' : ''), 'data-section': s.id, 'data-tone': s.tone, 'aria-current': s.id === current ? 'page' : null },
         icon(s.glyph, 18),
         s.label
       )
@@ -309,19 +315,20 @@ async function renderHome() {
   const countThisYear = everything.filter((e) => (e.date || '').startsWith(String(year))).length;
 
   // --- Hero: spend this year ---
+  // The card opens the logbook filtered to this year; each little chip
+  // opens that section for the year (e.g. Receipts 2026, Bills 2026).
+  const heroChip = (s) => {
+    const v = spendInYear(everything.filter((e) => e.type === s.id), year);
+    const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
+    return v > 0 ? el('a', { class: 'hero-chip', href: `#/list/${s.id}/${year}`, 'data-section': s.id, 'aria-label': `${s.label} in ${year}: ${money(v)}` }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
+  };
   const hero = el(
-    'a',
-    { class: 'hero', href: '#/list/all', id: 'spend-card' },
-    el('p', { class: 'hero-label' }, `Spent in ${year}`),
+    'div',
+    { class: 'hero', id: 'spend-card', 'data-href': `#/list/all/${year}`, onclick: (ev) => { if (!ev.target.closest('a')) location.hash = `#/list/all/${year}`; } },
+    el('a', { class: 'hero-label', href: `#/list/all/${year}`, id: 'spend-link' }, `Spent in ${year}`, icon('chevron', 14)),
     el('p', { class: 'hero-value', id: 'spend-year' }, money(thisYear)),
     el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} this year · ${money(lastYear)} in ${year - 1}`),
-    el('div', { class: 'hero-split' },
-      prefs.orderedSections().map((s) => {
-        const v = spendInYear(everything.filter((e) => e.type === s.id), year);
-        const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
-        return v > 0 ? el('span', { class: 'hero-chip' }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
-      })
-    )
+    el('div', { class: 'hero-split' }, prefs.orderedSections().map(heroChip))
   );
 
   // --- Next due / expiring ---
@@ -460,11 +467,7 @@ async function renderHome() {
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
   const dash = el('div', { class: 'dash', id: 'dashboard' });
   const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
-  function redrawHero() { hero.querySelector('.hero-split').replaceChildren(...prefs.orderedSections().map((s) => {
-    const v = spendInYear(everything.filter((e) => e.type === s.id), year);
-    const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
-    return v > 0 ? el('span', { class: 'hero-chip' }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
-  }).filter(Boolean)); }
+  function redrawHero() { hero.querySelector('.hero-split').replaceChildren(...prefs.orderedSections().map(heroChip).filter(Boolean)); }
 
   dash.append(...[
       head,
@@ -513,12 +516,19 @@ function sectionTile(s, everything, year) {
 // ---------------------------------------------------------------------
 // LIST screen
 // ---------------------------------------------------------------------
-async function renderList(type) {
+async function renderList(type, year = 0) {
   const everything = (await db.getAllEntries()).sort(newestFirst);
-  const inSection = type === 'all' ? everything : everything.filter((e) => e.type === type);
+  // "#/list/receipt/2026": just that year (from the spending card's chips).
+  const inYear = (e) => !year || (e.date || '').startsWith(String(year));
+  const inSection = (type === 'all' ? everything : everything.filter((e) => e.type === type)).filter(inYear);
   const section = type === 'all' ? null : getSection(type);
 
-  const screen = [screenHead(section ? section.label : 'Logbook', { id: 'list-title' }), tabs(type)];
+  const screen = [screenHead(section ? section.label : 'Logbook', { id: 'list-title', sub: year ? `${year} only` : null }), tabs(type, year)];
+  if (year) {
+    screen.push(el('div', { class: 'year-filter', id: 'year-filter', role: 'status' },
+      icon('calendar', 16), el('span', {}, `Showing ${year}`),
+      el('a', { class: 'year-filter-clear', href: `#/list/${type}`, id: 'year-filter-clear', 'aria-label': 'Show every year' }, icon('x', 14), 'All years')));
+  }
 
   // --- Backup reminder ---
   screen.push(await backupReminder(everything.length));
@@ -533,7 +543,7 @@ async function renderList(type) {
       screen.push(
         el(
           'a',
-          { class: 'banner soon', href: '#/list/warranty', id: 'soon-banner' },
+          { class: 'banner soon', href: `#/list/${new Set(soon.map((e) => e.type)).size === 1 ? soon[0].type : 'warranty'}`, id: 'soon-banner' },
           el('span', { class: 'banner-icon' }, icon('clock', 20)),
           el('span', { class: 'banner-body' }, `${soon.length} item${soon.length === 1 ? '' : 's'} due or expiring in the next ${SOON_DAYS} days`),
           icon('chevron', 18)
@@ -1022,8 +1032,18 @@ async function renderScan(arg) {
       const photos = [{ id: db.newId(), blob: await compressImage(source) }];
       scan.releaseOcr(); // free the OCR engine's memory
       if (cancelled) return;
-      const type = parsed.kind === 'bill' ? 'meter' : 'receipt';
-      pendingScan = { type, parsed, photos, source: read.source, fields: scanFields(parsed, type) };
+      // Not an energy bill? Sort it into Receipt, Warranty or Job from the
+      // words on it (autosort.js); the form lets you switch in one tap.
+      let type = 'receipt';
+      let sorted = null;
+      if (parsed.kind === 'bill') type = 'meter';
+      else {
+        sorted = classify(read.text);
+        type = prefs.isHidden(sorted.type) ? 'receipt' : sorted.type;
+      }
+      const fields = scanFields(parsed, type);
+      if (type === 'warranty' && sorted && sorted.years && fields.date) fields.dueDate = addYears(fields.date, sorted.years);
+      pendingScan = { type, parsed, photos, source: read.source, fields, sorted, years: sorted ? sorted.years : 0 };
       location.hash = `#/new/${type}`;
     } catch (err) {
       console.warn('scan failed', err);
@@ -1065,8 +1085,17 @@ function scanFields(p, type) {
 }
 
 // The "check these details" banner at the top of a scanned form.
-function scanHint(scan) {
+function scanHint(scan, onSwitch) {
   const p = scan.parsed;
+  const choices = ['receipt', 'warranty', 'job'].filter((t) => t === scan.type || !prefs.isHidden(t));
+  const why = { receipt: 'it looks like a receipt or invoice', warranty: 'it mentions a warranty or guarantee', job: 'it mentions labour, fitting or a service' }[scan.type];
+  const fileUnder = scan.type !== 'meter' && onSwitch
+    ? el('div', { class: 'file-under', id: 'scan-file-under' },
+        el('p', { class: 'small' }, `Filed under ${getSection(scan.type).single} because ${why}${scan.type === 'warranty' && scan.years ? ` (${scan.years} year${scan.years === 1 ? '' : 's'}, so the expiry is filled in)` : ''}. Not right? Change it:`),
+        el('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'File under' },
+          choices.map((t) => el('button', { type: 'button', class: 'seg-btn' + (t === scan.type ? ' active' : ''), role: 'radio', 'aria-checked': String(t === scan.type), 'data-file-under': t,
+            onclick: () => { if (t !== scan.type) onSwitch(t); } }, icon(getSection(t).glyph, 16), getSection(t).single))))
+    : null;
   const want = [['supplier', 'supplier'], ['date', 'date'], ['total', 'total']];
   if (scan.type === 'meter') want.push(['reading', 'meter reading']);
   const missing = want.filter(([k]) => !p.found[k]).map(([, label]) => label);
@@ -1076,6 +1105,7 @@ function scanHint(scan) {
       el('strong', {}, 'Check these details'),
       el('p', {}, `Filled in from your ${scan.source === 'pdf-text' ? 'PDF' : 'scan'} — tinted fields were read automatically. ` +
         (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.')),
+      fileUnder,
       scan.fields.currency ? el('p', { id: 'scan-currency' }, `The amount is in ${scan.fields.currency === 'EUR' ? 'euros' : scan.fields.currency}. Totals count it as it is, so for exact £ totals type the £ amount from your bank statement and pick £.`) : null));
 }
 const listText = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} or ${a[a.length - 1]}`);
@@ -1120,7 +1150,16 @@ async function renderForm(type, id) {
       el('a', { class: 'back', href: id ? `#/view/${id}` : '#/new', onclick: (ev) => { ev.preventDefault(); history.back(); } }, icon('back', 20), 'Back'),
       el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title' }, `${id ? 'Edit' : 'New'} ${section.single.toLowerCase()}`))
     ),
-    scan ? scanHint(scan) : null,
+    scan ? scanHint(scan, (t) => {
+      // Keep what's been typed so far, then reopen the form in the other section.
+      const fd = new FormData(form);
+      const keep = {};
+      for (const k of ['title', 'date', 'cost', 'currency', 'supplier', 'notes', 'dueDate']) if (fd.has(k)) keep[k] = String(fd.get(k));
+      const fields = { ...scan.fields, ...keep };
+      if (t === 'warranty' && !fields.dueDate && scan.years && fields.date) fields.dueDate = addYears(fields.date, scan.years);
+      pendingScan = { ...scan, type: t, fields, photos };
+      location.replace(`#/new/${t}`);
+    }) : null,
     ins
       ? el('div', { class: 'field' }, el('span', { class: 'label', id: 'ins-type-label' }, 'Type of cover'),
           el('div', { class: 'seg seg-full ins-types', role: 'radiogroup', 'aria-labelledby': 'ins-type-label' },
@@ -1181,7 +1220,7 @@ async function renderForm(type, id) {
   if (section.showDue) {
     form.append(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : null));
   }
-  if (ins) form.append(field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Matthew & Rebecca' })));
+  if (ins) form.append(field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
   form.append(field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
 
   // --- Photos ---
@@ -1429,7 +1468,7 @@ async function syncCard(cardHead) {
                 const email = inviteInput.value.trim();
                 if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('Please type a full email address.');
                 await sync.invite(email);
-                syncMsg = { text: `Shared with ${email}. Google emails them a link. On their phone, open ${APP_NAME} → Backup → Connect → Join.` };
+                syncMsg = { text: `Shared with ${email}. Google emails them a link. On their phone, open ${APP_NAME} → More → Connect → Join.` };
               }) }, 'Share')),
             el('span', { class: 'hint' }, 'Use the email address of their Google account (it doesn’t have to be Gmail). They get edit access to this one folder only. You can also share it from the Google Drive app.'))
         : null,
@@ -1578,17 +1617,27 @@ async function renderDetail(id) {
   ].filter(([, value]) => value);
 
   const photos = e.photos || [];
+  // A warranty for one of the bundled appliances links to its manual(s).
+  const appliance = e.type === 'warranty' ? manuals.manualFor(e) : null;
+  const manualBtns = appliance
+    ? el('section', { class: 'card manual-card', id: 'detail-manuals' },
+        el('h2', { class: 'card-title' }, icon('book', 18), `${appliance.name} manual${appliance.files.length > 1 ? 's' : ''}`),
+        appliance.notes ? el('p', { class: 'small muted' }, appliance.notes) : null,
+        el('div', { class: 'stack' }, appliance.files.map((f, i) =>
+          el('a', { class: 'btn secondary manual-btn', href: `#/manual/${encodeURIComponent(f.file)}`, id: i ? null : 'manual-btn', 'data-file': f.file }, icon('book', 20), appliance.files.length > 1 ? f.label : 'Manual'))))
+    : null;
   app.replaceChildren(
     el('a', { class: 'back', href: `#/list/${e.type}` }, icon('back', 20), section.label),
     el(
       'header',
       { class: 'detail-hero', 'data-tone': section.tone },
-      el('div', { class: 'detail-kicker' }, sectionBadge(section, 'sm'), el('span', {}, section.single), e.dueDate ? el('span', { class: 'pill ' + (dueClass || 'calm') }, dueText(section.dueWord || 'due', days)) : null),
+      el('div', { class: 'detail-kicker' }, el('a', { class: 'kicker-link', href: `#/list/${e.type}`, 'aria-label': `All ${section.label.toLowerCase()}` }, sectionBadge(section, 'sm'), el('span', {}, section.single)), e.dueDate ? el('span', { class: 'pill ' + (dueClass || 'calm') }, dueText(section.dueWord || 'due', days)) : null),
       el('h1', { id: 'detail-title' }, e.title),
       e.cost ? el('p', { class: 'detail-amount' }, money(e.cost, e.currency), ins ? el('small', {}, e.costFreq === 'monthly' ? ' a month' : ' a year') : null) : null,
       el('p', { class: 'detail-meta' }, (ins ? [e.supplier, e.policyNumber ? `Policy ${e.policyNumber}` : ''] : [niceDate(e.date), e.supplier]).filter(Boolean).join(' · '))
     ),
     el('dl', { class: 'details' }, rows.map(([k, val, g]) => el('div', { class: 'detail-row' }, el('dt', {}, icon(g, 18), k), el('dd', {}, val)))),
+    manualBtns,
     e.notes ? el('section', { class: 'notes-card' }, el('h2', { class: 'card-title' }, 'Notes'), el('p', { class: 'notes' }, e.notes)) : null,
     photos.length
       ? el('section', { class: 'photos-card' },
@@ -1636,6 +1685,104 @@ function showFullPhoto(url) {
 }
 
 // ---------------------------------------------------------------------
+// MANUALS (More → Manuals): every appliance guide, kept on this phone
+// ---------------------------------------------------------------------
+// The PDFs are saved for offline use the first time this screen opens
+// (sw.js "warm-manuals"); the status line shows how far that's got.
+async function manualsSaved() {
+  try {
+    if (!('caches' in window)) return { done: 0, total: manuals.ALL_FILES.length };
+    const cache = await caches.open(manuals.MANUALS_CACHE);
+    let done = 0;
+    for (const f of manuals.ALL_FILES) if (await cache.match(new URL(f, location.href).href)) done++;
+    return { done, total: manuals.ALL_FILES.length };
+  } catch { return { done: 0, total: manuals.ALL_FILES.length }; }
+}
+function warmManuals() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-manuals', files: manuals.ALL_FILES })).catch(() => {});
+}
+
+async function renderManuals(focus = '') {
+  warmManuals();
+  const status = el('p', { class: 'manuals-status small', id: 'manuals-status', role: 'status' }, 'Checking what’s saved on this phone…');
+  const showStatus = async () => {
+    const { done, total } = await manualsSaved();
+    status.classList.toggle('ok', done === total);
+    status.replaceChildren(icon(done === total ? 'check' : 'download', 16),
+      done === total ? `All ${total} guides are saved on this phone and open without signal.`
+        : navigator.onLine === false ? `${done} of ${total} saved. The rest download next time you’re online.`
+        : `Saving for offline use: ${done} of ${total} (about 40 MB, once).`);
+    return done === total;
+  };
+  const rooms = [];
+  for (const a of manuals.APPLIANCES) { let r = rooms.find((x) => x.name === a.room); if (!r) rooms.push((r = { name: a.room, items: [] })); r.items.push(a); }
+  app.replaceChildren(
+    screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, kept on this phone' }),
+    status,
+    ...rooms.map((r) => el('section', { class: 'group manuals-group' },
+      el('div', { class: 'group-head' }, el('h2', {}, r.name)),
+      el('div', { class: 'manual-list' }, r.items.map((a) => el('article', { class: 'card manual-item' + (a.id === focus ? ' focus' : ''), id: `manual-${a.id}`, 'data-appliance': a.id },
+        el('div', { class: 'manual-head' },
+          el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
+          el('div', {}, el('h3', { class: 'manual-name' }, a.name), el('p', { class: 'manual-model small muted' }, a.model))),
+        a.about ? el('p', { class: 'manual-about small' }, a.about) : null,
+        a.notes ? el('p', { class: 'manual-notes small' }, el('strong', {}, 'Handy notes: '), a.notes) : null,
+        el('div', { class: 'manual-files' }, a.files.map((f) => el('a', { class: 'manual-file', href: `#/manual/${encodeURIComponent(f.file)}`, 'data-file': f.file },
+          icon('file', 18), el('span', {}, f.label), el('span', { class: 'small muted' }, `${f.pages} page${f.pages === 1 ? '' : 's'}`), icon('chevron', 16)))))))))
+  );
+  if (focus) { const t = document.getElementById(`manual-${focus}`); if (t) t.scrollIntoView({ block: 'center' }); }
+  // Keep the status line up to date while the downloads run.
+  if (!(await showStatus())) {
+    const timer = setInterval(async () => { if (!status.isConnected || (await showStatus())) clearInterval(timer); }, 2000);
+  }
+}
+
+let pdfView = null;
+async function renderManualViewer(file) {
+  if (pdfView) { try { pdfView.destroy(); } catch {} pdfView = null; }
+  const found = manuals.findFile(file);
+  if (!found) {
+    app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearthbook.')));
+    return;
+  }
+  const { appliance, file: f } = found;
+  const url = manuals.fileUrl(f.file);
+  const pages = el('div', { class: 'pdf-pages', id: 'pdf-pages' });
+  const status = el('p', { class: 'pdf-status', id: 'pdf-status', role: 'status' }, 'Opening…');
+  const counter = el('span', { class: 'pdf-counter', id: 'pdf-counter' }, '');
+  let zoom = 1;
+  const zoomBtn = (d, label, glyph) => el('button', { type: 'button', class: 'btn small-btn secondary pdf-zoom', 'aria-label': label, onclick: () => { if (pdfView) zoom = pdfView.zoom(zoom + d); } }, icon(glyph, 18));
+  app.replaceChildren(
+    el('div', { class: 'pdf-screen', id: 'manual-viewer', 'data-file': f.file },
+      el('header', { class: 'pdf-bar' },
+        el('a', { class: 'back', href: `#/manuals/${appliance.id}`, onclick: (ev) => { if (history.length > 1) { ev.preventDefault(); history.back(); } } }, icon('back', 20), 'Manuals'),
+        el('div', { class: 'pdf-title' }, el('strong', {}, appliance.name), el('span', { class: 'small muted' }, f.label)),
+        el('div', { class: 'pdf-tools' }, zoomBtn(-0.5, 'Zoom out', 'minus'), zoomBtn(0.5, 'Zoom in', 'plus'))),
+      appliance.notes ? el('p', { class: 'pdf-notes small' }, el('strong', {}, 'Handy notes: '), appliance.notes) : null,
+      status, pages,
+      el('div', { class: 'pdf-foot' }, counter,
+        el('a', { class: 'btn link-btn', href: url, download: f.file, id: 'pdf-download' }, icon('download', 16), 'Save a copy / open in another app')))
+  );
+  try {
+    const { showPdf } = await import('./pdfview.js');
+    pdfView = await showPdf(url, pages, {
+      onStatus: (t) => { status.textContent = t; status.hidden = !t; },
+      onPage: (n, total) => { counter.textContent = `${total} page${total === 1 ? '' : 's'}`; },
+    });
+    counter.textContent = `${pdfView.pages} page${pdfView.pages === 1 ? '' : 's'}`;
+    warmManuals();
+  } catch (err) {
+    console.warn('manual failed', err);
+    status.hidden = false;
+    status.classList.add('warn');
+    status.textContent = navigator.onLine === false || String(err.message) === 'offline'
+      ? 'This manual isn’t saved on this phone yet. Open Manuals once while you have signal and they’ll all be saved.'
+      : 'This manual couldn’t be shown here. Try “Save a copy / open in another app” below.';
+  }
+}
+
+// ---------------------------------------------------------------------
 // EXPORT screen: backup, restore, report, appearance
 // ---------------------------------------------------------------------
 async function renderExport() {
@@ -1676,7 +1823,11 @@ async function renderExport() {
       onclick: () => { setTheme(value); renderExport(); } }, icon(glyph, 16), label);
 
   app.replaceChildren(
-    screenHead('Backup & settings', { sub: `${entries.length} entries · ${photoCount} photos` }),
+    screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
+    el('a', { class: 'card more-row', href: '#/manuals', id: 'more-manuals' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Manuals'), el('span', { class: 'small muted' }, `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides, kept on this phone`)),
+      icon('chevron', 18)),
     el(
       'section',
       { class: 'card' },
@@ -1750,6 +1901,11 @@ async function renderExport() {
 // ---------------------------------------------------------------------
 window.addEventListener('hashchange', render);
 render();
+
+// Inside the installed Android app: note what its native reminders hold
+// (native.js), and hand over changed dates after a tap.
+native.readLaunch();
+native.autoSync(() => db.getAllEntries(), () => prefs.notifiedLog());
 
 // Reminders: check when the app opens and whenever you come back to it.
 const checkReminders = () => reminders.check(() => db.getAllEntries()).catch(() => {});

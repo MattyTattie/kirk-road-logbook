@@ -27,8 +27,9 @@
 // v9 = neutral sharing wording, "Electricity bills" section, home tiles follow the year picker, quiet Google sign-in refresh.
 // v10 = house picture, Ask Hearthbook, reminders, tour, customisable sections, app shortcuts, share target.
 // v11 = no cheap-rate chip/setting (night sky by the clock), shorter house, tiles + Coming up under it, smaller spending card.
+// v12 = simple front-on house, phone reminders bridge (Android app), scan auto-sort, tappable chips, Manuals.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v11';
+const CACHE_NAME = 'hearthbook-v12';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -46,6 +47,12 @@ const OCR_FILES = [
   './vendor/pdfjs/pdf.min.mjs',
   './vendor/pdfjs/pdf.worker.min.mjs',
 ];
+// The appliance manuals (about 40 MB of PDFs) get their own cache too, filled
+// the first time you open More → Manuals ("warm-manuals"), not at install.
+// The list is in js/manuals.js. Bump only when the PDFs change.
+const MANUALS_CACHE = 'hearthbook-manuals-v1';
+const isManual = (url) => new URL(url).pathname.includes('/manuals/') && /\.pdf$/i.test(new URL(url).pathname);
+
 // Tesseract comes in two builds; only download the one this phone will use.
 function ocrCoreFiles() {
   let simd = false;
@@ -88,6 +95,10 @@ const APP_SHELL = [
   './js/house.js',
   './js/motion.js',
   './js/homeui.js',
+  './js/manuals.js',
+  './js/native.js',
+  './js/autosort.js',
+  './js/pdfview.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -108,7 +119,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME && n !== OCR_CACHE && n !== SHARE_CACHE).map((n) => caches.delete(n))))
+      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME && n !== OCR_CACHE && n !== SHARE_CACHE && n !== MANUALS_CACHE).map((n) => caches.delete(n))))
       .then(() => self.clients.claim()) // start controlling open pages straight away
   );
 });
@@ -131,7 +142,30 @@ self.addEventListener('message', (event) => {
     warming = warming || warmOcr().catch(() => {}).finally(() => { warming = null; });
     event.waitUntil(warming);
   }
+  if (event.data && event.data.type === 'warm-manuals' && Array.isArray(event.data.files)) {
+    manualsWarming = manualsWarming || warmManuals(event.data.files).finally(() => { manualsWarming = null; });
+    event.waitUntil(manualsWarming);
+  }
 });
+
+// 2c) The first time Manuals is opened, the page sends 'warm-manuals' with
+//     the list of PDFs; we save the ones not already saved, one at a time.
+//     (The pdf.js reader used to show them comes along too.) If the
+//     phone goes offline half way, the rest are fetched next time.
+let manualsWarming = null;
+async function warmManuals(files) {
+  const cache = await caches.open(MANUALS_CACHE);
+  for (const f of files) {
+    const url = new URL(f, self.registration.scope).href;
+    if (!isManual(url) || new URL(url).origin !== self.location.origin) continue;
+    try {
+      if (await cache.match(url)) continue;
+      const response = await fetch(url);
+      if (response.status === 200) await cache.put(url, response);
+    } catch (err) { /* offline: try again next time */ }
+  }
+  try { await warmOcr(); } catch {}
+}
 
 // 3) FETCH: runs for every file request the app makes.
 //    Strategy "cache first": use the saved copy if we have one, otherwise
@@ -146,6 +180,12 @@ self.addEventListener('fetch', (event) => {
   }
   // Only handle simple GET requests for our own files.
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  // Manuals: from their own cache; a manual opened before the cache was
+  // filled is saved as it's opened.
+  if (isManual(request.url)) {
+    event.respondWith(serveManual(request));
+    return;
+  }
 
   event.respondWith(
     // ignoreSearch: treat "index.html?x=1" the same as "index.html"
@@ -153,7 +193,7 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached;
       return fetch(request)
         .then((response) => {
-          if (response.ok) {
+          if (response.status === 200 && !request.headers.has('range')) {
             const copy = response.clone();
             const name = request.url.includes('/vendor/') ? OCR_CACHE : CACHE_NAME;
             caches.open(name).then((cache) => cache.put(request, copy));
@@ -168,6 +208,21 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+async function serveManual(request) {
+  const url = new URL(request.url);
+  url.search = '';
+  const cache = await caches.open(MANUALS_CACHE);
+  const cached = await cache.match(url.href);
+  if (cached) return cached;
+  try {
+    const response = await fetch(url.href);
+    if (response.status === 200) await cache.put(url.href, response.clone());
+    return response;
+  } catch (err) {
+    return new Response('This manual hasn’t been saved on this phone yet. Open Manuals once while online.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+}
 
 // 4) SHARE TARGET: Android's Share sheet → Hearthbook. The phone POSTs the
 //    file here; nothing goes over the internet.

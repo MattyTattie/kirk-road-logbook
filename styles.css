@@ -713,14 +713,10 @@ body.no-nav .bottom-nav { display: none; }
 .h-sun { fill: #ffd76a; opacity: 0; }
 .house-svg[data-phase='day'] .h-sun { opacity: 1; } .house-svg[data-phase='dawn'] .h-sun { opacity: 0.8; transform: translateY(40px); }
 .h-hill { fill: var(--hs-hill); } .h-ground { fill: var(--hs-ground); } .h-path path { fill: var(--hs-path); } .h-bushes circle { fill: var(--hs-bush); }
-.hn-wall { fill: var(--hs-nwall); } .hn-roof { fill: var(--hs-nroof); } .hn-win { fill: var(--hs-nwin); }
-.house-svg:not([data-phase='day']) .hn-win { fill: #8a744a; }
-.house-svg[data-phase='night'] .hn-win { fill: #3a3550; }
-.h-wall { fill: var(--hs-wall); } .h-gable-side { fill: var(--hs-side); } .h-band { fill: var(--hs-band); }
-.h-roof { fill: var(--hs-roof); } .h-verge { fill: var(--hs-verge); } .h-ridge { stroke: var(--hs-verge); stroke-width: 3; stroke-linecap: round; }
+.h-trunk { fill: var(--hs-chimney-top); } .h-leaves { fill: var(--hs-bush); }
+.h-wall { fill: var(--hs-wall); } .h-band { fill: var(--hs-band); }
+.h-roof { fill: var(--hs-roof); } .h-ridge { stroke: var(--hs-verge); stroke-width: 3; stroke-linecap: round; }
 .h-chimney { fill: var(--hs-chimney); } .h-chimney-top { fill: var(--hs-chimney-top); }
-.h-velux { fill: var(--hs-verge); } .h-velux-glass { fill: var(--hs-glass); }
-.house-svg:not([data-phase='day']) .h-velux-glass { fill: var(--hs-light); opacity: 0.55; }
 .h-smoke circle { fill: var(--hs-smoke); opacity: 0.55; animation: smoke 6s ease-in infinite; transform-box: fill-box; transform-origin: center; }
 .h-smoke circle:nth-child(2) { animation-delay: -2s; } .h-smoke circle:nth-child(3) { animation-delay: -4s; }
 .hw-frame { fill: var(--hs-trim); } .hw-glass { fill: var(--hs-glass); }
@@ -882,3 +878,51 @@ body.ready #splash { animation: splash-out 0.3s ease 0.1s forwards; }
 .hero-split { grid-column: 1 / -1; }
 .hero-chip { background: var(--surface-2); color: var(--text-2); font-size: 12px; padding: 4px 9px; }
 .house-card { margin-bottom: 16px; }
+
+/* =================================================================
+   v12: spending card chips are links, year filter, More, Manuals,
+   in-app PDF viewer, "File under" on scanned forms
+   ================================================================= */
+.hero { cursor: pointer; }
+.hero-label { display: inline-flex; align-items: center; gap: 2px; color: var(--text-2); text-decoration: none; }
+.hero-label .ico { opacity: 0.6; }
+a.hero-chip { text-decoration: none; }
+a.hero-chip:active { transform: scale(0.97); }
+.hero-chip:focus-visible, .hero-label:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.year-filter { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 12px; border-radius: 999px; background: var(--surface-2); font-size: 13.5px; font-weight: 600; width: fit-content; }
+.year-filter-clear { display: inline-flex; align-items: center; gap: 3px; color: var(--brand); text-decoration: none; margin-left: 4px; }
+.kicker-link { display: inline-flex; align-items: center; gap: 8px; color: inherit; text-decoration: none; }
+.more-row { display: flex; align-items: center; gap: 12px; text-decoration: none; color: var(--text); }
+.more-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.manuals-status { display: flex; align-items: center; gap: 6px; margin: 0 0 14px; color: var(--text-2); }
+.manuals-status.ok { color: var(--good); }
+.manual-list { display: grid; gap: 10px; }
+.manual-item { margin: 0; }
+.manual-item.focus { outline: 2px solid var(--brand); }
+.manual-head { display: flex; align-items: center; gap: 12px; }
+.manual-name { margin: 0; font-size: 16px; }
+.manual-model { margin: 0; }
+.manual-about, .manual-notes { margin: 8px 0 0; }
+.manual-files { display: grid; gap: 6px; margin-top: 10px; }
+.manual-file { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); color: var(--text); text-decoration: none; font-weight: 600; font-size: 14px; }
+.manual-file:active { transform: scale(0.99); }
+.manual-card .card-title { display: flex; align-items: center; gap: 6px; }
+.manual-btn { justify-content: center; }
+.pdf-screen { margin: -4px -8px 0; }
+.pdf-bar { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 8px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.pdf-bar .back { margin: 0; }
+.pdf-title { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.pdf-title strong, .pdf-title span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-tools { display: flex; gap: 6px; }
+.pdf-zoom { min-width: 40px; padding: 6px 8px; }
+.pdf-notes { margin: 10px 8px 0; }
+.pdf-status { margin: 16px 8px; color: var(--text-2); }
+.pdf-status.warn { color: var(--soon); }
+.pdf-pages { display: grid; gap: 10px; padding: 10px 8px; overflow-x: auto; --pdf-zoom: 1; }
+.pdf-page { width: calc(100% * var(--pdf-zoom)); background: #fff; border-radius: 6px; box-shadow: var(--shadow); overflow: hidden; }
+.pdf-page canvas { display: block; width: 100%; height: auto; }
+.pdf-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 24px; color: var(--text-2); font-size: 13px; }
+.file-under { margin-top: 10px; }
+.file-under .seg { margin-top: 6px; }
+.file-under .seg-btn { display: inline-flex; align-items: center; gap: 4px; }
+.ask-manuals { margin-top: 12px; }

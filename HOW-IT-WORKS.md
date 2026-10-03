@@ -560,7 +560,7 @@ only for your test users. The API key only allows the picker.)
 
 ### On the phones
 
-**Matthew (first):** Hearthbook → **Backup** → *Share with Google Drive* →
+**Matthew (first):** Hearthbook → **More** → *Share with Google Drive* →
 **Connect Google account** → choose your account → Google says the app is in
 testing → **Continue** → allow the Drive permission → **Start a new shared
 logbook**. Then type Becca's Gmail under *Share the folder with* → **Share**.
@@ -667,3 +667,55 @@ shorter), the five section tiles, *Coming up*, the backup reminder (if any),
 a smaller *Spent in …* card, the stat cards, the Spending chart, and Recent.
 The spending total is now a plain card, so one big receipt no longer
 dominates the screen.
+
+## 12. What's new in v12 (web) / app-v13 (Android)
+
+**House picture.** One simple, generic house seen straight on (`js/house.js`):
+a single front wall, pitched roof, chimney, door and four windows, plus a tree
+and the battery gauge beside it. Same time-of-day sky and the same short size.
+
+**Phone reminders that work when the app is closed** (Android app-v13+ only).
+A web page can't run in the background, so the Android app now has a small
+native part (`/workspace/hearthbook-android/project/app/src/main/java/.../`):
+
+- `ReminderWorker` — a WorkManager job at about 08:30 every day. It posts a
+  notification 30 days and 7 days before, and on the day of, each insurance
+  renewal, warranty expiry or job due date. Tapping one opens that entry.
+- `ReminderBridgeActivity` — how the dates get there. The native side can't
+  read the page's database, so `js/native.js` opens
+  `intent://reminders?d=<short list>#Intent;scheme=hearthbook;package=…;end`
+  right after a tap (Chrome only allows it after a tap). The activity saves the
+  list (SharedPreferences), books the daily job, asks Android for notification
+  permission if needed, and closes. Only dated entries from today to ~13 months
+  ahead are sent: id, title, date, and the word (renews/expires/is due).
+- When the app starts, `LauncherActivity` adds `?hbv=13&hbn=<hash>&hbp=1` to the
+  address so the page knows the app holds the current list (More → Reminders
+  shows ✓). The page then stops showing its own notifications so you don't get
+  each one twice. The in-app "Coming up" list is unchanged.
+
+**Scan auto-sort** (`js/autosort.js`). A scan that isn't an energy bill goes to
+Warranty (warranty/guarantee/register/"5 year…"), Job (labour/fitted/installed/
+service/work carried out/sweep) or Receipt (receipt/invoice/total/VAT/card…).
+Receipts are the safe default. A "File under" switch on the form changes it in
+one tap (keeping what you typed and the photo). "5 year warranty" fills in the
+expiry date.
+
+**Tappable things.** House "Last bill" chip → that bill. Spending card → the
+logbook for that year (`#/list/all/2026`); its Receipts/Bills/… chips → that
+section for the year (`#/list/receipt/2026`), with an "All years" button. The
+section badge on an entry → that section.
+
+**More → Manuals** (`js/manuals.js`, `js/pdfview.js`, `manuals/`). The bottom
+tab is now "More" (Manuals, backup and settings). 18 PDFs grouped by appliance,
+each with "Handy notes". They're NOT downloaded at install: the first time
+Manuals opens, the service worker saves them all (~40 MB) into their own cache
+(`hearthbook-manuals-v1`), so after that they open offline. PDFs open *inside*
+Hearthbook (pages drawn by the bundled pdf.js), because the installed Android
+app can't show a PDF itself; "Save a copy / open in another app" is below each.
+A warranty whose title/notes/supplier contains a model number (e.g. BPX535061B,
+DIS15020) gets a "Manual" button. Ask Hearthbook finds manuals too
+("dishwasher filter", "hive manual").
+
+**Publishing.** Run `./check-private.sh /workspace/logbook-publish` before
+committing: it fails on a postal address, postcode, personal email, MPAN,
+phone number (code, docs and the PDFs' text) or a keystore file.

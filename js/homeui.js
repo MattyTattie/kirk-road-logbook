@@ -11,9 +11,11 @@ import { icon } from './icons.js';
 import { SECTIONS, getSection } from './sections.js';
 import { houseSVG, skyPhase, glowLevel } from './house.js';
 import { search, whenText } from './search.js';
+import { searchManuals } from './manuals.js';
 import { bills } from './stats.js';
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
+import * as native from './native.js';
 import { haptic, reducedMotion } from './motion.js';
 
 const daysTo = (iso, now = new Date()) => {
@@ -48,7 +50,7 @@ export function houseCard(everything) {
     const chips = [];
     if (f.latest && f.average) {
       const pct = Math.round((Number(f.latest.cost) / f.average - 1) * 100);
-      chips.push(el('a', { class: 'hc-chip', href: '#/list/meter', id: 'house-bill' }, icon('bolt', 14),
+      chips.push(el('a', { class: 'hc-chip', href: `#/view/${f.latest.id}`, id: 'house-bill' }, icon('bolt', 14),
         `Last bill ${money(f.latest.cost)} · ${pct === 0 ? 'about average' : `${Math.abs(pct)}% ${pct > 0 ? 'above' : 'below'} average`}`));
     }
     if (f.due) chips.push(el('a', { class: 'hc-chip due', href: '#coming-up', id: 'house-due' }, icon('clock', 14), `${f.due} due within 30 days`));
@@ -116,12 +118,24 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
     const total = shown.reduce((a, e) => a + (e.type === 'insurance' ? 0 : Number(e.cost) || 0), 0);
     const p = r.query;
     const scope = [p.types.length === 1 ? getSection(p.types[0]).label.toLowerCase() : 'entries', p.month ? `in ${new Date(2000, p.month - 1, 1).toLocaleDateString('en-GB', { month: 'long' })}` : '', p.year ? String(p.year) : ''].filter(Boolean).join(' ');
+    // Manuals that match ("dishwasher filter", "hive manual", a model number).
+    const mans = searchManuals(q).slice(0, 4);
+    const manualHits = mans.length
+      ? el('div', { class: 'ask-manuals', id: 'ask-manuals' },
+          el('p', { class: 'ask-summary' }, `${mans.length} manual${mans.length === 1 ? '' : 's'}`),
+          el('div', { class: 'list' }, mans.map((a) => el('a', { class: 'entry manual-hit', href: a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`, 'data-appliance': a.id },
+            el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
+            el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`),
+              el('div', { class: 'entry-sub' }, a.notes || a.model))))))
+      : null;
     results.replaceChildren(...[
       answerCard(r.answer),
+      r.results.length ? null : manualHits,
       el('p', { class: 'ask-summary', id: 'ask-summary' }, r.results.length
         ? `${r.results.length} ${r.results.length === 1 ? (scope === 'entries' ? 'entry' : scope.replace(/ies\b/, 'y').replace(/s\b/, '')) : scope}${r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) : ''}`
-        : `Nothing found for “${q}”.`),
+        : mans.length ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`),
       el('div', { class: 'list', id: 'ask-list' }, shown.map(entryCard)),
+      r.results.length ? manualHits : null,
     ].filter(Boolean));
   }
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 120); });
@@ -140,7 +154,7 @@ const TOUR = [
   { glyph: 'home', tone: 'brand', title: 'Your home’s logbook', text: 'Receipts, warranties, jobs, electricity bills and insurance in one tidy place. Everything stays on this phone.' },
   { glyph: 'scan', tone: 'teal', title: 'Snap it, we’ll fill it in', text: 'Tap + then Scan. You can also share a photo or PDF to Hearthbook straight from your gallery or email.' },
   { glyph: 'sparkle', tone: 'violet', title: 'Ask Hearthbook', text: 'Search everything, or ask “when does the car insurance renew?” and get the date.' },
-  { glyph: 'pencil', tone: 'amber', title: 'Make it yours', text: 'Press and hold a section tile to hide or reorder sections. Turn on reminders in Settings.' },
+  { glyph: 'pencil', tone: 'amber', title: 'Make it yours', text: 'Press and hold a section tile to hide or reorder sections. Turn on reminders, find appliance manuals and back up under More.' },
 ];
 export function tourCard() {
   if (prefs.toured()) return null;
@@ -326,9 +340,12 @@ export function customiseCard(cardHead, onChange = () => {}) {
 // Settings: reminders (notifications) + house picture options.
 // ---------------------------------------------------------------------
 export function remindersBlock({ compact = false, getEntries, rerender = () => {} } = {}) {
+  // Installed Android app (app-v13+): the app's native part checks every
+  // morning, even when Hearthbook is closed. We hand it the dates (native.js).
+  if (native.inApp()) return appRemindersBlock({ compact, getEntries, rerender });
   const p = reminders.permission();
   const on = prefs.remindersOn() && p === 'granted';
-  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Hearthbook checks when you open it (phones don’t let it run in the background), and reminds you 30 days and 7 days before an insurance renewal, warranty expiry or job due date. Tap a reminder to open that entry.');
+  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Hearthbook checks when you open it (a web page can’t run in the background), and reminds you 30 days and 7 days before an insurance renewal, warranty expiry or job due date, and on the day. Tap a reminder to open that entry. In the Hearthbook Android app, reminders arrive even when it’s closed.');
   if (compact) {
     if (p === 'unsupported' || p === 'denied' || on) return null;
     return el('div', { class: 'remind-nudge', id: 'coming-up-remind' },
@@ -348,5 +365,39 @@ export function remindersBlock({ compact = false, getEntries, rerender = () => {
       btns.push(el('button', { type: 'button', class: 'btn', id: 'reminders-enable', onclick: async () => { haptic(); const r = await reminders.enable(); if (r === 'granted') await reminders.check(getEntries); rerender(); } }, icon('clock', 20), 'Remind me on this phone'));
     }
   }
+  return el('div', { class: 'reminders-block' }, status, note, el('div', { class: 'stack' }, btns));
+}
+
+// The Android app version: hand the dates to the app straight from the tap
+// (Chrome only allows that during a tap), and the app asks Android for
+// notification permission itself if it needs to.
+function appRemindersBlock({ compact, getEntries, rerender }) {
+  const on = native.isOn();
+  const turnOn = async () => {
+    haptic();
+    native.setOn(true);
+    prefs.setRemindersOn(true);
+    native.send(native.payload(await getEntries(), new Date(), prefs.notifiedLog()));
+    setTimeout(rerender, 600);
+  };
+  if (compact) {
+    if (on) return null;
+    return el('div', { class: 'remind-nudge', id: 'coming-up-remind' },
+      icon('clock', 18), el('span', { class: 'remind-text' }, 'Get a reminder on this phone before these are due, even when Hearthbook is closed?'),
+      el('button', { type: 'button', class: 'btn small-btn secondary', id: 'coming-up-remind-btn', onclick: turnOn }, 'Remind me'));
+  }
+  const text = native.statusText();
+  const status = el('p', { id: 'reminders-status', class: 'reminders-status' + (native.active() ? ' ok' : '') }, on ? text : 'Phone reminders are off.');
+  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Every morning at about 08:30 the Hearthbook app checks your renewals, warranty expiries and job due dates and reminds you 30 days and 7 days before, and on the day, even when Hearthbook is closed. Tap a reminder to open that entry. The dates are handed to the app on this phone only; nothing goes online.');
+  const btns = on
+    ? [el('button', { type: 'button', class: 'btn secondary', id: 'reminders-resend', onclick: turnOn }, 'Update phone reminders now'),
+       el('button', { type: 'button', class: 'btn link-btn', id: 'reminders-off', onclick: () => {
+         // Hand over an empty list so the app stops reminding.
+         native.send({ v: 1, h: 'off', items: [], n: [] });
+         native.setOn(false);
+         prefs.setRemindersOn(false);
+         setTimeout(rerender, 600);
+       } }, 'Turn off')]
+    : [el('button', { type: 'button', class: 'btn', id: 'reminders-enable', onclick: turnOn }, icon('clock', 20), 'Remind me on this phone')];
   return el('div', { class: 'reminders-block' }, status, note, el('div', { class: 'stack' }, btns));
 }
