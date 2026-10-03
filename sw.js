@@ -23,8 +23,10 @@
 // v5 = real Google IDs.
 // v6 = sync: one shared file (easier joining), sync details.
 // v7 = Insurance section, unit rates & standing charge, year-on-year charts, no backup nag while synced.
+// v8 = scanner: foreign receipts (EUR), auto-rotate and crop.
+// v9 = neutral sharing wording, "Electricity bills" section, home tiles follow the year picker, quiet Google sign-in refresh.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v8';
+const CACHE_NAME = 'hearthbook-v9';
 
 // The scanner's libraries (OCR engine + English model + PDF reader) are big
 // (~8 MB to download), so they get their OWN cache with its own version.

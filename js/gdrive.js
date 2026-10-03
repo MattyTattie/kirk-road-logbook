@@ -43,19 +43,37 @@ function loadScript(src) {
 // ---------- sign-in (access tokens) ----------
 // Google gives a short-lived (1 hour) access token. We keep it in
 // localStorage so a quick re-open of the app can sync straight away.
-// When it has run out, a tap on "Sync" / "Sign in" fetches a new one
-// (Google only shows a pop-up if it needs you to choose or agree).
+//
+// Keeping it fresh without bothering you: once you've agreed to Hearthbook
+// once, Google hands out a new token with no questions when we ask with
+// prompt '' and your email as the hint (the window it opens closes by
+// itself). Browsers only allow that window straight after a tap, so we ask
+// (a) when a sync starts from a tap, and (b) on your next tap anywhere in
+// the app once the token is about to run out (see sync.js). We never open
+// it with no tap: that would trigger a "pop-up blocked" warning.
 let tokenClient = null;
 let pending = null;
+const HINT_KEY = 'hearthbook.ghint';
 
+function readToken() {
+  try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null'); } catch { return null; }
+}
 function storedToken() {
-  try {
-    const t = JSON.parse(localStorage.getItem(TOKEN_KEY) || 'null');
-    return t && t.expiresAt > Date.now() + 60_000 ? t : null;
-  } catch { return null; }
+  const t = readToken();
+  return t && t.expiresAt > Date.now() + 60_000 ? t : null;
 }
 export const hasToken = () => Boolean(storedToken());
+// Milliseconds until the current token runs out (0 if none).
+export const tokenLeft = () => { const t = readToken(); return t ? Math.max(0, t.expiresAt - Date.now()) : 0; };
+// Load Google's sign-in script early, so a quiet refresh after a tap is quick.
+export const warmUp = () => getTokenClient().catch(() => {});
 export function forgetToken() { try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+// The last Google account used on this phone, kept as a sign-in hint
+// (survives the token running out; cleared by Disconnect).
+export const accountHint = () => { try { return localStorage.getItem(HINT_KEY) || ''; } catch { return ''; } };
+export function rememberAccount(email) { try { if (email) localStorage.setItem(HINT_KEY, email); else localStorage.removeItem(HINT_KEY); } catch {} }
+// True while the browser treats us as "just tapped" (so a window may open).
+export const canOpenWindow = () => !navigator.userActivation || navigator.userActivation.isActive;
 
 async function getTokenClient() {
   await loadScript('https://accounts.google.com/gsi/client');
@@ -66,6 +84,7 @@ async function getTokenClient() {
       callback: (resp) => {
         const p = pending; pending = null;
         if (!p) return;
+        clearTimeout(p.timer);
         if (resp.error) return p.reject(new AuthError(resp.error_description || resp.error));
         const t = { accessToken: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
         try { localStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch {}
@@ -73,28 +92,53 @@ async function getTokenClient() {
       },
       error_callback: (err) => {
         const p = pending; pending = null;
-        if (p) p.reject(new AuthError(err && err.type === 'popup_closed' ? 'Sign-in was cancelled.' : 'Google sign-in did not finish.'));
+        if (!p) return;
+        clearTimeout(p.timer);
+        p.reject(new AuthError(err && err.type === 'popup_closed' ? 'Sign-in was cancelled.' : 'Google sign-in did not finish.'));
       },
     });
   }
   return tokenClient;
 }
 
+function request(opts, timeoutMs = 0) {
+  return getTokenClient().then((client) => new Promise((resolve, reject) => {
+    if (pending) { clearTimeout(pending.timer); pending.reject(new AuthError('Google sign-in did not finish.')); }
+    pending = { resolve, reject, timer: timeoutMs ? setTimeout(() => { if (pending && pending.reject === reject) { pending = null; reject(new AuthError('Google sign-in did not finish.')); } }, timeoutMs) : 0 };
+    client.requestAccessToken(opts);
+  }));
+}
+
+// A quiet refresh: no account chooser, no consent screen (Google only shows
+// something if it really has to). Only call it straight after a tap.
+let refreshing = null;
+export function refreshSilently(email = accountHint()) {
+  if (!refreshing) {
+    refreshing = request({ prompt: '', login_hint: email || undefined, hint: email || undefined }, 20_000)
+      .finally(() => { refreshing = null; });
+  }
+  return refreshing;
+}
+
 // interactive=true only from a tap (browsers block pop-ups otherwise).
-export async function getToken({ interactive = false, email = '' } = {}) {
-  const t = storedToken();
+// Not interactive: use the saved token, or refresh quietly if we're inside
+// a tap anyway; otherwise say "sign in" (the app shows a gentle prompt).
+export async function getToken({ interactive = false, email = '', choose = false } = {}) {
+  const t = choose ? null : storedToken();
   if (t) return t.accessToken;
-  if (!interactive) throw new AuthError();
-  const client = await getTokenClient();
-  return new Promise((resolve, reject) => {
-    pending = { resolve, reject };
-    client.requestAccessToken({ prompt: email ? '' : 'select_account', login_hint: email || undefined });
-  });
+  const hint = choose ? '' : email || accountHint();
+  if (!interactive) {
+    if (hint && canOpenWindow() && navigator.userActivation) return refreshSilently(hint);
+    throw new AuthError();
+  }
+  // From a tap: no time limit (you may need to pick an account or agree).
+  return request(hint ? { prompt: '', login_hint: hint, hint } : { prompt: 'select_account' });
 }
 
 export async function revoke() {
   const t = storedToken();
   forgetToken();
+  rememberAccount('');
   try {
     if (t && window.google && window.google.accounts) window.google.accounts.oauth2.revoke(t.accessToken, () => {});
   } catch {}

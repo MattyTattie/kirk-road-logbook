@@ -36,7 +36,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `index.html` | The single page of the app. Nearly empty: a slim top bar, a `<main>` box that the JavaScript fills in, and the bottom navigation bar. |
 | `styles.css` | All the looks: colours (light **and** dark), type, cards, tap-friendly buttons, animations. Colours are variables at the top (`--brand`, `--bg` …). |
 | `js/config.js` | **The app's name and your home's label** (`APP_NAME`, `ADDRESS` = `'My home'` by default). Rename the app here. |
-| `js/sections.js` | **The list of sections** (Jobs, Receipts, Warranties, Meter readings) with their icon and colour, plus settings like "60 days counts as soon". Start here when you want to change things. |
+| `js/sections.js` | **The list of sections** (Jobs, Receipts, Warranties, Electricity bills, Insurance) with their icon and colour, plus settings like "60 days counts as soon". Start here when you want to change things. |
 | `js/app.js` | The main program. Draws each screen (welcome, dashboard, list, add/edit form, detail, backup & settings) and reacts to taps. |
 | `js/stats.js` | The sums behind the dashboard: spend this year, monthly spend, next due item, meter usage per day, energy bills. |
 | `js/charts.js` | Tiny SVG bar charts and sparklines, drawn by our own code (no chart library, nothing downloaded, works offline). |
@@ -124,7 +124,7 @@ restoring twice doesn't make duplicates.
 
 ## 4b. Chart detail cards
 
-On the **Meters** screen, tap a bar in *Daily use between readings* (or
+On the **Electricity** screen, tap a bar in *Daily use between readings* (or
 Tab to it and press Enter/Space; the arrow keys, Home and End move along the
 bars). The bar is highlighted and a card opens with that period's dates,
 kWh used, average kWh a day, the bill, the **unit rate** and **standing
@@ -157,11 +157,11 @@ number of entries with a cost, change from the month before, and the three
 biggest costs (tap one to open it).
 
 **Year picker / year on year.** Both charts have chips above them:
-*12 months* (or *Periods* on the Meters screen) and the last three years
+*12 months* (or *Periods* on the Electricity screen) and the last three years
 with data (2024, 2025, 2026). Pick a year and you get Jan–Dec bars for that
 year with the same months of the year before as slim grey bars behind them.
 The heading compares like with like: for this year it's January to the
-current month against the same months last year. On the Meters screen, kWh
+current month against the same months last year. On the Electricity screen, kWh
 are spread evenly over the days between two readings and added up per
 calendar month (pale = no readings that month), and the card compares the
 month with the same month last year. Months with no logged bill count as
@@ -467,7 +467,7 @@ Google offers two sensible levels of Drive permission ("scope"):
 |---|---|---|
 | What the app can touch | Only files it created, or that you hand it in Google's file picker | Everything in your Drive |
 | Google's rating | Non-sensitive, no review needed | **Restricted**: to publish it needs Google's verification plus a paid yearly security assessment (CASA). In "Testing" mode it works for up to 100 named test users, with a warning screen |
-| Partner joining | Becca taps one file once in Google's picker | Becca just picks the folder |
+| Someone joining | The other person taps one file once in Google's picker | The other person just picks the folder |
 | File layout | One shared file | Could be one small file per entry and photo |
 | Cost | Any change re-uploads the whole file (all photos: about 3 MB today, growing with every photo). Unchanged syncs only check the file's version, so they download nothing | Uploads just what changed |
 
@@ -569,3 +569,24 @@ tap Join again. Each try remembers what's already linked.
 **Stopping:** Backup → **Disconnect this phone**. Entries stay on the phone
 and in Drive. To stop sharing entirely, un-share or delete the Hearthbook
 folder in Google Drive.
+
+### Home tiles and the year picker (v9)
+
+The five section tiles on the home screen show how many entries and how
+much money for one calendar year: the year picked above the Spending chart,
+or this year when it shows *12 months*. *Coming up* always shows what's due
+from today. Insurance shows what the policies cost that year, pro rata
+(`insurancePaidInYear` in `js/stats.js`): monthly premiums count each
+payment made in that year (up to today), and a yearly premium is spread
+over its 12 months of cover, so you get the share of those days in that year.
+
+### Staying signed in to Google (v9)
+
+Google's access token lasts an hour. Browsers only let Google's sign-in
+window open straight after a tap, so the app never opens it by itself.
+Instead, once the token has run out (or has under 10 minutes left), your
+next ordinary tap anywhere in the app asks Google quietly for a new one
+(`prompt: ''` with your account as the hint; the window closes itself).
+If Google needs you to choose or agree again, the chip just says
+"Tap to sync" and the Backup screen shows "Continue syncing". Nothing is lost
+meanwhile: entries stay on the phone and sync after that tap.

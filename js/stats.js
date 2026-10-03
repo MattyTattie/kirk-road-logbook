@@ -125,3 +125,66 @@ export function bills(entries) {
     .filter((e) => e.type === 'meter' && Number(e.cost) > 0)
     .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 }
+
+// ---------- one section in one calendar year (home tiles) ----------
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const dayNum = (iso) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10))) / 86400000;
+
+// What a policy cost you in one calendar year, pro rata:
+//  • monthly premium – one payment per month on the start day, from the
+//    start date until the renewal date (no renewal date = still running)
+//    and never later than today (future payments aren't paid yet);
+//  • yearly premium – spread evenly over its 12 months of cover (the year
+//    before the renewal date, or from the start date), and you get the share of
+//    those days that fall in that year, up to today.
+// So for this year it's "so far"; past years are complete.
+// Returns 0 when the policy has no cost or wasn't running that year.
+export function insurancePaidInYear(e, year, now = new Date()) {
+  const cost = Number(e && e.cost) || 0;
+  const start = (e && e.date) || '';
+  if (!cost || !/^\d{4}-\d\d-\d\d/.test(start)) return 0;
+  const today = isoDay(now);
+  if (e.costFreq === 'monthly') {
+    const end = e.dueDate && /^\d{4}-\d\d-\d\d/.test(e.dueDate) ? e.dueDate : null;
+    const sy = Number(start.slice(0, 4)), sm = Number(start.slice(5, 7)), sd = Number(start.slice(8, 10));
+    let n = 0;
+    for (let m = 0; m < 12; m++) {
+      const months = (year - sy) * 12 + m - (sm - 1);
+      if (months < 0) continue;
+      const last = new Date(year, m + 1, 0).getDate(); // e.g. 31st → 30 Jun
+      const pay = `${year}-${String(m + 1).padStart(2, '0')}-${String(Math.min(sd, last)).padStart(2, '0')}`;
+      if (pay < start || pay > today || (end && pay >= end)) continue;
+      n++;
+    }
+    return Math.round(n * cost * 100) / 100;
+  }
+  // A yearly premium buys the 12 months up to the renewal date (or the 12
+  // months from the start date if there's no renewal date).
+  let s = dayNum(start), endDay;
+  if (e.dueDate && /^\d{4}-\d\d-\d\d/.test(e.dueDate) && dayNum(e.dueDate) > s) {
+    endDay = dayNum(e.dueDate);
+    s = Math.max(s, dayNum(`${Number(e.dueDate.slice(0, 4)) - 1}${e.dueDate.slice(4, 10)}`));
+  } else endDay = dayNum(`${Number(start.slice(0, 4)) + 1}${start.slice(4, 10)}`);
+  const from = Math.max(s, dayNum(`${year}-01-01`)), to = Math.min(endDay, dayNum(`${year + 1}-01-01`), dayNum(today) + 1);
+  if (to <= from) return 0;
+  return Math.round((cost * (to - from)) / (endDay - s) * 100) / 100;
+}
+
+// Count and £ for one section in one year. Insurance counts the policies
+// that cost something (or were running) that year; everything else counts
+// entries dated in that year.
+export function sectionYear(entries, sectionId, year, now = new Date()) {
+  const items = entries.filter((e) => e.type === sectionId);
+  if (sectionId === 'insurance') {
+    let total = 0, count = 0;
+    for (const e of items) {
+      const v = insurancePaidInYear(e, year, now);
+      const running = (e.date || '9999') <= `${year}-12-31` && (!e.dueDate || e.dueDate >= `${year}-01-01`);
+      if (v > 0 || (running && !Number(e.cost))) count++;
+      total += v;
+    }
+    return { count, total: Math.round(total * 100) / 100 };
+  }
+  const inYear = items.filter((e) => (e.date || '').startsWith(String(year)));
+  return { count: inYear.length, total: totalCost(inYear) };
+}

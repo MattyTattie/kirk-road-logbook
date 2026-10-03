@@ -31,7 +31,7 @@ import { el, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFir
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
-import { spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
+import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
 import * as sync from './sync.js';
@@ -215,7 +215,7 @@ function renderWelcome() {
       { class: 'welcome', id: 'welcome', 'aria-labelledby': 'welcome-title' },
       el('img', { class: 'welcome-logo', src: 'icons/icon.svg', alt: '', width: '88', height: '88' }),
       el('h1', { id: 'welcome-title' }, `Welcome to ${APP_NAME}`),
-      el('p', { class: 'welcome-lead' }, `${APP_TAGLINE} Receipts, warranties, jobs and meter readings for ${ADDRESS.toLowerCase() === 'my home' ? 'your home' : ADDRESS} — in one tidy place.`),
+      el('p', { class: 'welcome-lead' }, `${APP_TAGLINE} Receipts, warranties, jobs, electricity bills and insurance for ${ADDRESS.toLowerCase() === 'my home' ? 'your home' : ADDRESS} — in one tidy place.`),
       el(
         'ul',
         { class: 'welcome-points' },
@@ -255,13 +255,13 @@ async function renderHome() {
         el('div', { class: 'empty empty-hero' },
           el('div', { class: 'empty-art' }, icon('home', 44)),
           el('h2', {}, 'Your logbook is empty'),
-          el('p', {}, 'Add your first receipt, warranty, job or meter reading. It takes a few seconds.'),
+          el('p', {}, 'Add your first receipt, warranty, job, electricity bill or policy. It takes a few seconds.'),
           el('div', { class: 'stack' },
             el('a', { class: 'btn btn-lg', href: '#/new', id: 'empty-add' }, icon('plus', 20), 'Add first entry'),
             el('a', { class: 'btn btn-lg secondary', href: '#/export' }, icon('upload', 20), 'Restore a backup')
           )
         ),
-        el('div', { class: 'section-grid' }, SECTIONS.map((s) => sectionTile(s, [])))
+        el('div', { class: 'section-grid' }, SECTIONS.map((s) => sectionTile(s, [], year)))
       )
     );
     return;
@@ -351,6 +351,19 @@ async function renderHome() {
     );
   }
 
+  // --- Section tiles: count and £ for the year picked in the chart
+  // (the "12 months" view shows this year). ---
+  const tilesTitle = el('h2', { id: 'tiles-title' });
+  const tilesGrid = el('div', { class: 'section-grid', id: 'section-tiles' });
+  const tiles = el('section', { class: 'group tiles-group', id: 'tiles', 'aria-labelledby': 'tiles-title' },
+    el('div', { class: 'group-head' }, tilesTitle), tilesGrid);
+  function drawTiles() {
+    const y = state.chartYear || year;
+    tilesTitle.textContent = y === year ? `This year (${y})` : `In ${y}`;
+    tiles.dataset.year = String(y);
+    tilesGrid.replaceChildren(...SECTIONS.map((s) => sectionTile(s, everything, y)));
+  }
+
   // --- Spending chart ---
   const chartCard = el('section', { class: 'card chart-card', id: 'spend-chart', 'aria-labelledby': 'chart-title' });
   const years = yearsWithData(everything).slice(-3); // e.g. 2024, 2025, 2026
@@ -405,6 +418,7 @@ async function renderHome() {
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
       card
     ].filter(Boolean)); // (replaceChildren would print a null as "null")
+    drawTiles(); // the tiles follow the year picker
   }
   drawChart();
 
@@ -420,7 +434,7 @@ async function renderHome() {
       await backupReminder(everything.length),
       el('div', { class: 'stat-grid' }, nextCard, meterCard, billCard),
       chartCard,
-      el('div', { class: 'section-grid' }, SECTIONS.map((s) => sectionTile(s, everything))),
+      tiles,
       soonList.length
         ? el('section', { class: 'group' },
             el('div', { class: 'group-head' }, el('h2', {}, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
@@ -433,21 +447,23 @@ async function renderHome() {
   );
 }
 
-function sectionTile(s, everything) {
-  const items = everything.filter((e) => e.type === s.id);
-  if (s.kind === 'insurance') {
-    const yearly = totalCost(items.map((e) => ({ cost: annualCost(e) })));
-    return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone },
-      sectionBadge(s), el('span', { class: 'tile-label' }, s.label),
-      el('span', { class: 'tile-meta' }, items.length ? `${items.length} · ${money(yearly).replace(/\.\d\d$/, '')}/yr` : 'None yet'));
-  }
-  return el(
-    'a',
-    { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone },
+// One section tile on the home screen: how many and how much in one year.
+// Insurance shows what the policies cost that year, pro rata (monthly
+// premiums actually paid; a yearly premium spread over its months of cover),
+// so far for this year. "Coming up" elsewhere stays about today.
+function sectionTile(s, everything, year) {
+  const { count, total } = sectionYear(everything, s.id, year);
+  const thisYear = year === new Date().getFullYear();
+  const pounds = money(Math.round(total)).replace(/\.\d\d$/, ''); // whole pounds, rounded
+  const ins = s.kind === 'insurance';
+  const meta = !count ? `None in ${year}`
+    : ins ? `${count} polic${count === 1 ? 'y' : 'ies'} · ${pounds}`
+    : total ? `${count} · ${pounds}` : `${count} logged`;
+  return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone, 'data-section': s.id, 'data-year': String(year) },
     sectionBadge(s),
     el('span', { class: 'tile-label' }, s.label),
-    el('span', { class: 'tile-meta' }, items.length ? `${items.length} · ${money(totalCost(items)).replace(/\.\d\d$/, '')}` : 'None yet')
-  );
+    el('span', { class: 'tile-meta' }, meta),
+    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata`) : null);
 }
 
 // ---------------------------------------------------------------------
@@ -838,7 +854,7 @@ function entryCard(e) {
 // ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
-const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Readings and energy bills', insurance: 'Home, car and life policies' };
+const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Electricity bills and meter readings', insurance: 'Home, car and life policies' };
 function renderChooser() {
   app.replaceChildren(
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
@@ -1240,7 +1256,7 @@ const SYNC_TEXT = {
   idle: 'Up to date',
   syncing: 'Syncing…',
   offline: 'Offline — will sync when you’re back online',
-  signin: 'Sign in again to keep syncing',
+  signin: 'Sync paused — tap below to carry on',
   error: 'Sync problem',
   nofolder: 'Choose a shared logbook',
 };
@@ -1263,10 +1279,10 @@ async function syncCard(cardHead) {
     rerender();
   };
   const help = el('ul', { class: 'sync-help' },
-    el('li', {}, 'Keeps one logbook on two phones, e.g. yours and your partner’s.'),
+    el('li', {}, 'Keeps one logbook on more than one phone: yours and anyone you want to share it with.'),
     el('li', {}, 'Entries and photos are copied to a “Hearthbook” folder in your own Google Drive, which you share with them. No other company or server is involved.'),
     el('li', {}, 'Each phone keeps its own full copy, so the app still works with no signal. Changes are swapped when you open the app, a few seconds after you save, and when you tap Sync now.'),
-    el('li', {}, 'If you both change the same entry before syncing, the most recent save wins.'),
+    el('li', {}, 'If two phones change the same entry before syncing, the most recent save wins.'),
     el('li', {}, 'The app can only open its own Hearthbook files, nothing else in your Drive.'));
   // A message stays for 10 seconds, even if the card redraws meanwhile.
   if (syncMsg && !syncMsg.until) syncMsg.until = Date.now() + 10000;
@@ -1291,12 +1307,12 @@ async function syncCard(cardHead) {
   if (st.state === 'nofolder') {
     add(head,
       el('ul', { class: 'sync-facts' }, el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who))),
-      el('p', {}, 'Is this the first phone? Start a shared logbook. It creates a “Hearthbook” folder in your Drive and copies this phone’s entries into it. Then share the folder with your partner.'),
+      el('p', {}, 'Is this the first phone? Start a shared logbook. It creates a “Hearthbook” folder in your Drive and copies this phone’s entries into it. Then invite anyone you want to share it with.'),
       el('p', {}, 'If someone has already shared a Hearthbook folder with you, tap Join. Google’s file picker opens: tap “hearthbook-sync.json” (ignore any other hearthbook files), then tap Select. You only do this once.'),
       el('div', { class: 'sync-actions' },
         el('button', { type: 'button', class: 'btn', id: 'sync-create', onclick: (ev) => busyBtn(ev.currentTarget, 'Creating…', async () => {
           await sync.createShared();
-          syncMsg = { text: 'Shared logbook created. Now share it: type your partner’s Gmail address below.' };
+          syncMsg = { text: 'Shared logbook created. Now share it: type their email address below.' };
         }) }, 'Start a new shared logbook'),
         el('button', { type: 'button', class: 'btn secondary', id: 'sync-join', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening picker…', async () => {
           const r = await sync.joinShared();
@@ -1311,7 +1327,7 @@ async function syncCard(cardHead) {
   }
 
   const stateText = st.state === 'error' ? st.message || SYNC_TEXT.error : SYNC_TEXT[st.state] || st.state;
-  const inviteInput = el('input', { type: 'email', id: 'sync-invite-email', placeholder: 'partner@gmail.com', autocomplete: 'off', 'aria-label': 'Email address to share with' });
+  const inviteInput = el('input', { type: 'email', id: 'sync-invite-email', placeholder: 'name@example.com', autocomplete: 'off', 'aria-label': 'Email address to share with' });
   add(head,
     el('div', { class: 'sync-status', 'data-state': st.state, id: 'sync-status', role: 'status', 'aria-live': 'polite' },
       el('span', { class: 'dot' }),
@@ -1321,11 +1337,12 @@ async function syncCard(cardHead) {
       el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`))),
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
-        ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Signing in…', () => sync.syncNow({ interactive: true })) }, 'Sign in to Google again')
+        ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')
         : el('button', { type: 'button', class: 'btn', id: 'sync-now', disabled: st.state === 'syncing', onclick: (ev) => busyBtn(ev.currentTarget, 'Syncing…', () => sync.syncNow({ interactive: true })) }, icon('backup', 20), 'Sync now'),
+      st.state === 'signin' ? el('p', { class: 'small muted', id: 'sync-signin-note' }, 'Google asks for a quick check now and then. Nothing is lost: your entries are safe on this phone and will sync as soon as you tap.') : null,
       msg,
       st.owner
-        ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'Share the folder with'),
+        ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'Invite anyone you want to share it with'),
             el('div', { class: 'sync-invite' }, inviteInput,
               el('button', { type: 'button', class: 'btn secondary', id: 'sync-invite', onclick: (ev) => busyBtn(ev.currentTarget, 'Sharing…', async () => {
                 const email = inviteInput.value.trim();
@@ -1333,7 +1350,7 @@ async function syncCard(cardHead) {
                 await sync.invite(email);
                 syncMsg = { text: `Shared with ${email}. Google emails them a link. On their phone, open ${APP_NAME} → Backup → Connect → Join.` };
               }) }, 'Share')),
-            el('span', { class: 'hint' }, 'They get edit access to this one folder only. You can also share it from the Google Drive app.'))
+            el('span', { class: 'hint' }, 'Use the email address of their Google account (it doesn’t have to be Gmail). They get edit access to this one folder only. You can also share it from the Google Drive app.'))
         : null,
       el('button', { type: 'button', class: 'btn link-btn', id: 'sync-disconnect', onclick: async () => {
         if (!confirm('Stop syncing on this phone?\n\nYour entries stay on this phone, and the shared folder stays in Google Drive. You can connect again later.')) return;
@@ -1406,7 +1423,7 @@ function wireSyncChip() {
       : s.state === 'idle' ? `Synced ${sync.ago(s.lastSync)}`
       : s.state === 'syncing' ? 'Syncing…'
       : s.state === 'offline' ? 'Offline'
-      : s.state === 'signin' ? 'Sign in to sync'
+      : s.state === 'signin' ? 'Tap to sync'
       : s.state === 'nofolder' ? 'Finish sync setup'
       : 'Sync problem';
     chip.title = !on ? 'Your data stays on this phone' : 'Google Drive sync: tap to sync now';

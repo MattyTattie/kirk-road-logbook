@@ -11,7 +11,7 @@
 // permission, so it can only open files it created or that you picked in
 // Google's file picker. Picking a folder does NOT unlock the files inside,
 // and the other phone can't see files created later. With a single file,
-// your partner picks it once and that's it.
+// the person you share it with picks it once and that's it.
 // (Version 1 of sync spread photos over 8 extra files. The first phone to
 // sync with this version copies them into hearthbook-sync.json; the old
 // files are left alone, and you can delete them later.)
@@ -77,8 +77,33 @@ export async function init() {
     addEventListener('online', () => schedule(500));
     addEventListener('offline', () => getConfig().then((k) => ready(k) && setStatus({ state: 'offline', message: '' })));
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(1500); });
+    // Quiet token refresh on your next tap (see gdrive.js "sign-in").
+    document.addEventListener('click', refreshOnTap, true);
   }
-  if (ready(c)) schedule(600); // sync on open
+  // Phones connected before v9: remember the account as the sign-in hint.
+  if (c.account && c.account.email && !drive.accountHint()) drive.rememberAccount(c.account.email);
+  if (ready(c)) { schedule(600); if (navigator.onLine) drive.warmUp(); } // sync on open
+}
+
+// When the Google token has run out (or will within 10 minutes), use the
+// next ordinary tap to fetch a new one quietly, then carry on syncing. Taps
+// on the sync buttons themselves are left alone (they sign in anyway).
+const REFRESH_EARLY = 10 * 60_000;
+let lastTapRefresh = 0;
+async function refreshOnTap(ev) {
+  if (!navigator.onLine || drive.tokenLeft() > REFRESH_EARLY) return;
+  if (ev.target && ev.target.closest && ev.target.closest('#sync-chip, #sync-signin, #sync-now, #sync-connect, #sync-create, #sync-join, #sync-invite')) return;
+  if (Date.now() - lastTapRefresh < 2 * 60_000) return; // don't keep trying on every tap
+  const c = await getConfig();
+  const hint = drive.accountHint() || (c.account && c.account.email);
+  if (!ready(c) || !hint || !drive.isConfigured()) return;
+  lastTapRefresh = Date.now();
+  try {
+    await drive.refreshSilently(hint);
+    if (status.state === 'signin' || status.state === 'error') schedule(300);
+  } catch (err) {
+    console.info('sync: quiet sign-in did not work', err && err.message);
+  }
 }
 
 // ---------- hooks the app calls ----------
@@ -111,8 +136,9 @@ function schedule(ms) {
 export async function connect() {
   if (!drive.isConfigured()) throw new Error('Google sync is not set up in this copy of the app yet.');
   drive.forgetToken();
-  await drive.getToken({ interactive: true });
+  await drive.getToken({ interactive: true, choose: true });
   const user = await drive.whoAmI();
+  drive.rememberAccount(user.emailAddress);
   const c = { ...(await getConfig()), enabled: true, account: { email: user.emailAddress, name: user.displayName } };
   // Already connected to a shared logbook before (e.g. this is your
   // second phone, or you re-installed)? Use it straight away.
