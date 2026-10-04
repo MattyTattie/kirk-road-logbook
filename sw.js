@@ -33,8 +33,9 @@
 // v13.1 = Beldray bedroom radiator manual (tagged Bedroom).
 // v13.2 = Ecostrad iQ Ceramic 1800W bedroom radiator manual (tagged Bedroom).
 // v13.3 = Ecostrad iQ WiFi Heating Element 600W towel rail manual (tagged Bathroom).
+// v13.4 = electriQ VSTR9-650-0.6 600W smart towel rail manual (tagged Bathroom).
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v13.3';
+const CACHE_NAME = 'hearthbook-v13.4';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -160,7 +161,7 @@ self.addEventListener('message', (event) => {
 });
 
 // 2c) When you tap "Save all for offline" in Manuals (v13: it asks first,
-//     ~56 MB), the page sends 'warm-manuals' with the list of PDFs; we save
+//     ~57 MB), the page sends 'warm-manuals' with the list of PDFs; we save
 //     the ones not already saved, one at a time. Otherwise each manual is
 //     saved the first time you open it (serveManual below).
 //     (The pdf.js reader used to show them comes along too.) If the

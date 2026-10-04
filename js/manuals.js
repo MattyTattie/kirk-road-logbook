@@ -1,7 +1,7 @@
 // =====================================================================
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
-// The PDFs live in the app's manuals/ folder. They're big (about 56 MB
+// The PDFs live in the app's manuals/ folder. They're big (about 57 MB
 // together), so they are NOT downloaded when the app installs: the first
 // time you open More → Manuals, the service worker (sw.js "warm-manuals")
 // saves them all for offline use. A manual you open before that is saved
@@ -74,6 +74,19 @@ export const APPLIANCES = [
       'Cut out? Unplug, cool 30 min. Don’t run it off a timer or smart plug. ' +
       'Clean: unplug, cool, soft damp cloth. Wi-Fi: Smart Life/Tuya app, 2.4 GHz only. 12-month guarantee, 2 years if registered within 30 days.',
     files: [{ file: 'Beldray-EH3110V2-2000W-Smart-Ceramic-Core-Radiator-instruction-manual.pdf', label: 'Instruction manual (2000 W, EH3110V2)', pages: 24 }],
+  },
+  {
+    // v13.4: before the Ecostrad towel rail so a warranty naming electriQ finds this one.
+    id: 'electriq-towel', name: 'electriQ bathroom towel rail', model: 'Smart Electric Towel Rail 600W (VSTR9-650-0.6)', group: 'Bathroom', rooms: ['Bathroom'],
+    match: ['VSTR9-650', 'VSTR96500.6', 'VSTR9650', 'ELECTRIQ'],
+    words: 'electriq smart electric towel rail radiator heater 600w bathroom tuya smart app boost timer child lock',
+    about: 'The 600 W electriQ smart towel rail in the bathroom, from Buy It Direct / Appliances Direct.',
+    notes: 'Power: on/standby; hold 10 s to reset. Mode cycles Comfort, Eco (7–30°C), Anti-frost (7°C), Weekly timer, and Radiator/Boost for towels (40–80°C for 2 h; hold Mode 3 s to change how long). ' +
+      'Child lock: hold + and − 5 s (same to undo). Settings: in standby hold + 10 s, Mode to step: F1 open window (off/30/60), F2/F3 max rail temp, F4 Wi-Fi. ' +
+      'App: Tuya Smart, 2.4 GHz; pair by Bluetooth via Add device, or in standby hold Mode 5 s (3 min). ' +
+      'Don’t use a timer or extension lead; not under a socket; RCD in a bathroom. Clean: unplug, soft damp cloth. Support 0330 390 3061. ' +
+      'Guarantee: none in the manual; Appliances Direct says 5 years electrics, 10 years radiator.',
+    files: [{ file: 'electriQ-VSTR9-650-0.6-600W-Smart-Electric-Towel-Rail-user-manual-2023.pdf', label: 'User manual (VSTR9-650-0.6, 2023)', pages: 30 }],
   },
   {
     // Before the bedroom Ecostrad so a warranty naming the element/towel rail finds this one
