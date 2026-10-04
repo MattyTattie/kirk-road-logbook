@@ -10,7 +10,10 @@
 // receipt or a serial-number label, but usually only 200–500 KB.
 
 const MAX_SIZE = 1600; // longest side, in pixels
-const QUALITY = 0.8; // JPEG quality: 0 (awful) to 1 (best). 0.8 is a good balance.
+// v13: 0.75 (was 0.8). Every photo also travels in the one shared sync
+// file, so smaller new photos keep that file well under Google's 5 MB
+// "simple upload" size for longer. Photos already saved are not touched.
+const QUALITY = 0.75; // JPEG quality: 0 (awful) to 1 (best).
 
 // Takes a File (from the camera or gallery) and gives back a smaller JPEG Blob.
 export async function compressImage(file) {

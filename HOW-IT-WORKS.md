@@ -719,3 +719,12 @@ DIS15020) gets a "Manual" button. Ask Hearthbook finds manuals too
 **Publishing.** Run `./check-private.sh /workspace/logbook-publish` before
 committing: it fails on a postal address, postcode, personal email, MPAN,
 phone number (code, docs and the PDFs' text) or a keystore file.
+
+## 13. What's new in v13 (web)
+
+- **Sharper manuals.** After you pinch to zoom, the pages on screen are redrawn at the new size, so small print stays crisp. **Open in another app** hands the PDF to your phone's own PDF viewer.
+- **Your own manuals.** More → Manuals → *Add a manual*, or share a PDF into Hearthbook and choose *Keep it as a manual*. Give it a name, notes and rooms, and link it to entries. These are kept **on this phone only**: they are not in the shared sync file or in backups.
+- **Rooms.** More → Rooms. You can tag jobs, receipts, warranties and manuals to a room, tag several at once, and filter any list by room. Deleting a room only removes the tag. Room tags on entries sync. The room list itself is per phone.
+- **Year in review.** Tap *Year in review ›* on the spending card, or open it from More. It shows what the house cost in a year (bills, insurance pro rata, receipts, jobs), the biggest items, and a comparison with the year before.
+- **Sync fixes.** Restoring a backup while sync is on now sticks. Deletes made during a sync stay deleted. Uploads to Drive can resume after a dropped connection. More shows the size of the shared file.
+- **Updates.** When a new version arrives, the app reloads once, but never while you're filling in a form.

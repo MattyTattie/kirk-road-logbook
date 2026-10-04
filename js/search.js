@@ -83,7 +83,7 @@ const INS_TYPES = { home: 'home house buildings contents', car: 'car motor vehic
 function fieldsOf(e) {
   return {
     title: normalise(e.title),
-    other: normalise([e.supplier, e.notes, e.policyNumber, e.covered, e.scanText, e.ocrText, INS_TYPES[e.insType] || '', e.currency].filter(Boolean).join(' ')),
+    other: normalise([e.supplier, e.notes, e.policyNumber, e.covered, e.scanText, e.ocrText, INS_TYPES[e.insType] || '', e.currency, e.room].filter(Boolean).join(' ')),
   };
 }
 

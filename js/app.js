@@ -15,7 +15,11 @@
 //   #/scan            scan a receipt or bill (photo or PDF) and pre-fill a form
 //   #/view/<id>       one entry, with its photos
 //   #/edit/<id>       the form, filled in, for editing
-//   #/export          backup / restore / report / appearance
+//   #/export          "More": manuals, rooms, backup / restore, settings
+//   #/manuals         manuals (built-in + your own); #/manual/<file> or u:<id> opens one
+//   #/addmanual       add your own manual; #/editmanual/<id>
+//   #/rooms           rooms; #/room/<name> one room; #/room/<name>/add bulk tagging
+//   #/year/<yyyy>     year in review
 //
 // Whenever the hash changes, the browser fires a "hashchange" event and we
 // call render(), which looks at the hash and draws the matching screen
@@ -43,6 +47,9 @@ import { search as askSearch } from './search.js';
 import { classify, addYears } from './autosort.js';
 import * as manuals from './manuals.js';
 import * as native from './native.js';
+import * as rooms from './rooms.js';
+import * as userManuals from './usermanuals.js';
+import { yearReview, reviewYears } from './review.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -54,6 +61,7 @@ const state = {
   chartPick: -1, // which bar is tapped
   chartYear: 0, // dashboard chart: 0 = last 12 months, or a calendar year
   meterYear: 0, // meter chart: 0 = periods between readings, or a calendar year
+  room: '', // list screen: only this room ('' = every room)
 };
 
 // The name comes from config.js, so renaming is a one-line change.
@@ -96,7 +104,7 @@ let linkTapAt = 0;
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[href^="#"]')) linkTapAt = performance.now(); }, true);
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
-  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, new: 2, scan: 2, view: 2, manual: 3, edit: 3 }[parts[0]] ?? 1;
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, rooms: 2, year: 2, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
@@ -124,6 +132,12 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'list') await renderList(arg || 'all', /^\d{4}$/.test(parts[2] || '') ? Number(parts[2]) : 0);
     else if (page === 'manuals') await renderManuals(arg ? decodeURIComponent(arg) : '');
     else if (page === 'manual') await renderManualViewer(arg ? decodeURIComponent(arg) : '');
+    else if (page === 'addmanual') await renderManualForm(null, arg);
+    else if (page === 'editmanual') await renderManualForm(arg ? decodeURIComponent(arg) : '');
+    else if (page === 'rooms') await renderRooms();
+    else if (page === 'room' && parts[2] === 'add') await renderRoomTagger(decodeURIComponent(arg || ''));
+    else if (page === 'room') await renderRoom(decodeURIComponent(arg || ''));
+    else if (page === 'year') await renderYearReview(/^\d{4}$/.test(arg || '') ? Number(arg) : new Date().getFullYear());
     else if (page === 'welcome') renderWelcome();
     else await renderHome();
   } catch (err) {
@@ -143,7 +157,7 @@ function setChrome(page, arg) {
   const tab =
     page === 'list' && arg === 'meter' ? 'meter'
     : page === 'list' || page === 'view' || page === 'new' ? 'list'
-    : page === 'export' || page === 'manuals' || page === 'manual' ? 'export'
+    : ['export', 'manuals', 'manual', 'addmanual', 'editmanual', 'rooms', 'room', 'year'].includes(page) ? 'export'
     : 'home';
   document.querySelectorAll('.bottom-nav [data-tab]').forEach((a) => {
     const on = a.dataset.tab === tab;
@@ -223,7 +237,7 @@ async function backupReminder(count) {
     el('span', { class: 'banner-icon' }, icon('alert', 20)),
     el('div', { class: 'banner-body' },
       el('p', { class: 'banner-title' }, days === null ? 'No backup yet' : `Last backup was ${days} days ago.`),
-      el('p', { class: 'small' }, 'Your logbook only lives on this phone.')
+      el('p', { class: 'small' }, ['off', 'unconfigured'].includes(sync.getStatus().state) ? 'Your logbook only lives on this phone.' : 'Google Drive sync isn’t up to date, so keep a backup file too.')
     ),
     el('a', { class: 'btn small-btn', href: '#/export' }, 'Back up')
   );
@@ -322,13 +336,16 @@ async function renderHome() {
     const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
     return v > 0 ? el('a', { class: 'hero-chip', href: `#/list/${s.id}/${year}`, 'data-section': s.id, 'aria-label': `${s.label} in ${year}: ${money(v)}` }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
   };
+  const heroChips = () => prefs.orderedSections().map(heroChip).filter(Boolean);
   const hero = el(
     'div',
     { class: 'hero', id: 'spend-card', 'data-href': `#/list/all/${year}`, onclick: (ev) => { if (!ev.target.closest('a')) location.hash = `#/list/all/${year}`; } },
     el('a', { class: 'hero-label', href: `#/list/all/${year}`, id: 'spend-link' }, `Spent in ${year}`, icon('chevron', 14)),
     el('p', { class: 'hero-value', id: 'spend-year' }, money(thisYear)),
-    el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} this year · ${money(lastYear)} in ${year - 1}`),
-    el('div', { class: 'hero-split' }, prefs.orderedSections().map(heroChip))
+    // v13: "Year in review" is a small link on the summary line, so the card stays compact.
+    el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} · ${money(lastYear)} in ${year - 1} · `,
+      el('a', { class: 'hero-review', href: `#/year/${year}`, id: 'year-review-link' }, 'Year in review ›')),
+    el('div', { class: 'hero-split' }, heroChips())
   );
 
   // --- Next due / expiring ---
@@ -467,7 +484,7 @@ async function renderHome() {
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
   const dash = el('div', { class: 'dash', id: 'dashboard' });
   const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
-  function redrawHero() { hero.querySelector('.hero-split').replaceChildren(...prefs.orderedSections().map(heroChip).filter(Boolean)); }
+  function redrawHero() { hero.querySelector('.hero-split').replaceChildren(...heroChips()); }
 
   dash.append(...[
       head,
@@ -520,8 +537,13 @@ async function renderList(type, year = 0) {
   const everything = (await db.getAllEntries()).sort(newestFirst);
   // "#/list/receipt/2026": just that year (from the spending card's chips).
   const inYear = (e) => !year || (e.date || '').startsWith(String(year));
-  const inSection = (type === 'all' ? everything : everything.filter((e) => e.type === type)).filter(inYear);
+  const inSectionAll = (type === 'all' ? everything : everything.filter((e) => e.type === type)).filter(inYear);
   const section = type === 'all' ? null : getSection(type);
+  // v13: rooms as a filter that works together with the search box.
+  const roomNames = rooms.roomList(await rooms.getStored(), everything).filter((r) => rooms.inRoom(inSectionAll, r).length || rooms.sameRoom(r, state.room));
+  if (state.room && !roomNames.some((r) => rooms.sameRoom(r, state.room))) state.room = '';
+  const byRoom = () => (state.room ? rooms.inRoom(inSectionAll, state.room) : inSectionAll);
+  let inSection = byRoom();
 
   const screen = [screenHead(section ? section.label : 'Logbook', { id: 'list-title', sub: year ? `${year} only` : null }), tabs(type, year)];
   if (year) {
@@ -567,7 +589,14 @@ async function renderList(type, year = 0) {
   const summary = el('div', { class: 'summary', id: 'summary' });
   const answerBox = el('div', { class: 'list-answer', id: 'list-answer' });
   const list = el('div', { class: 'list stagger', id: 'list' });
-  screen.push(el('label', { class: 'search-wrap' }, icon('search', 20), search), answerBox, summary, list);
+  const roomSelect = roomNames.length
+    ? el('select', { class: 'room-filter', id: 'room-filter', 'aria-label': 'Room',
+        onchange: (ev) => { state.room = ev.target.value; inSection = byRoom(); list.classList.remove('stagger'); drawList(); ev.target.classList.toggle('on', Boolean(state.room)); } },
+        el('option', { value: '' }, 'All rooms'),
+        roomNames.map((r) => el('option', { value: r, selected: rooms.sameRoom(r, state.room) }, r)))
+    : null;
+  if (roomSelect && state.room) roomSelect.classList.add('on');
+  screen.push(el('div', { class: 'search-row' }, el('label', { class: 'search-wrap' }, icon('search', 20), search), roomSelect), answerBox, summary, list);
 
   // Draw (or redraw) just the list part. We call this on every key press
   // in the search box, instead of redrawing the whole screen, so the
@@ -961,6 +990,7 @@ function renderChooser() {
 // so the rest of the app stays quick. The service worker keeps a copy so
 // scanning works offline too.
 let pendingScan = null; // { type, fields, photos, parsed } handed to renderForm
+let pendingManualFile = null; // a PDF shared to Hearthbook, on its way to "Add a manual"
 
 // A photo or PDF shared to Hearthbook from another app arrives through the
 // service worker (sw.js "share target"), which parks it in a cache.
@@ -1058,8 +1088,25 @@ async function renderScan(arg) {
   picker();
   if (arg === 'shared') {
     const file = await takeSharedFile();
-    if (file && /^(image\/|application\/pdf)/.test(file.type || '') || (file && /\.pdf$/i.test(file.name))) setTimeout(() => go(file), 0);
-    else if (arg === 'shared') picker(file ? 'Hearthbook can read photos and PDFs. That file was a different kind.' : 'The shared file didn’t arrive. Try sharing it again, or choose it here.');
+    const isPdf = file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
+    if (isPdf) sharedPdfChoice(file);
+    else if (file && /^image\//.test(file.type || '')) setTimeout(() => go(file), 0);
+    else picker(file ? 'Hearthbook can read photos and PDFs. That file was a different kind.' : 'The shared file didn’t arrive. Try sharing it again, or choose it here.');
+  }
+  // v13: a PDF shared to Hearthbook can be a bill/receipt OR a manual.
+  // A name like "…manual…" / "…guide…" (or a long PDF) puts "manual" first.
+  async function sharedPdfChoice(file) {
+    let pages = 0;
+    try { const scan = await import('./scan.js'); pages = (await scan.pdfPageCount(file)) || 0; } catch {}
+    const manualFirst = /manual|guide|instruction|handbook|user|install/i.test(file.name || '') || pages >= 6;
+    const asScan = el('button', { type: 'button', class: 'btn btn-lg' + (manualFirst ? ' secondary' : ''), id: 'shared-as-scan', onclick: () => go(file) }, icon('scan', 20), 'Read it as a bill or receipt');
+    const asManual = el('button', { type: 'button', class: 'btn btn-lg' + (manualFirst ? '' : ' secondary'), id: 'shared-as-manual', onclick: () => { pendingManualFile = file; location.replace('#/addmanual/shared'); } }, icon('book', 20), 'Keep it as a manual');
+    body.replaceChildren(
+      el('div', { class: 'scan-hero', id: 'shared-choice' },
+        el('span', { class: 'scan-pdf-icon' }, icon('file', 40), el('span', {}, file.name || 'PDF')),
+        el('h2', {}, 'What is this PDF?'),
+        el('p', {}, `${userManuals.sizeText(file.size)}${pages ? ` · ${pages} page${pages === 1 ? '' : 's'}` : ''}`)),
+      el('div', { class: 'scan-actions' }, ...(manualFirst ? [asManual, asScan] : [asScan, asManual])));
   }
   app.replaceChildren(
     el('div', { class: 'scan', id: 'scan' },
@@ -1154,7 +1201,7 @@ async function renderForm(type, id) {
       // Keep what's been typed so far, then reopen the form in the other section.
       const fd = new FormData(form);
       const keep = {};
-      for (const k of ['title', 'date', 'cost', 'currency', 'supplier', 'notes', 'dueDate']) if (fd.has(k)) keep[k] = String(fd.get(k));
+      for (const k of ['title', 'date', 'cost', 'currency', 'supplier', 'notes', 'dueDate', 'room']) if (fd.has(k)) keep[k] = String(fd.get(k));
       const fields = { ...scan.fields, ...keep };
       if (t === 'warranty' && !fields.dueDate && scan.years && fields.date) fields.dueDate = addYears(fields.date, scan.years);
       pendingScan = { ...scan, type: t, fields, photos };
@@ -1221,6 +1268,16 @@ async function renderForm(type, id) {
     form.append(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : null));
   }
   if (ins) form.append(field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
+  // v13: which room it belongs to (optional; jobs, receipts, warranties).
+  const roomable = rooms.ROOM_TYPES.includes(entry.type);
+  if (roomable) {
+    const names = rooms.roomList(await rooms.getStored(), allEntries);
+    if (entry.room && !names.some((r) => rooms.sameRoom(r, entry.room))) names.push(entry.room);
+    form.append(field('Room (optional)', el('select', { name: 'room', id: 'room-select' },
+      el('option', { value: '' }, 'No room'),
+      names.map((r) => el('option', { value: r, selected: Boolean(entry.room) && rooms.sameRoom(r, entry.room) }, r))),
+      'Add or rename rooms under More → Rooms.'));
+  }
   form.append(field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
 
   // --- Photos ---
@@ -1346,6 +1403,7 @@ async function renderForm(type, id) {
       createdAt: entry.createdAt || now,
       updatedAt: now,
     };
+    if (roomable) { if (v('room')) saved.room = rooms.cleanName(v('room')); else delete saved.room; }
     if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
     if (!saved.currency || saved.currency === 'GBP' || ins) delete saved.currency; // pounds = no field (as before)
     await db.saveEntry(saved);
@@ -1382,6 +1440,7 @@ const SYNC_TEXT = {
 };
 
 let syncMsg = null; // { text, bad } shown once under the buttons
+const SIZE_WARN = 4 * 1048576; // "getting big" note from 4 MB (Google's simple-upload guide is 5 MB)
 
 async function syncCard(cardHead) {
   const st = sync.getStatus();
@@ -1454,7 +1513,11 @@ async function syncCard(cardHead) {
       el('div', {}, el('strong', {}, stateText), el('span', { id: 'sync-last' }, `Last synced: ${sync.ago(st.lastSync)}`))),
     el('ul', { class: 'sync-facts' },
       el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who)),
-      el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`))),
+      el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`)),
+      st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, `${(st.fileSize / 1048576).toFixed(1)} MB`)) : null),
+    // v13: a gentle heads-up as the one shared file (photos included) grows.
+    st.fileSize >= SIZE_WARN ? el('p', { class: 'sync-size-warn small', id: 'sync-size-warn', role: 'note' }, icon('alert', 16),
+      `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB, mostly photos. It still syncs fine, but each sync takes longer and uses more mobile data. Deleting photos you don’t need keeps it smaller.`) : null,
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
         ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')
@@ -1546,7 +1609,7 @@ function wireSyncChip() {
       : s.state === 'signin' ? 'Tap to sync'
       : s.state === 'nofolder' ? 'Finish sync setup'
       : 'Sync problem';
-    chip.title = !on ? 'Your data stays on this phone' : 'Google Drive sync: tap to sync now';
+    chip.title = !on ? 'Your data stays on this phone' : 'Kept on this phone and in your own Google Drive: tap to sync now';
     chip.setAttribute('aria-label', on ? `Sync status: ${text.textContent}. Tap to sync now.` : 'Data stays on this phone. Open settings.');
   });
   chip.addEventListener('click', () => {
@@ -1614,17 +1677,22 @@ async function renderDetail(id) {
     ['Unit rate', tariff && tariff.rates.length ? ((r) => `${r.v} per kWh${r.from ? ` (new rate from ${shortDay(r.from)})` : ''}`)(rateText(tariff.rates)) : null, 'bolt'],
     ['Standing charge', tariff && tariff.standing.length ? rateText(tariff.standing).v + ' a day' : null, 'clock'],
     [section.dueWord === 'expires' ? 'Expires' : 'Next due', e.dueDate ? `${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})` : null, 'clock'],
+    ['Room', e.room ? el('a', { href: `#/room/${encodeURIComponent(e.room)}`, id: 'detail-room', class: 'link' }, e.room) : null, 'door'],
   ].filter(([, value]) => value);
 
   const photos = e.photos || [];
   // A warranty for one of the bundled appliances links to its manual(s).
   const appliance = e.type === 'warranty' ? manuals.manualFor(e) : null;
-  const manualBtns = appliance
+  // v13: and any manual you added yourself and linked to this entry.
+  const mine = userManuals.forEntry(await userManuals.list(), e.id);
+  const manualBtns = appliance || mine.length
     ? el('section', { class: 'card manual-card', id: 'detail-manuals' },
-        el('h2', { class: 'card-title' }, icon('book', 18), `${appliance.name} manual${appliance.files.length > 1 ? 's' : ''}`),
-        appliance.notes ? el('p', { class: 'small muted' }, appliance.notes) : null,
-        el('div', { class: 'stack' }, appliance.files.map((f, i) =>
-          el('a', { class: 'btn secondary manual-btn', href: `#/manual/${encodeURIComponent(f.file)}`, id: i ? null : 'manual-btn', 'data-file': f.file }, icon('book', 20), appliance.files.length > 1 ? f.label : 'Manual'))))
+        el('h2', { class: 'card-title' }, icon('book', 18), appliance ? `${appliance.name} manual${appliance.files.length + mine.length > 1 ? 's' : ''}` : `Manual${mine.length > 1 ? 's' : ''}`),
+        appliance && appliance.notes ? el('p', { class: 'small muted' }, appliance.notes) : null,
+        el('div', { class: 'stack' },
+          (appliance ? appliance.files : []).map((f, i) =>
+            el('a', { class: 'btn secondary manual-btn', href: `#/manual/${encodeURIComponent(f.file)}`, id: i ? null : 'manual-btn', 'data-file': f.file }, icon('book', 20), appliance.files.length + mine.length > 1 ? f.label : 'Manual')),
+          mine.map((m) => el('a', { class: 'btn secondary manual-btn user-manual-btn', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id }, icon('book', 20), m.name))))
     : null;
   app.replaceChildren(
     el('a', { class: 'back', href: `#/list/${e.type}` }, icon('back', 20), section.label),
@@ -1685,101 +1753,529 @@ function showFullPhoto(url) {
 }
 
 // ---------------------------------------------------------------------
-// MANUALS (More → Manuals): every appliance guide, kept on this phone
+// MANUALS (More → Manuals): every appliance guide, plus your own
 // ---------------------------------------------------------------------
-// The PDFs are saved for offline use the first time this screen opens
-// (sw.js "warm-manuals"); the status line shows how far that's got.
+// v13: the built-in PDFs (about 41 MB) are no longer all downloaded the
+// first time this screen opens. Each one is saved on this phone the first
+// time you open it, and "Save all for offline" downloads the lot (it asks
+// first, and remembers your answer).
+const OFFLINE_KEY = 'hearthbook.manualsOffline';
+const BUILTIN_MB = 41;
+const offlineChosen = () => { try { return localStorage.getItem(OFFLINE_KEY) === 'yes'; } catch { return false; } };
 async function manualsSaved() {
+  const saved = new Set();
   try {
-    if (!('caches' in window)) return { done: 0, total: manuals.ALL_FILES.length };
-    const cache = await caches.open(manuals.MANUALS_CACHE);
-    let done = 0;
-    for (const f of manuals.ALL_FILES) if (await cache.match(new URL(f, location.href).href)) done++;
-    return { done, total: manuals.ALL_FILES.length };
-  } catch { return { done: 0, total: manuals.ALL_FILES.length }; }
+    if ('caches' in window) {
+      const cache = await caches.open(manuals.MANUALS_CACHE);
+      for (const f of manuals.ALL_FILES) if (await cache.match(new URL(f, location.href).href)) saved.add(f.slice(manuals.DIR.length));
+    }
+  } catch {}
+  return { done: saved.size, total: manuals.ALL_FILES.length, saved };
 }
 function warmManuals() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-manuals', files: manuals.ALL_FILES })).catch(() => {});
 }
 
+// Room chips you can switch on and off (manuals: one or more rooms).
+function roomToggles(all, selected, onChange, id) {
+  const box = el('div', { class: 'room-toggles', id, role: 'group', 'aria-label': 'Rooms' });
+  const draw = () => box.replaceChildren(...all.map((r) => {
+    const on = rooms.hasRoom(selected, r);
+    return el('button', { type: 'button', class: 'room-chip' + (on ? ' on' : ''), 'aria-pressed': String(on), 'data-room': r,
+      onclick: () => {
+        if (on) selected.splice(selected.findIndex((x) => rooms.sameRoom(x, r)), 1); else selected.push(r);
+        draw(); onChange && onChange(selected);
+      } }, on ? icon('check', 14) : null, r);
+  }));
+  draw();
+  return box;
+}
+const roomChips = (list) => (list && list.length ? el('p', { class: 'room-tags' }, list.map((r) => el('a', { class: 'room-tag', href: `#/room/${encodeURIComponent(r)}` }, icon('door', 12), r))) : null);
+
 async function renderManuals(focus = '') {
-  warmManuals();
+  if (offlineChosen()) warmManuals();
+  const [mine, overrides, entries, stored] = [await userManuals.list(), await rooms.getManualRooms(), await db.getAllEntries(), await rooms.getStored()];
+  const allRooms = rooms.roomList(stored, entries, [...manuals.APPLIANCES.flatMap((a) => rooms.manualRoomsOf(a, overrides)), ...mine.flatMap((m) => m.rooms || [])]);
   const status = el('p', { class: 'manuals-status small', id: 'manuals-status', role: 'status' }, 'Checking what’s saved on this phone…');
+  const saveAll = el('button', { type: 'button', class: 'btn secondary small', id: 'manuals-save-all', hidden: true, onclick: () => {
+    if (!confirm(`Download all ${manuals.ALL_FILES.length} built-in guides now, so they open without signal?\n\nAbout ${BUILTIN_MB} MB, best on Wi-Fi.`)) return;
+    try { localStorage.setItem(OFFLINE_KEY, 'yes'); } catch {}
+    warmManuals();
+    saveAll.hidden = true;
+    poll();
+  } }, icon('download', 16), `Save all for offline (about ${BUILTIN_MB} MB)`);
   const showStatus = async () => {
-    const { done, total } = await manualsSaved();
-    status.classList.toggle('ok', done === total);
-    status.replaceChildren(icon(done === total ? 'check' : 'download', 16),
-      done === total ? `All ${total} guides are saved on this phone and open without signal.`
-        : navigator.onLine === false ? `${done} of ${total} saved. The rest download next time you’re online.`
-        : `Saving for offline use: ${done} of ${total} (about 40 MB, once).`);
-    return done === total;
+    const { done, total, saved } = await manualsSaved();
+    const all = done === total;
+    status.classList.toggle('ok', all);
+    status.replaceChildren(icon(all ? 'check' : 'download', 16),
+      all ? `All ${total} guides are saved on this phone and open without signal.`
+        : offlineChosen() && navigator.onLine !== false ? `Saving for offline use: ${done} of ${total}…`
+        : navigator.onLine === false ? `${done} of ${total} guides saved on this phone. The others need signal the first time.`
+        : `${done} of ${total} guides saved on this phone. Each one is saved the first time you open it.`);
+    saveAll.hidden = all || offlineChosen();
+    document.querySelectorAll('.manual-file[data-file]').forEach((a) => {
+      const on = saved.has(a.dataset.file);
+      a.classList.toggle('saved', on);
+      const w = a.querySelector('.manual-where');
+      if (w) w.textContent = on ? ' · on this phone' : '';
+    });
+    return all || !offlineChosen();
   };
-  const rooms = [];
-  for (const a of manuals.APPLIANCES) { let r = rooms.find((x) => x.name === a.room); if (!r) rooms.push((r = { name: a.room, items: [] })); r.items.push(a); }
+  let timer = null;
+  const poll = () => { clearInterval(timer); timer = setInterval(async () => { if (!status.isConnected || (await showStatus())) clearInterval(timer); }, 2000); };
+
+  const groups = [];
+  for (const a of manuals.APPLIANCES) { let g = groups.find((x) => x.name === a.group); if (!g) groups.push((g = { name: a.group, items: [] })); g.items.push(a); }
+  const builtinCard = (a) => {
+    const tags = [...rooms.manualRoomsOf(a, overrides)];
+    const tagBox = el('div', { class: 'manual-rooms' }, roomChips(tags));
+    const editor = el('div', { class: 'manual-room-edit', hidden: true });
+    const roomsBtn = el('button', { type: 'button', class: 'btn link-btn quiet small manual-rooms-btn', 'data-appliance': a.id, onclick: () => {
+      if (editor.hidden) {
+        editor.replaceChildren(roomToggles(allRooms, tags, async (sel) => {
+          const next = { ...(await rooms.getManualRooms()), [a.id]: [...sel] };
+          await rooms.setManualRooms(next);
+          tagBox.replaceChildren(...[roomChips(sel)].filter(Boolean));
+        }, `manual-rooms-${a.id}`));
+      }
+      editor.hidden = !editor.hidden;
+    } }, icon('door', 14), 'Rooms');
+    return el('article', { class: 'card manual-item' + (a.id === focus ? ' focus' : ''), id: `manual-${a.id}`, 'data-appliance': a.id },
+      el('div', { class: 'manual-head' },
+        el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
+        el('div', {}, el('h3', { class: 'manual-name' }, a.name), el('p', { class: 'manual-model small muted' }, a.model)),
+        roomsBtn),
+      tagBox, editor,
+      a.about ? el('p', { class: 'manual-about small' }, a.about) : null,
+      a.notes ? el('p', { class: 'manual-notes small' }, el('strong', {}, 'Handy notes: '), a.notes) : null,
+      el('div', { class: 'manual-files' }, a.files.map((f) => el('a', { class: 'manual-file', href: `#/manual/${encodeURIComponent(f.file)}`, 'data-file': f.file },
+        icon('file', 18), el('span', {}, f.label), el('span', { class: 'small muted' }, `${f.pages} page${f.pages === 1 ? '' : 's'}`, el('span', { class: 'manual-where' }, '')), icon('chevron', 16)))));
+  };
+  const linkedTitles = (m) => (m.entryIds || []).map((id) => entries.find((e) => e.id === id)).filter(Boolean);
+  const mineCard = (m) => el('article', { class: 'card manual-item user-manual', id: `user-manual-${m.id}`, 'data-user-manual': m.id },
+    el('div', { class: 'manual-head' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')),
+      el('div', {}, el('h3', { class: 'manual-name' }, m.name),
+        el('p', { class: 'manual-model small muted' }, [userManuals.sizeText(m.size), m.pages ? `${m.pages} page${m.pages === 1 ? '' : 's'}` : '', 'on this phone only'].filter(Boolean).join(' · '))),
+      el('a', { class: 'btn link-btn quiet small', href: `#/editmanual/${encodeURIComponent(m.id)}`, 'aria-label': `Edit ${m.name}` }, icon('pencil', 14), 'Edit')),
+    roomChips(m.rooms),
+    m.notes ? el('p', { class: 'manual-notes small' }, m.notes) : null,
+    linkedTitles(m).length ? el('p', { class: 'small muted' }, 'For: ', linkedTitles(m).map((e, i) => [i ? ', ' : '', el('a', { href: `#/view/${e.id}` }, e.title)])) : null,
+    el('div', { class: 'manual-files' }, el('a', { class: 'manual-file saved', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id }, icon('file', 18), el('span', {}, 'Open'), el('span', { class: 'small muted' }, 'saved in the app'), icon('chevron', 16))));
+
   app.replaceChildren(
     screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, kept on this phone' }),
-    status,
-    ...rooms.map((r) => el('section', { class: 'group manuals-group' },
-      el('div', { class: 'group-head' }, el('h2', {}, r.name)),
-      el('div', { class: 'manual-list' }, r.items.map((a) => el('article', { class: 'card manual-item' + (a.id === focus ? ' focus' : ''), id: `manual-${a.id}`, 'data-appliance': a.id },
-        el('div', { class: 'manual-head' },
-          el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
-          el('div', {}, el('h3', { class: 'manual-name' }, a.name), el('p', { class: 'manual-model small muted' }, a.model))),
-        a.about ? el('p', { class: 'manual-about small' }, a.about) : null,
-        a.notes ? el('p', { class: 'manual-notes small' }, el('strong', {}, 'Handy notes: '), a.notes) : null,
-        el('div', { class: 'manual-files' }, a.files.map((f) => el('a', { class: 'manual-file', href: `#/manual/${encodeURIComponent(f.file)}`, 'data-file': f.file },
-          icon('file', 18), el('span', {}, f.label), el('span', { class: 'small muted' }, `${f.pages} page${f.pages === 1 ? '' : 's'}`), icon('chevron', 16)))))))))
+    el('section', { class: 'group manuals-group', id: 'your-manuals' },
+      el('div', { class: 'group-head' }, el('h2', {}, 'Your manuals'), el('a', { class: 'link', href: '#/addmanual', id: 'add-manual' }, icon('plus', 14), 'Add a manual')),
+      mine.length ? el('div', { class: 'manual-list' }, mine.map(mineCard))
+        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it from your phone, or share it to Hearthbook from your email or browser.'),
+      el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add are kept on this phone only: they aren’t in Drive sync or backup files (PDFs are too big for the one shared file). Add them on the other phone too if needed.')),
+    el('div', { class: 'manuals-offline' }, status, saveAll),
+    ...groups.map((g) => el('section', { class: 'group manuals-group' },
+      el('div', { class: 'group-head' }, el('h2', {}, g.name)),
+      el('div', { class: 'manual-list' }, g.items.map(builtinCard))))
   );
   if (focus) { const t = document.getElementById(`manual-${focus}`); if (t) t.scrollIntoView({ block: 'center' }); }
   // Keep the status line up to date while the downloads run.
-  if (!(await showStatus())) {
-    const timer = setInterval(async () => { if (!status.isConnected || (await showStatus())) clearInterval(timer); }, 2000);
+  if (!(await showStatus())) poll();
+}
+
+// "Open in another app": hand the PDF to Android (Drive PDF viewer, Adobe…)
+// through the share sheet. Where sharing files isn't possible, download it
+// instead (Android then offers to open it).
+async function openElsewhere(getBlob, fileName, title) {
+  let blob;
+  try { blob = await getBlob(); } catch { blob = null; }
+  if (!blob) { alert('This manual isn’t saved on this phone yet. Open it once while you have signal.'); return; }
+  const file = new File([blob], fileName || 'manual.pdf', { type: 'application/pdf' });
+  if (navigator.canShare && navigator.share) {
+    try {
+      if (navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title }); return 'shared'; }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return 'cancelled'; // you closed the share sheet
+    }
   }
+  const url = URL.createObjectURL(file);
+  const a = el('a', { href: url, download: file.name, hidden: true });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  return 'downloaded';
 }
 
 let pdfView = null;
 async function renderManualViewer(file) {
   if (pdfView) { try { pdfView.destroy(); } catch {} pdfView = null; }
-  const found = manuals.findFile(file);
-  if (!found) {
-    app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearthbook.')));
-    return;
+  let title, label, notes, back, url = null, data = null, fileName;
+  if (file.startsWith('u:')) {
+    const id = file.slice(2);
+    const rec = await userManuals.get(id);
+    data = rec ? await userManuals.getFile(id) : null;
+    if (!rec || !data) {
+      app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
+      return;
+    }
+    title = rec.name; label = `${userManuals.sizeText(rec.size)} · on this phone`; notes = rec.notes; back = '#/manuals'; fileName = rec.fileName || `${rec.name}.pdf`;
+  } else {
+    const found = manuals.findFile(file);
+    if (!found) {
+      app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearthbook.')));
+      return;
+    }
+    title = found.appliance.name; label = found.file.label; notes = found.appliance.notes ? ['Handy notes: ', found.appliance.notes] : null;
+    back = `#/manuals/${found.appliance.id}`; url = manuals.fileUrl(found.file.file); fileName = found.file.file;
   }
-  const { appliance, file: f } = found;
-  const url = manuals.fileUrl(f.file);
+  const getBlob = async () => data || (await (async () => { const r = await fetch(url); if (!r.ok) throw new Error('offline'); return r.blob(); })());
   const pages = el('div', { class: 'pdf-pages', id: 'pdf-pages' });
   const status = el('p', { class: 'pdf-status', id: 'pdf-status', role: 'status' }, 'Opening…');
   const counter = el('span', { class: 'pdf-counter', id: 'pdf-counter' }, '');
   let zoom = 1;
-  const zoomBtn = (d, label, glyph) => el('button', { type: 'button', class: 'btn small-btn secondary pdf-zoom', 'aria-label': label, onclick: () => { if (pdfView) zoom = pdfView.zoom(zoom + d); } }, icon(glyph, 18));
+  const zoomBtn = (d, lbl, glyph) => el('button', { type: 'button', class: 'btn small-btn secondary pdf-zoom', 'aria-label': lbl, onclick: () => { if (pdfView) zoom = pdfView.zoom(zoom + d); } }, icon(glyph, 18));
+  const openBtn = el('button', { type: 'button', class: 'btn secondary small-btn', id: 'pdf-open-elsewhere', onclick: async (ev) => {
+    const b = ev.currentTarget; b.disabled = true;
+    try { await openElsewhere(getBlob, fileName, title); } finally { b.disabled = false; }
+  } }, icon('share', 16), 'Open in another app');
+  const saveLink = data
+    ? el('a', { class: 'btn link-btn quiet', href: photoURL(data), download: fileName, id: 'pdf-download' }, icon('download', 16), 'Save a copy')
+    : el('a', { class: 'btn link-btn quiet', href: url, download: fileName, id: 'pdf-download' }, icon('download', 16), 'Save a copy');
   app.replaceChildren(
-    el('div', { class: 'pdf-screen', id: 'manual-viewer', 'data-file': f.file },
+    el('div', { class: 'pdf-screen', id: 'manual-viewer', 'data-file': file },
       el('header', { class: 'pdf-bar' },
-        el('a', { class: 'back', href: `#/manuals/${appliance.id}`, onclick: (ev) => { if (history.length > 1) { ev.preventDefault(); history.back(); } } }, icon('back', 20), 'Manuals'),
-        el('div', { class: 'pdf-title' }, el('strong', {}, appliance.name), el('span', { class: 'small muted' }, f.label)),
+        el('a', { class: 'back', href: back, onclick: (ev) => { if (history.length > 1) { ev.preventDefault(); history.back(); } } }, icon('back', 20), 'Manuals'),
+        el('div', { class: 'pdf-title' }, el('strong', {}, title), el('span', { class: 'small muted' }, label)),
         el('div', { class: 'pdf-tools' }, zoomBtn(-0.5, 'Zoom out', 'minus'), zoomBtn(0.5, 'Zoom in', 'plus'))),
-      appliance.notes ? el('p', { class: 'pdf-notes small' }, el('strong', {}, 'Handy notes: '), appliance.notes) : null,
+      notes ? el('p', { class: 'pdf-notes small' }, Array.isArray(notes) ? [el('strong', {}, notes[0]), notes[1]] : notes) : null,
+      el('div', { class: 'pdf-actions' }, openBtn, saveLink),
       status, pages,
-      el('div', { class: 'pdf-foot' }, counter,
-        el('a', { class: 'btn link-btn', href: url, download: f.file, id: 'pdf-download' }, icon('download', 16), 'Save a copy / open in another app')))
+      el('div', { class: 'pdf-foot' }, counter, el('span', { class: 'small muted' }, 'Pinch to zoom: pages sharpen when you stop.')))
   );
   try {
     const { showPdf } = await import('./pdfview.js');
     pdfView = await showPdf(url, pages, {
+      data,
       onStatus: (t) => { status.textContent = t; status.hidden = !t; },
       onPage: (n, total) => { counter.textContent = `${total} page${total === 1 ? '' : 's'}`; },
     });
     counter.textContent = `${pdfView.pages} page${pdfView.pages === 1 ? '' : 's'}`;
-    warmManuals();
   } catch (err) {
     console.warn('manual failed', err);
     status.hidden = false;
     status.classList.add('warn');
     status.textContent = navigator.onLine === false || String(err.message) === 'offline'
-      ? 'This manual isn’t saved on this phone yet. Open Manuals once while you have signal and they’ll all be saved.'
-      : 'This manual couldn’t be shown here. Try “Save a copy / open in another app” below.';
+      ? 'This manual isn’t saved on this phone yet. Open it once while you have signal (or tap “Save all for offline” in Manuals).'
+      : 'This manual couldn’t be shown here. Try “Open in another app”.';
   }
+}
+
+// ---------------------------------------------------------------------
+// ADD / EDIT one of your own manuals (v13)
+// ---------------------------------------------------------------------
+async function renderManualForm(id, arg) {
+  const editing = id ? await userManuals.get(id) : null;
+  if (id && !editing) {
+    app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
+    return;
+  }
+  let file = !id && arg === 'shared' ? pendingManualFile : null;
+  pendingManualFile = null;
+  const allEntries = await db.getAllEntries();
+  const taggable = allEntries.filter((e) => rooms.ROOM_TYPES.includes(e.type)).sort(newestFirst);
+  const mine = await userManuals.list();
+  const allRooms = rooms.roomList(await rooms.getStored(), allEntries, mine.flatMap((m) => m.rooms || []));
+  const selRooms = [...((editing && editing.rooms) || [])];
+  const selEntries = new Set((editing && editing.entryIds) || []);
+  const nameInput = el('input', { name: 'name', id: 'manual-name', value: editing ? editing.name : file ? userManuals.nameFromFile(file.name) : '', maxlength: '80', autocomplete: 'off', placeholder: 'e.g. Bosch washing machine' });
+  const notesInput = el('textarea', { name: 'notes', id: 'manual-notes', rows: '3', placeholder: 'Model number, where it lives, handy tips…' }, editing ? editing.notes || '' : '');
+  const fileInput = el('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true, id: 'manual-file-input' });
+  const fileBox = el('div', { class: 'manual-file-box', id: 'manual-file-box' });
+  const drawFile = () => fileBox.replaceChildren(
+    file ? el('p', {}, icon('file', 18), el('strong', {}, file.name || 'PDF'), ` · ${userManuals.sizeText(file.size)}`) : el('p', { class: 'muted' }, 'No PDF chosen yet.'),
+    el('button', { type: 'button', class: 'btn secondary', id: 'manual-pick', onclick: () => fileInput.click() }, icon('file', 20), file ? 'Choose a different PDF' : 'Choose PDF'));
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files[0]; fileInput.value = '';
+    if (!f) return;
+    file = f;
+    if (!nameInput.value.trim()) nameInput.value = userManuals.nameFromFile(f.name);
+    drawFile();
+  });
+  if (!editing) drawFile();
+  // Link to entries: a short searchable list of jobs, receipts and warranties.
+  const filter = el('input', { type: 'search', class: 'search', id: 'manual-link-filter', placeholder: 'Find an entry…', 'aria-label': 'Find an entry to link' });
+  const linkList = el('div', { class: 'tag-list', id: 'manual-link-list' });
+  const drawLinks = () => {
+    const q = filter.value.trim().toLowerCase();
+    const shown = taggable.filter((e) => selEntries.has(e.id) || !q || [e.title, e.supplier, e.notes].join(' ').toLowerCase().includes(q)).slice(0, q ? 60 : 30);
+    linkList.replaceChildren(...(shown.length ? shown.map((e) => el('label', { class: 'tag-row' },
+      el('input', { type: 'checkbox', checked: selEntries.has(e.id), 'data-id': e.id, onchange: (ev) => { if (ev.target.checked) selEntries.add(e.id); else selEntries.delete(e.id); } }),
+      el('span', { class: 'tag-text' }, el('strong', {}, e.title), el('span', { class: 'small muted' }, [getSection(e.type).single, niceDate(e.date)].filter(Boolean).join(' · ')))))
+      : [el('p', { class: 'small muted' }, 'No matching entries.')]));
+  };
+  filter.addEventListener('input', drawLinks);
+  drawLinks();
+  const errorBox = el('p', { class: 'error', id: 'manual-error', hidden: true });
+  const saveBtn = el('button', { type: 'submit', class: 'btn', id: 'manual-save' }, 'Save manual');
+  const form = el('form', { class: 'form', id: 'manual-form', novalidate: true },
+    el('header', { class: 'form-head' },
+      el('a', { class: 'back', href: '#/manuals', onclick: (ev) => { ev.preventDefault(); history.length > 1 ? history.back() : location.replace('#/manuals'); } }, icon('back', 20), 'Manuals'),
+      el('div', { class: 'form-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')), el('h1', { class: 'screen-title' }, editing ? 'Edit manual' : 'Add a manual'))),
+    editing
+      ? el('p', { class: 'small muted' }, `${userManuals.sizeText(editing.size)}${editing.pages ? ` · ${editing.pages} pages` : ''} · saved on this phone`)
+      : el('div', { class: 'field' }, el('span', { class: 'label' }, 'PDF'), fileBox, fileInput),
+    el('label', { class: 'field' }, el('span', { class: 'label' }, 'Name *'), nameInput),
+    el('label', { class: 'field' }, el('span', { class: 'label' }, 'Notes (optional)'), notesInput, el('span', { class: 'hint' }, 'Ask Hearthbook finds manuals by their name and notes.')),
+    el('div', { class: 'field' }, el('span', { class: 'label' }, 'Rooms (optional)'), roomToggles(allRooms, selRooms, null, 'manual-room-toggles')),
+    taggable.length ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'For which entries? (optional)'), filter, linkList,
+      el('span', { class: 'hint' }, 'A linked entry shows a Manual button.')) : null,
+    el('p', { class: 'small muted', id: 'manual-where-note' }, 'Kept on this phone only (not in Drive sync or backup files).'),
+    errorBox,
+    el('div', { class: 'row sticky-actions' },
+      el('button', { type: 'button', class: 'btn secondary', onclick: () => (history.length > 1 ? history.back() : location.replace('#/manuals')) }, 'Cancel'),
+      saveBtn),
+    editing ? el('button', { type: 'button', class: 'btn danger-soft', id: 'manual-delete', onclick: async () => {
+      if (!confirm(`Delete the manual "${editing.name}" from this phone? Entries linked to it are not affected.`)) return;
+      await userManuals.remove(editing.id);
+      toast('Manual deleted');
+      location.replace('#/manuals');
+    } }, icon('trash', 20), 'Delete manual') : null);
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const show = (m) => { errorBox.textContent = m; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); };
+    const name = nameInput.value.trim();
+    const fields = { name, notes: notesInput.value.trim(), rooms: [...selRooms], entryIds: [...selEntries] };
+    saveBtn.disabled = true;
+    try {
+      if (editing) {
+        if (!name) return show('Please give it a name.');
+        await userManuals.update(editing.id, fields);
+      } else {
+        if (!file) return show('Please choose a PDF first.');
+        if (!(await userManuals.looksLikePdf(file))) return show('That file isn’t a PDF.');
+        if (!fields.name) fields.name = userManuals.nameFromFile(file.name);
+        saveBtn.textContent = 'Saving…';
+        let pages = null;
+        try { pages = await (await import('./scan.js')).pdfPageCount(file); } catch {}
+        await userManuals.add(file, { ...fields, pages });
+      }
+      toast('Manual saved');
+      location.replace('#/manuals');
+    } catch (err) {
+      show(err.message || String(err));
+    } finally { saveBtn.disabled = false; saveBtn.textContent = 'Save manual'; }
+  });
+  app.replaceChildren(form);
+}
+
+// ---------------------------------------------------------------------
+// ROOMS (More → Rooms, v13)
+// ---------------------------------------------------------------------
+async function roomData() {
+  const [entries, stored, overrides, mine] = [await db.getAllEntries(), await rooms.getStored(), await rooms.getManualRooms(), await userManuals.list()];
+  const list = rooms.roomList(stored, entries, [...manuals.APPLIANCES.flatMap((a) => rooms.manualRoomsOf(a, overrides)), ...mine.flatMap((m) => m.rooms || [])]);
+  return { entries, stored, overrides, mine, list };
+}
+// Save tagged / untagged entries and tell sync (one change per entry).
+async function saveTagged(changed) {
+  if (!changed.length) return;
+  await db.saveManyEntries(changed);
+  for (const e of changed) await sync.recordSave(e.id);
+}
+
+async function renderRooms() {
+  const { entries, overrides, mine, list } = await roomData();
+  const count = (r) => {
+    const n = rooms.inRoom(entries, r).length;
+    const m = manuals.APPLIANCES.filter((a) => rooms.hasRoom(rooms.manualRoomsOf(a, overrides), r)).length + mine.filter((x) => rooms.hasRoom(x.rooms, r)).length;
+    return [n ? `${n} entr${n === 1 ? 'y' : 'ies'}` : '', m ? `${m} manual${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'Nothing tagged yet';
+  };
+  const input = el('input', { id: 'room-new', placeholder: 'e.g. Loft, Utility room', maxlength: '40', autocomplete: 'off', 'aria-label': 'New room name' });
+  const addRoom = async () => {
+    const name = rooms.cleanName(input.value);
+    if (!name) return input.focus();
+    if (list.some((r) => rooms.sameRoom(r, name))) { toast(`${name} is already there`); return; }
+    await rooms.setStored([...list, name]);
+    renderRooms();
+  };
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addRoom(); } });
+  app.replaceChildren(
+    screenHead('Rooms', { back: { href: '#/export', label: 'More' }, sub: 'Tag manuals, warranties, receipts and jobs to a room' }),
+    el('div', { class: 'room-list', id: 'room-list' }, list.map((r) => el('a', { class: 'card more-row room-row', href: `#/room/${encodeURIComponent(r)}`, 'data-room': r },
+      el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('door')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, r), el('span', { class: 'small muted' }, count(r))),
+      icon('chevron', 18)))),
+    el('section', { class: 'card' },
+      el('div', { class: 'field' }, el('span', { class: 'label' }, 'Add a room'),
+        el('div', { class: 'sync-invite' }, input, el('button', { type: 'button', class: 'btn secondary', id: 'room-add', onclick: addRoom }, icon('plus', 18), 'Add')))),
+    el('p', { class: 'small muted footnote' }, 'Room names are kept on this phone. A room tag on an entry travels with it (sync and backups). Deleting a room only removes the tag: nothing is deleted.')
+  );
+}
+
+async function renderRoom(name) {
+  const { entries, overrides, mine, list } = await roomData();
+  const room = list.find((r) => rooms.sameRoom(r, name)) || rooms.cleanName(name);
+  const tagged = rooms.inRoom(entries, room).sort(newestFirst);
+  const builtIn = manuals.APPLIANCES.filter((a) => rooms.hasRoom(rooms.manualRoomsOf(a, overrides), room));
+  const own = mine.filter((m) => rooms.hasRoom(m.rooms, room));
+  const rename = async () => {
+    const next = rooms.cleanName(prompt(`New name for “${room}”:`, room) || '');
+    if (!next || next === room) return;
+    if (list.some((r) => rooms.sameRoom(r, next) && !rooms.sameRoom(r, room))) { alert(`There’s already a room called ${next}.`); return; }
+    await rooms.setStored(list.map((r) => (rooms.sameRoom(r, room) ? next : r)));
+    await saveTagged(rooms.renameOnEntries(entries, room, next));
+    await rooms.setManualRooms(rooms.renameInMap(Object.fromEntries(manuals.APPLIANCES.map((a) => [a.id, rooms.manualRoomsOf(a, overrides)])), room, next));
+    await userManuals.updateMany(own.map((m) => ({ ...m, rooms: (m.rooms || []).map((r) => (rooms.sameRoom(r, room) ? next : r)) })));
+    toast(`Renamed to ${next}`);
+    location.replace(`#/room/${encodeURIComponent(next)}`);
+  };
+  const remove = async () => {
+    const what = [tagged.length ? `${tagged.length} entr${tagged.length === 1 ? 'y' : 'ies'}` : '', builtIn.length + own.length ? `${builtIn.length + own.length} manual${builtIn.length + own.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ');
+    if (!confirm(`Delete the room “${room}”?${what ? `\n\n${what} lose this room tag. Nothing is deleted.` : ''}`)) return;
+    await rooms.setStored(list.filter((r) => !rooms.sameRoom(r, room)));
+    await saveTagged(rooms.untagEntries(entries, room));
+    await rooms.setManualRooms(rooms.removeFromMap(Object.fromEntries(manuals.APPLIANCES.map((a) => [a.id, rooms.manualRoomsOf(a, overrides)])), room));
+    await userManuals.updateMany(own.map((m) => ({ ...m, rooms: (m.rooms || []).filter((r) => !rooms.sameRoom(r, room)) })));
+    toast(`${room} deleted`);
+    location.replace('#/rooms');
+  };
+  const manualRows = [
+    ...own.map((m) => el('a', { class: 'entry manual-hit', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id },
+      el('div', { class: 'thumb placeholder', 'data-tone': 'teal' }, icon('book', 24)),
+      el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, m.name), el('div', { class: 'entry-sub' }, 'Your manual · on this phone')))),
+    ...builtIn.map((a) => el('a', { class: 'entry manual-hit', href: a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`, 'data-appliance': a.id },
+      el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
+      el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`), el('div', { class: 'entry-sub' }, a.model)))),
+  ];
+  app.replaceChildren(
+    screenHead(room, { back: { href: '#/rooms', label: 'Rooms' }, id: 'room-title', sub: [tagged.length ? `${tagged.length} entr${tagged.length === 1 ? 'y' : 'ies'}` : '', manualRows.length ? `${manualRows.length} manual${manualRows.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'Nothing tagged yet' }),
+    el('div', { class: 'room-actions' },
+      el('a', { class: 'btn', href: `#/room/${encodeURIComponent(room)}/add`, id: 'room-tag' }, icon('tag', 18), 'Add or remove things'),
+      tagged.length ? el('button', { type: 'button', class: 'btn secondary', id: 'room-search', onclick: () => { state.room = room; state.query = ''; location.hash = '#/list/all'; } }, icon('search', 18), 'Search in this room') : null),
+    manualRows.length ? el('section', { class: 'group', id: 'room-manuals' }, el('div', { class: 'group-head' }, el('h2', {}, 'Manuals')), el('div', { class: 'list' }, manualRows)) : null,
+    el('section', { class: 'group', id: 'room-entries' }, el('div', { class: 'group-head' }, el('h2', {}, 'Warranties, receipts and jobs')),
+      tagged.length ? el('div', { class: 'list' }, tagged.map(entryCard)) : el('p', { class: 'small muted' }, 'Nothing here yet. Tap “Add or remove things” to tag several at once.')),
+    el('div', { class: 'row room-manage' },
+      el('button', { type: 'button', class: 'btn link-btn quiet', id: 'room-rename', onclick: rename }, icon('pencil', 16), 'Rename'),
+      el('button', { type: 'button', class: 'btn link-btn danger-link', id: 'room-delete', onclick: remove }, icon('trash', 16), 'Delete room'))
+  );
+}
+
+// Tag several things to a room at once (and untag what you switch off).
+async function renderRoomTagger(name) {
+  const { entries, overrides, mine, list } = await roomData();
+  const room = list.find((r) => rooms.sameRoom(r, name)) || rooms.cleanName(name);
+  const taggable = entries.filter((e) => rooms.ROOM_TYPES.includes(e.type)).sort(newestFirst);
+  const checked = new Set(rooms.inRoom(taggable, room).map((e) => e.id));
+  const manualOn = new Set([...manuals.APPLIANCES.filter((a) => rooms.hasRoom(rooms.manualRoomsOf(a, overrides), room)).map((a) => 'b:' + a.id), ...mine.filter((m) => rooms.hasRoom(m.rooms, room)).map((m) => 'u:' + m.id)]);
+  let type = 'all';
+  const filter = el('input', { type: 'search', class: 'search', id: 'tag-filter', placeholder: 'Find…', 'aria-label': 'Find entries' });
+  const listBox = el('div', { class: 'tag-list', id: 'tag-list' });
+  const countText = el('span', { id: 'tag-count' });
+  const updateCount = () => { countText.textContent = `${checked.size} entr${checked.size === 1 ? 'y' : 'ies'} · ${manualOn.size} manual${manualOn.size === 1 ? '' : 's'}`; };
+  const row = (key, set, title, sub) => el('label', { class: 'tag-row' + (set.has(key) ? ' on' : '') },
+    el('input', { type: 'checkbox', checked: set.has(key), 'data-key': key, onchange: (ev) => { if (ev.target.checked) set.add(key); else set.delete(key); ev.target.closest('.tag-row').classList.toggle('on', ev.target.checked); updateCount(); } }),
+    el('span', { class: 'tag-text' }, el('strong', {}, title), el('span', { class: 'small muted' }, sub)));
+  const shownEntries = () => {
+    const q = filter.value.trim().toLowerCase();
+    return taggable.filter((e) => (type === 'all' || e.type === type) && type !== 'manuals' && (!q || [e.title, e.supplier, e.notes, e.room].join(' ').toLowerCase().includes(q)));
+  };
+  const draw = () => {
+    const q = filter.value.trim().toLowerCase();
+    const es = shownEntries();
+    const ms = type === 'all' || type === 'manuals'
+      ? [...mine.map((m) => ({ key: 'u:' + m.id, title: m.name, sub: 'Your manual', other: (m.rooms || []).filter((r) => !rooms.sameRoom(r, room)) })),
+         ...manuals.APPLIANCES.map((a) => ({ key: 'b:' + a.id, title: `${a.name} manual`, sub: a.model, other: rooms.manualRoomsOf(a, overrides).filter((r) => !rooms.sameRoom(r, room)) }))]
+          .filter((m) => !q || `${m.title} ${m.sub}`.toLowerCase().includes(q))
+      : [];
+    listBox.replaceChildren(
+      ...es.map((e) => row(e.id, checked, e.title, [getSection(e.type).single, niceDate(e.date), e.room && !rooms.sameRoom(e.room, room) ? `now in ${e.room}` : ''].filter(Boolean).join(' · '))),
+      ms.length ? el('p', { class: 'tag-sep small muted' }, 'Manuals') : null,
+      ...ms.map((m) => row(m.key, manualOn, m.title, [m.sub, m.other.length ? `also ${m.other.join(', ')}` : ''].filter(Boolean).join(' · '))),
+      !es.length && !ms.length ? el('p', { class: 'small muted' }, 'Nothing matches.') : null);
+    updateCount();
+  };
+  filter.addEventListener('input', draw);
+  const seg = el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Show' });
+  const drawSeg = () => seg.replaceChildren(...[['all', 'All'], ...rooms.ROOM_TYPES.filter((t) => !prefs.isHidden(t)).map((t) => [t, getSection(t).label]), ['manuals', 'Manuals']].map(([t, l]) =>
+    el('button', { type: 'button', class: 'seg-btn' + (type === t ? ' active' : ''), 'aria-pressed': String(type === t), 'data-type': t, onclick: () => { type = t; drawSeg(); draw(); } }, l)));
+  drawSeg();
+  const selectShown = el('button', { type: 'button', class: 'btn link-btn quiet small', id: 'tag-select-shown', onclick: () => { for (const e of shownEntries()) checked.add(e.id); draw(); } }, 'Tick all shown');
+  const save = el('button', { type: 'button', class: 'btn', id: 'tag-save', onclick: async () => {
+    save.disabled = true;
+    const before = new Set(rooms.inRoom(taggable, room).map((e) => e.id));
+    const add = [...checked].filter((id) => !before.has(id));
+    const drop = [...before].filter((id) => !checked.has(id));
+    const changed = [...rooms.tagMany(taggable, add, room), ...rooms.tagMany(taggable, drop, '')];
+    await saveTagged(changed);
+    // Manuals: built-in tags (this phone) and your own.
+    const next = { ...overrides };
+    for (const a of manuals.APPLIANCES) {
+      const was = rooms.manualRoomsOf(a, overrides);
+      const cur = was.filter((r) => !rooms.sameRoom(r, room));
+      const want = manualOn.has('b:' + a.id);
+      if (want !== rooms.hasRoom(was, room)) next[a.id] = want ? [...cur, room] : cur; // only what you changed
+    }
+    await rooms.setManualRooms(next);
+    await userManuals.updateMany(mine.map((m) => { const cur = (m.rooms || []).filter((r) => !rooms.sameRoom(r, room)); return { ...m, rooms: manualOn.has('u:' + m.id) ? [...cur, room] : cur }; }));
+    if (!list.some((r) => rooms.sameRoom(r, room))) await rooms.setStored([...list, room]);
+    toast(`${room}: ${add.length} added, ${drop.length} removed`);
+    location.replace(`#/room/${encodeURIComponent(room)}`);
+  } }, icon('check', 18), 'Save');
+  draw();
+  app.replaceChildren(
+    screenHead(`Tag to ${room}`, { back: { href: `#/room/${encodeURIComponent(room)}`, label: room }, sub: 'Tick everything that belongs in this room' }),
+    seg,
+    el('div', { class: 'tag-tools' }, el('label', { class: 'search-wrap' }, icon('search', 20), filter), selectShown),
+    listBox,
+    el('div', { class: 'row sticky-actions tag-actions' }, el('span', { class: 'small muted' }, countText), save)
+  );
+}
+
+// ---------------------------------------------------------------------
+// YEAR IN REVIEW (v13): what the house cost in one year
+// ---------------------------------------------------------------------
+async function renderYearReview(year) {
+  const everything = await db.getAllEntries();
+  const years = reviewYears(everything);
+  if (!years.includes(year)) { years.push(year); years.sort((a, b) => b - a); }
+  const r = yearReview(everything, year);
+  const short = (v) => money(Math.round(v)).replace(/\.\d\d$/, '');
+  const change = (d, vs) => (d === null ? null : el('span', { class: 'yoy ' + (d > 0 ? 'up' : d < 0 ? 'down' : '') }, d === 0 ? `same as ${vs}` : `${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} vs ${vs}`));
+  const max = Math.max(1, ...r.categories.map((c) => c.total));
+  const hrefFor = (id) => (id === 'insurance' ? '#/list/insurance' : `#/list/${id}/${year}`);
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  app.replaceChildren(
+    screenHead('Year in review', { back: { href: '#/export', label: 'More' }, sub: 'What the house cost, from what’s in Hearthbook' }),
+    el('nav', { class: 'year-picker', 'aria-label': 'Year' }, years.map((y) => el('a', { class: 'year-chip' + (y === year ? ' active' : ''), href: `#/year/${y}`, 'aria-current': y === year ? 'page' : null, onclick: (ev) => { ev.preventDefault(); location.replace(`#/year/${y}`); } }, String(y)))),
+    el('section', { class: 'card review-hero', id: 'review-total' },
+      el('p', { class: 'eyebrow' }, r.partial ? `${year} so far (to ${niceDate(r.until)})` : `${year}`),
+      el('p', { class: 'review-value', id: 'review-value' }, money(r.total)),
+      el('p', { class: 'small', id: 'review-compare' }, r.prevTotal !== null
+        ? [change(r.change, `${year - 1}${r.partial ? ' (same dates)' : ''}`), ` · ${money(r.prevTotal)} in ${year - 1}${r.partial ? ' by then' : ''}`]
+        : `Nothing logged in ${year - 1} to compare with.`)),
+    r.categories.length
+      ? el('section', { class: 'card', id: 'review-categories' },
+          el('h2', { class: 'card-title' }, 'Where it went'),
+          el('div', { class: 'review-cats' }, r.categories.map((c) => el('a', { class: 'review-cat', href: hrefFor(c.id), 'data-cat': c.id },
+            el('div', { class: 'review-cat-row' }, el('strong', {}, c.label), el('span', { class: 'review-amt' }, money(c.total))),
+            el('div', { class: 'review-bar' }, el('i', { style: `width:${Math.round((c.total / max) * 100)}%` })),
+            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : `${c.count} item${c.count === 1 ? '' : 's'}`, c.prev !== null ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1)))))))
+      : el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon('chart', 36)), el('p', {}, `Nothing with a cost in ${year} yet.`)),
+    r.biggest.length
+      ? el('section', { class: 'group', id: 'review-biggest' }, el('div', { class: 'group-head' }, el('h2', {}, 'Biggest items')),
+          el('div', { class: 'list' }, r.biggest.map((b) => el('a', { class: 'entry', href: `#/view/${b.entry.id}`, 'data-id': b.entry.id },
+            el('div', { class: 'thumb placeholder', 'data-tone': getSection(b.entry.type).tone }, icon(getSection(b.entry.type).glyph, 24)),
+            el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, b.entry.title),
+              el('div', { class: 'entry-sub' }, b.insurance ? `${getSection('insurance').single} · paid in ${year}, pro rata` : [getSection(b.entry.type).single, niceDate(b.entry.date)].join(' · '))),
+            el('div', { class: 'entry-cost' }, money(b.amount))))))
+      : null,
+    r.busiestMonth || r.kwh
+      ? el('section', { class: 'card review-facts', id: 'review-facts' },
+          r.busiestMonth ? el('p', {}, icon('calendar', 16), `Busiest month: ${MONTHS[r.busiestMonth.month - 1]} (${money(r.busiestMonth.amount)})`) : null,
+          r.kwh ? el('p', {}, icon('bolt', 16), `About ${r.kwh.toLocaleString('en-GB')} kWh of electricity used (from meter readings covering ${r.kwhDays} days)`) : null)
+      : null,
+    el('p', { class: 'small muted footnote' }, 'Only what’s in Hearthbook is counted, so missing bills or receipts aren’t included. Insurance is what was paid in the year (monthly payments made, a yearly premium shared over its months).',
+      r.otherCurrency ? ` ${r.otherCurrency} item${r.otherCurrency === 1 ? ' is' : 's are'} in another currency and added at face value.` : '')
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -1789,6 +2285,8 @@ async function renderExport() {
   const entries = await db.getAllEntries();
   const lastBackup = await db.getMeta('lastBackup');
   const photoCount = entries.reduce((n, e) => n + (e.photos || []).length, 0);
+  const mineManuals = await userManuals.list();
+  const roomCount = rooms.roomList(await rooms.getStored(), entries).length;
 
   // How much space are we using? (Chrome can tell us roughly.)
   let usage = '';
@@ -1803,7 +2301,8 @@ async function renderExport() {
     const file = fileInput.files[0];
     fileInput.value = '';
     if (!file) return;
-    if (!confirm('Restore from this backup?\n\nEntries in the backup will be added. Any entry that is already on this phone with the same ID will be replaced by the backup copy. Nothing else is deleted.')) return;
+    const syncing = !['off', 'unconfigured'].includes(sync.getStatus().state);
+    if (!confirm('Restore from this backup?\n\nEntries in the backup will be added. Any entry that is already on this phone with the same ID will be replaced by the backup copy. Nothing else is deleted.' + (syncing ? '\n\nSync is on: entries you had deleted come back on the other phone too.' : ''))) return;
     try {
       const n = await importBackup(file);
       sync.noteChange();
@@ -1826,7 +2325,15 @@ async function renderExport() {
     screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
     el('a', { class: 'card more-row', href: '#/manuals', id: 'more-manuals' },
       el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
-      el('span', { class: 'more-row-text' }, el('strong', {}, 'Manuals'), el('span', { class: 'small muted' }, `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides, kept on this phone`)),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Manuals'), el('span', { class: 'small muted' }, `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides${mineManuals.length ? ` · ${mineManuals.length} of yours` : ''}`)),
+      icon('chevron', 18)),
+    el('a', { class: 'card more-row', href: '#/rooms', id: 'more-rooms' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('door')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Rooms'), el('span', { class: 'small muted' }, `${roomCount} rooms · browse and tag things by room`)),
+      icon('chevron', 18)),
+    el('a', { class: 'card more-row', href: `#/year/${new Date().getFullYear()}`, id: 'more-year' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'brand' }, icon('chart')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Year in review'), el('span', { class: 'small muted' }, 'What the house cost each year')),
       icon('chevron', 18)),
     el(
       'section',
@@ -1929,6 +2436,30 @@ sync.init();
 // "serviceWorker in navigator" checks the browser supports it.
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('Service worker failed', err));
+  // v13: when a new version takes over, reload ONCE so every screen uses
+  // the new files together (never half old, half new). Not on the very
+  // first install, and never while you're filling in a form: it waits
+  // until you leave it.
+  let hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  const busyHash = () => /^#\/(new|edit|scan|addmanual|editmanual|room\/.+\/add)/.test(location.hash);
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // The very first install taking over isn't an update: just remember it.
+    if (!hadController) { hadController = true; return; }
+    if (reloading) return;
+    let last = 0;
+    try { last = Number(sessionStorage.getItem('hearthbook.updReload') || 0); } catch {}
+    if (Date.now() - last < 15000) return; // just reloaded for an update: don't loop
+    const go = () => {
+      if (reloading) return;
+      reloading = true;
+      try { sessionStorage.setItem('hearthbook.updReload', String(Date.now())); } catch {}
+      location.reload();
+    };
+    if (!busyHash()) return go();
+    const wait = () => { if (!busyHash()) { removeEventListener('hashchange', wait); go(); } };
+    addEventListener('hashchange', wait);
+  });
   // A little while after start-up, ask the service worker to fetch the
   // scanner files in the background (skipped on "data saver").
   const warm = () => {

@@ -12,6 +12,7 @@ import { SECTIONS, getSection } from './sections.js';
 import { houseSVG, skyPhase, glowLevel } from './house.js';
 import { search, whenText } from './search.js';
 import { searchManuals } from './manuals.js';
+import { list as userManuals, searchUser } from './usermanuals.js';
 import { bills } from './stats.js';
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
@@ -119,21 +120,30 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
     const p = r.query;
     const scope = [p.types.length === 1 ? getSection(p.types[0]).label.toLowerCase() : 'entries', p.month ? `in ${new Date(2000, p.month - 1, 1).toLocaleDateString('en-GB', { month: 'long' })}` : '', p.year ? String(p.year) : ''].filter(Boolean).join(' ');
     // Manuals that match ("dishwasher filter", "hive manual", a model number).
+    // v13: plus the manuals you added yourself (by name, notes, room).
+    let mine = [];
+    try { mine = searchUser(await userManuals(), q).slice(0, 4); } catch {}
     const mans = searchManuals(q).slice(0, 4);
-    const manualHits = mans.length
+    const count = mans.length + mine.length;
+    const manualHits = count
       ? el('div', { class: 'ask-manuals', id: 'ask-manuals' },
-          el('p', { class: 'ask-summary' }, `${mans.length} manual${mans.length === 1 ? '' : 's'}`),
-          el('div', { class: 'list' }, mans.map((a) => el('a', { class: 'entry manual-hit', href: a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`, 'data-appliance': a.id },
-            el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
-            el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`),
-              el('div', { class: 'entry-sub' }, a.notes || a.model))))))
+          el('p', { class: 'ask-summary' }, `${count} manual${count === 1 ? '' : 's'}`),
+          el('div', { class: 'list' },
+            mine.map((m) => el('a', { class: 'entry manual-hit user-manual-hit', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id },
+              el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
+              el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, m.name),
+                el('div', { class: 'entry-sub' }, m.notes || 'Your manual')))),
+            mans.map((a) => el('a', { class: 'entry manual-hit', href: a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`, 'data-appliance': a.id },
+              el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
+              el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`),
+                el('div', { class: 'entry-sub' }, a.notes || a.model))))))
       : null;
     results.replaceChildren(...[
       answerCard(r.answer),
       r.results.length ? null : manualHits,
       el('p', { class: 'ask-summary', id: 'ask-summary' }, r.results.length
         ? `${r.results.length} ${r.results.length === 1 ? (scope === 'entries' ? 'entry' : scope.replace(/ies\b/, 'y').replace(/s\b/, '')) : scope}${r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) : ''}`
-        : mans.length ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`),
+        : count ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`),
       el('div', { class: 'list', id: 'ask-list' }, shown.map(entryCard)),
       r.results.length ? manualHits : null,
     ].filter(Boolean));
@@ -151,7 +161,7 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
 // so it never blocks anything.
 // ---------------------------------------------------------------------
 const TOUR = [
-  { glyph: 'home', tone: 'brand', title: 'Your home’s logbook', text: 'Receipts, warranties, jobs, electricity bills and insurance in one tidy place. Everything stays on this phone.' },
+  { glyph: 'home', tone: 'brand', title: 'Your home’s logbook', text: 'Receipts, warranties, jobs, electricity bills and insurance in one tidy place. Kept on this phone (and in your own Google Drive if you turn on sharing).' },
   { glyph: 'scan', tone: 'teal', title: 'Snap it, we’ll fill it in', text: 'Tap + then Scan. You can also share a photo or PDF to Hearthbook straight from your gallery or email.' },
   { glyph: 'sparkle', tone: 'violet', title: 'Ask Hearthbook', text: 'Search everything, or ask “when does the car insurance renew?” and get the date.' },
   { glyph: 'pencil', tone: 'amber', title: 'Make it yours', text: 'Press and hold a section tile to hide or reorder sections. Turn on reminders, find appliance manuals and back up under More.' },

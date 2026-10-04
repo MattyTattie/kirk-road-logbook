@@ -105,6 +105,21 @@ export async function saveManyEntries(entries) {
   });
 }
 
+// Save entries AND one meta value in ONE transaction (restore while sync is
+// on: the entries plus the updated tombstone list, all or nothing).
+export async function saveEntriesAndMeta(entries, key, value) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['entries', 'meta'], 'readwrite');
+    const store = tx.objectStore('entries');
+    for (const e of entries) store.put(e);
+    tx.objectStore('meta').put(value, key);
+    tx.oncomplete = () => resolve(entries.length);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}
+
 // ---------- Meta (small settings) ----------
 
 export function getMeta(key) {

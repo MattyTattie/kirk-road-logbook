@@ -1,7 +1,7 @@
 {
   "name": "Hearthbook",
   "short_name": "Hearthbook",
-  "description": "A private home logbook: receipts, warranties, jobs, electricity bills and insurance. All data stays on this phone.",
+  "description": "A private home logbook: receipts, warranties, jobs, electricity bills and insurance. Kept on your phone, and in your own Google Drive only if you turn on sharing.",
   "id": "./",
   "start_url": "./index.html#/home",
   "scope": "./",

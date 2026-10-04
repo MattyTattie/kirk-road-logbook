@@ -28,8 +28,10 @@
 // v10 = house picture, Ask Hearthbook, reminders, tour, customisable sections, app shortcuts, share target.
 // v11 = no cheap-rate chip/setting (night sky by the clock), shorter house, tiles + Coming up under it, smaller spending card.
 // v12 = simple front-on house, phone reminders bridge (Android app), scan auto-sort, tappable chips, Manuals.
+// v13 = safer sync (restore, deletes during sync, resumable upload), sharper manuals + open in another app,
+//       your own manuals, rooms, year in review; updates fetch fresh files and reload once.
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v12';
+const CACHE_NAME = 'hearthbook-v13';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -99,6 +101,9 @@ const APP_SHELL = [
   './js/native.js',
   './js/autosort.js',
   './js/pdfview.js',
+  './js/rooms.js',
+  './js/usermanuals.js',
+  './js/review.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -110,7 +115,10 @@ const APP_SHELL = [
 //    We download every app file into the cache.
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    // cache: 'reload' (v13) skips the browser's own HTTP cache, so a new
+    // version never saves copies of the previous version's files (GitHub
+    // Pages lets browsers keep files for 10 minutes).
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())
   );
 });
 
@@ -148,8 +156,10 @@ self.addEventListener('message', (event) => {
   }
 });
 
-// 2c) The first time Manuals is opened, the page sends 'warm-manuals' with
-//     the list of PDFs; we save the ones not already saved, one at a time.
+// 2c) When you tap "Save all for offline" in Manuals (v13: it asks first,
+//     ~41 MB), the page sends 'warm-manuals' with the list of PDFs; we save
+//     the ones not already saved, one at a time. Otherwise each manual is
+//     saved the first time you open it (serveManual below).
 //     (The pdf.js reader used to show them comes along too.) If the
 //     phone goes offline half way, the rest are fetched next time.
 let manualsWarming = null;

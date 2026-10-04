@@ -61,7 +61,7 @@ const saveConfig = (c) => db.setMeta(STATE_KEY, c);
 const ready = (c) => Boolean(c && c.enabled && c.files && c.files.index);
 
 function baseStatus(c) {
-  return { account: c.account || null, folderName: (c.folder && c.folder.name) || '', owner: Boolean(c.folder && c.folder.owner), lastSync: c.lastSync || null };
+  return { account: c.account || null, folderName: (c.folder && c.folder.name) || '', owner: Boolean(c.folder && c.folder.owner), lastSync: c.lastSync || null, fileSize: c.fileSize ?? null };
 }
 
 // Call once at start-up.
@@ -273,6 +273,7 @@ export async function invite(email) {
 
 export async function disconnect() {
   clearTimeout(timer);
+  again = false; // a sync that's running stops at its next step (see stillOn)
   await drive.revoke();
   await saveConfig({ enabled: false });
   await db.setMeta(CACHE_KEY, null);
@@ -308,6 +309,21 @@ export function syncNow({ interactive = false } = {}) {
   return running;
 }
 
+// Is sync still switched on for the same shared file as when this sync
+// started? (You may have tapped Disconnect while it was running.) v13:
+// settings are re-read and merged, never written back from an old copy.
+async function stillOn(c) {
+  const now = await getConfig();
+  return ready(now) && now.files.index === c.files.index ? now : null;
+}
+async function updateConfig(c, patch) {
+  const now = await stillOn(c);
+  if (!now) return null;
+  const next = { ...now, ...patch };
+  await saveConfig(next);
+  return next;
+}
+
 async function syncCycle(interactive) {
   const c = await getConfig();
   if (!ready(c)) return;
@@ -316,11 +332,12 @@ async function syncCycle(interactive) {
   try {
     await drive.getToken({ interactive, email: c.account && c.account.email });
     const result = await syncOnce(c);
-    c.lastSync = new Date().toISOString();
-    await saveConfig(c);
-    setStatus({ ...baseStatus(c), state: 'idle', message: '', last: result, count: (status.count || 0) + 1 });
+    const saved = await updateConfig(c, { lastSync: new Date().toISOString(), ...(result.fileSize != null ? { fileSize: result.fileSize } : {}) });
+    if (!saved) return; // disconnected meanwhile: leave sync off
+    setStatus({ ...baseStatus(saved), state: 'idle', message: '', last: result, count: (status.count || 0) + 1 });
     if (result.pulled) dispatchEvent(new CustomEvent('hearthbook:synced', { detail: result }));
   } catch (err) {
+    if (!(await stillOn(c))) return;
     await fail(err, c);
   }
 }
@@ -388,9 +405,52 @@ export function plan(localEntries, localTombs, remote) {
   return out;
 }
 
+// Tombstones to keep after a sync. `before` = what the sync started from,
+// `now` = what's there at the end, `planned` = what the sync decided. Any id
+// that changed on this phone during the sync (a new delete, or a restore
+// that cleared one) keeps the phone's current value. Pure; tested.
+export function mergeTombs(before, now, planned) {
+  const out = { ...planned };
+  const ids = new Set([...Object.keys(before || {}), ...Object.keys(now || {})]);
+  for (const id of ids) {
+    const b = (before || {})[id], n = (now || {})[id];
+    if (b === n) continue; // untouched during the sync
+    if (n) out[id] = out[id] && out[id] > n ? out[id] : n;
+    else delete out[id];
+  }
+  return out;
+}
+
+// Restoring a backup while sync is on (H1, v13). An entry that was deleted
+// (a tombstone here or in the Drive copy we last saw), or that is missing
+// here and not alive in that Drive copy, gets a fresh updatedAt and loses
+// its tombstone, so the restore wins instead of the old delete. Entries the
+// Drive copy still has are left as they are. Nothing else changes. Pure.
+//   entries: restored entries; localIds: Set of ids on this phone now;
+//   tombs: this phone's tombstones; remote: last-seen Drive text (or null).
+export function reviveRestored(entries, localIds, tombs, remote, now = new Date().toISOString()) {
+  const outTombs = { ...(tombs || {}) };
+  const revived = [];
+  const out = entries.map((e) => {
+    const deleted = Boolean(outTombs[e.id]) || Boolean(remote && remote.tombstones && remote.tombstones[e.id]);
+    const missing = !localIds.has(e.id);
+    const alive = Boolean(remote && remote.records && remote.records[e.id]);
+    if (deleted || (missing && !alive)) {
+      delete outTombs[e.id];
+      revived.push(e.id);
+      return { ...e, updatedAt: now };
+    }
+    return e;
+  });
+  return { entries: out, tombs: outTombs, revived };
+}
+export const TOMBSTONES_KEY = TOMBS_KEY;
+export const CACHE_META_KEY = CACHE_KEY;
+
 async function syncOnce(c) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const before = await drive.getMeta(c.files.index);
+    let fileSize = before.size != null ? Number(before.size) : null;
     // Unchanged since last time? Use our saved copy of the text and skip
     // downloading the (photo-heavy) file.
     const cache = await db.getMeta(CACHE_KEY);
@@ -480,23 +540,29 @@ async function syncOnce(c) {
       // with its version, so neither phone's changes are lost.
       const now = await drive.getMeta(c.files.index);
       if (now.version !== before.version) continue;
+      if (!(await stillOn(c))) throw new Error('Sync was switched off.');
       const written = await drive.writeJSON(c.files.index, out);
+      fileSize = written && written.size != null ? Number(written.size) : null;
       await db.setMeta(CACHE_KEY, { fileId: c.files.index, version: written && written.version, index: { records: out.records, tombstones: out.tombstones, photoIndex: out.photoIndex || {}, version: 2 }, photoIds: Object.keys(photos) });
-      if (!c.layout || c.layout < 2) { c.layout = 2; await saveConfig(c); }
+      if (!c.layout || c.layout < 2) { c.layout = 2; await updateConfig(c, { layout: 2 }); }
     } else if (full) {
       await db.setMeta(CACHE_KEY, { fileId: c.files.index, version: before.version, index: { records: remote.records, tombstones: remote.tombstones, photoIndex: remote.photoIndex, version: remote.version }, photoIds: remote.photoIds });
     }
 
     // Apply the other phone's changes here (unless you saved something
     // newer on this phone while we were syncing).
+    // v13: deletes (and restores) made on this phone WHILE we were syncing
+    // win over what this sync worked out from its earlier snapshot.
+    const tombsNow = (await db.getMeta(TOMBS_KEY)) || {};
+    const tombs = mergeTombs(localTombs, tombsNow, p.tombs);
     const fresh = new Map((await db.getAllEntries()).map((e) => [e.id, e]));
-    const keep = toSave.filter((r) => !fresh.has(r.id) || stamp(fresh.get(r.id)) <= stamp(r));
+    const keep = toSave.filter((r) => (!fresh.has(r.id) || stamp(fresh.get(r.id)) <= stamp(r)) && !(tombsNow[r.id] && tombsNow[r.id] !== localTombs[r.id] && tombsNow[r.id] >= stamp(r)));
     if (keep.length) await db.saveManyEntries(keep);
     const gone = p.deleteLocal.filter((id) => fresh.has(id) && stamp(fresh.get(id)) <= p.tombs[id]);
     for (const id of gone) await db.deleteEntry(id);
-    await db.setMeta(TOMBS_KEY, p.tombs);
+    await db.setMeta(TOMBS_KEY, tombs);
     const waiting = [...used].filter((id) => !localBlobs.has(id) && !keep.some((k) => (k.photos || []).some((x) => x.id === id))).length;
-    return { pulled: keep.length + gone.length, pushed: p.pushed, photosWaiting: waiting };
+    return { pulled: keep.length + gone.length, pushed: p.pushed, photosWaiting: waiting, fileSize };
   }
   throw new Error('Google Drive kept changing while syncing. It will try again shortly.');
 }

@@ -8,7 +8,8 @@
 // text). Save it somewhere safe: email it to yourself, put it on Google
 // Drive, copy it to a PC. You can restore it on this phone or a new one.
 
-import { getAllEntries, saveManyEntries, setMeta } from './db.js';
+import { getAllEntries, getMeta, saveEntriesAndMeta, setMeta } from './db.js';
+import { reviveRestored, TOMBSTONES_KEY, CACHE_META_KEY } from './sync.js';
 import { blobToDataURL, dataURLToBlob } from './photos.js';
 import { APP_NAME, APP_SLUG } from './config.js';
 
@@ -91,6 +92,16 @@ export async function importBackup(file) {
     entries.push({ ...e, photos });
   }
 
-  await saveManyEntries(entries);
+  // v13 (H1): with sync on, an entry that had been deleted would be deleted
+  // again by the next sync (the old delete looked newer than the old
+  // backup copy). So entries that were deleted, or are missing here and not
+  // in Drive, get "changed now" and their delete marker is cleared. The
+  // file format is unchanged; only updatedAt moves forward.
+  const localIds = new Set((await getAllEntries()).map((e) => e.id));
+  const tombs = (await getMeta(TOMBSTONES_KEY)) || {};
+  const cache = await getMeta(CACHE_META_KEY);
+  const remote = cache && cache.index ? cache.index : null;
+  const r = reviveRestored(entries, localIds, tombs, remote);
+  await saveEntriesAndMeta(r.entries, TOMBSTONES_KEY, r.tombs);
   return entries.length;
 }

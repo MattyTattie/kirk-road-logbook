@@ -194,10 +194,70 @@ export async function readJSON(id) {
   const text = await res.text();
   try { return JSON.parse(text || 'null'); } catch { throw new Error('A sync file in Drive is damaged.'); }
 }
-export function writeJSON(id, data) {
+// Writing the shared file. v13: a "resumable" upload, which Google
+// recommends for anything over 5 MB and for phones: step 1 asks Drive for
+// an upload address, step 2 sends the file there. If the connection drops
+// half way, we ask Drive how much arrived and send only the rest (a few
+// tries). If the resumable start itself fails (an old proxy, an odd
+// network), it falls back to the simple one-shot upload used before.
+// The file's content is exactly the same either way.
+export async function writeJSON(id, data) {
+  const body = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  let session = null;
+  try {
+    const res = await call(`${UPLOAD}/files/${id}?uploadType=resumable&fields=${q(FIELDS)}&supportsAllDrives=true`, {
+      method: 'PATCH', raw: true,
+      headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': 'application/json', 'X-Upload-Content-Length': String(body.size) },
+      body: '{}',
+    });
+    session = res.headers.get('Location');
+  } catch (err) {
+    if (err instanceof AuthError || err instanceof NotFoundError) throw err;
+    session = null;
+  }
+  if (!session) return writeSimple(id, body);
+  return sendResumable(session, body);
+}
+function writeSimple(id, body) {
   return call(`${UPLOAD}/files/${id}?uploadType=media&fields=${q(FIELDS)}&supportsAllDrives=true`, {
-    method: 'PATCH', body: JSON.stringify(data), headers: { 'Content-Type': 'application/json' },
+    method: 'PATCH', body, headers: { 'Content-Type': 'application/json' },
   });
+}
+async function sendResumable(session, body) {
+  const total = body.size;
+  let from = 0;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const token = await getToken();
+    const headers = { Authorization: `Bearer ${token}` };
+    if (from > 0) headers['Content-Range'] = `bytes ${from}-${total - 1}/${total}`;
+    let res;
+    try {
+      res = await fetch(session, { method: 'PUT', headers, body: from > 0 ? body.slice(from) : body });
+    } catch {
+      // Dropped connection: ask how much Drive has, then send the rest.
+      await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      from = await uploadedSoFar(session, total, token);
+      if (from === total) return null; // all there; caller re-reads metadata on the next sync
+      continue;
+    }
+    if (res.ok) return res.status === 204 ? null : res.json();
+    if (res.status === 401) { forgetToken(); throw new AuthError(); }
+    if (res.status === 404 || res.status === 410) throw new Error('Google Drive upload expired. It will try again shortly.');
+    if (res.status === 308) { from = rangeEnd(res.headers.get('Range')); continue; }
+    let msg = `Google Drive said ${res.status}`;
+    try { const j = await res.json(); if (j.error && j.error.message) msg += `: ${j.error.message}`; } catch {}
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  throw new OfflineError('The upload to Google Drive kept being interrupted. It will try again shortly.');
+}
+const rangeEnd = (range) => { const m = /bytes=0-(\d+)/.exec(range || ''); return m ? Number(m[1]) + 1 : 0; };
+async function uploadedSoFar(session, total, token) {
+  try {
+    const res = await fetch(session, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Range': `bytes */${total}` } });
+    if (res.ok) return total;
+    if (res.status === 308) return rangeEnd(res.headers.get('Range'));
+  } catch {}
+  return 0;
 }
 export function createFolder(name) {
   return call(`${API}/files?fields=${q(FIELDS)}`, {

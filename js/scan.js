@@ -24,6 +24,18 @@ function loadPdfjs() {
   return pdfjsPromise;
 }
 
+// How many pages a PDF has (v13: used to guess "manual or bill?" for a
+// shared PDF, and shown next to manuals you add). null if it can't be read.
+export async function pdfPageCount(file) {
+  try {
+    const pdfjs = await loadPdfjs();
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise;
+    const n = doc.numPages;
+    doc.destroy();
+    return n;
+  } catch { return null; }
+}
+
 // Returns { canvas, text } for page 1. Most bills emailed as PDFs contain
 // real text, which is 100% accurate — we use that when it's there and only
 // fall back to OCR for scanned (picture-only) PDFs.
