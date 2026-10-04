@@ -1,7 +1,7 @@
 // =====================================================================
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
-// The PDFs live in the app's manuals/ folder. They're big (about 40 MB
+// The PDFs live in the app's manuals/ folder. They're big (about 54 MB
 // together), so they are NOT downloaded when the app installs: the first
 // time you open More → Manuals, the service worker (sw.js "warm-manuals")
 // saves them all for offline use. A manual you open before that is saved
@@ -63,6 +63,17 @@ export const APPLIANCES = [
     words: 'ecoso aruba ardus radiator electric heater heating dry',
     notes: 'Switched on and off by the Hive single-channel receiver (living room).',
     files: [{ file: 'ECOSO-Aruba-Ardus-DRDH178354D-installation-manual.pdf', label: 'Installation manual', pages: 8 }],
+  },
+  {
+    id: 'beldray', name: 'Beldray bedroom radiators', model: 'EH3110V2', group: 'Bedroom', rooms: ['Bedroom'],
+    match: ['EH3110V2', 'EH3110W', 'EH3110', 'EH3109V2', 'BELDRAY'],
+    words: 'beldray smart ceramic core radiator electric heater 2000w 2kw bedroom wifi tuya smart life child lock',
+    about: 'Two 2000 W Beldray Smart Ceramic Core radiators in the bedroom.',
+    notes: 'Child lock: hold + and − together till the padlock shows (same to undo; not in standby). ' +
+      'Reset: in standby, hold power till every symbol lights. Frost mode keeps 7°C; open-window mode drops to frost if the room cools 2°C in 5 min. ' +
+      'Cut out? Unplug, cool 30 min. Don’t run it off a timer or smart plug. ' +
+      'Clean: unplug, cool, soft damp cloth. Wi-Fi: Smart Life/Tuya app, 2.4 GHz only. 12-month guarantee, 2 years if registered within 30 days.',
+    files: [{ file: 'Beldray-EH3110V2-2000W-Smart-Ceramic-Core-Radiator-instruction-manual.pdf', label: 'Instruction manual (2000 W, EH3110V2)', pages: 24 }],
   },
   {
     id: 'stove', name: 'Mi-Fires Loughrigg stove', model: 'Loughrigg', group: 'Living room', rooms: ['Living room'],

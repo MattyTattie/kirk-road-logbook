@@ -30,8 +30,9 @@
 // v12 = simple front-on house, phone reminders bridge (Android app), scan auto-sort, tappable chips, Manuals.
 // v13 = safer sync (restore, deletes during sync, resumable upload), sharper manuals + open in another app,
 //       your own manuals, rooms, year in review; updates fetch fresh files and reload once.
+// v13.1 = Beldray bedroom radiator manual (tagged Bedroom).
 // (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v13';
+const CACHE_NAME = 'hearthbook-v13.1';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -157,7 +158,7 @@ self.addEventListener('message', (event) => {
 });
 
 // 2c) When you tap "Save all for offline" in Manuals (v13: it asks first,
-//     ~41 MB), the page sends 'warm-manuals' with the list of PDFs; we save
+//     ~54 MB), the page sends 'warm-manuals' with the list of PDFs; we save
 //     the ones not already saved, one at a time. Otherwise each manual is
 //     saved the first time you open it (serveManual below).
 //     (The pdf.js reader used to show them comes along too.) If the
