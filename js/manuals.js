@@ -1,7 +1,7 @@
 // =====================================================================
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
-// The PDFs live in the app's manuals/ folder. They're big (about 55 MB
+// The PDFs live in the app's manuals/ folder. They're big (about 56 MB
 // together), so they are NOT downloaded when the app installs: the first
 // time you open More → Manuals, the service worker (sw.js "warm-manuals")
 // saves them all for offline use. A manual you open before that is saved
@@ -74,6 +74,20 @@ export const APPLIANCES = [
       'Cut out? Unplug, cool 30 min. Don’t run it off a timer or smart plug. ' +
       'Clean: unplug, cool, soft damp cloth. Wi-Fi: Smart Life/Tuya app, 2.4 GHz only. 12-month guarantee, 2 years if registered within 30 days.',
     files: [{ file: 'Beldray-EH3110V2-2000W-Smart-Ceramic-Core-Radiator-instruction-manual.pdf', label: 'Instruction manual (2000 W, EH3110V2)', pages: 24 }],
+  },
+  {
+    // Before the bedroom Ecostrad so a warranty naming the element/towel rail finds this one
+    // (the bedroom entry matches the plain word "Ecostrad").
+    id: 'ecostrad-towel', name: 'Ecostrad bathroom towel rail element', model: 'iQ WiFi Heating Element 600W (iQ-HE-C6)', group: 'Bathroom', rooms: ['Bathroom'],
+    match: ['IQ-HE-C6', 'IQHEC6', 'IQ WIFI HEATING ELEMENT', 'IQ WIFI ELEMENT', 'TOWEL RAIL'],
+    words: 'ecostrad iq wifi heating element towel rail radiator electric 600w bathroom smart life timer child lock',
+    about: 'The 600 W Ecostrad iQ WiFi Heating Element in the bathroom towel rail.',
+    notes: 'Radiator mode is towel-drying mode (30–70°C). Timer: in radiator mode hold the timer key till “2H”, then arrows for 0–8 hours. ' +
+      'Child lock: hold both arrows 5 s (same to undo). Open-window detection is on by default (change it in the app only). ' +
+      'Wi-Fi: Smart Life app, 2.4 GHz; in standby hold the Wi-Fi key to pair (99 s). Er1 = room sensor fault, Er2 = internal sensor fault: contact the seller. ' +
+      'Never switch it on in an empty rail; don’t power it through a timer or smart plug. ' +
+      'Guarantee: 2 years, claim via the seller with proof of purchase.',
+    files: [{ file: 'Ecostrad-iQ-WiFi-Heating-Element-iQ-HE-C6-600W-manual-V1-10-Knaresborough-era.pdf', label: 'User manual (iQ WiFi Element, V1-10)', pages: 21 }],
   },
   {
     id: 'ecostrad', name: 'Ecostrad bedroom radiator', model: 'iQ Ceramic 1800W (HCT180T)', group: 'Bedroom', rooms: ['Bedroom'],
@@ -182,8 +196,12 @@ export function searchManuals(q) {
   if (!all.length) return [];
   const wantsManual = all.some((w) => /^(manual|manuals|guide|guides|instructions?|handbook|booklet|pdf)$/.test(w));
   const key = all.filter((w) => !STOP.has(w) && w.length >= 3);
-  if (!key.length) return wantsManual ? APPLIANCES.slice() : [];
   const qflat = squash(q);
+  // v13.3: a hyphenated model code made of short bits ("iQ-HE-C6") still finds its manual.
+  if (!key.length) {
+    const byCode = APPLIANCES.filter((a) => a.match.some((m) => squash(m).length >= 5 && qflat.includes(squash(m))));
+    return byCode.length ? byCode : wantsManual ? APPLIANCES.slice() : [];
+  }
   const scored = APPLIANCES.map((a) => {
     // Name, model and product words count double; the notes count once.
     const main = words([a.name, a.model, a.words, ...a.files.map((f) => f.label)].join(' '));
