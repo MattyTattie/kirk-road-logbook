@@ -1755,12 +1755,12 @@ function showFullPhoto(url) {
 // ---------------------------------------------------------------------
 // MANUALS (More → Manuals): every appliance guide, plus your own
 // ---------------------------------------------------------------------
-// v13: the built-in PDFs (about 54 MB) are no longer all downloaded the
+// v13: the built-in PDFs (about 55 MB) are no longer all downloaded the
 // first time this screen opens. Each one is saved on this phone the first
 // time you open it, and "Save all for offline" downloads the lot (it asks
 // first, and remembers your answer).
 const OFFLINE_KEY = 'hearthbook.manualsOffline';
-const BUILTIN_MB = 54;
+const BUILTIN_MB = 55;
 const offlineChosen = () => { try { return localStorage.getItem(OFFLINE_KEY) === 'yes'; } catch { return false; } };
 async function manualsSaved() {
   const saved = new Set();

@@ -1,7 +1,7 @@
 // =====================================================================
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
-// The PDFs live in the app's manuals/ folder. They're big (about 54 MB
+// The PDFs live in the app's manuals/ folder. They're big (about 55 MB
 // together), so they are NOT downloaded when the app installs: the first
 // time you open More → Manuals, the service worker (sw.js "warm-manuals")
 // saves them all for offline use. A manual you open before that is saved
@@ -74,6 +74,18 @@ export const APPLIANCES = [
       'Cut out? Unplug, cool 30 min. Don’t run it off a timer or smart plug. ' +
       'Clean: unplug, cool, soft damp cloth. Wi-Fi: Smart Life/Tuya app, 2.4 GHz only. 12-month guarantee, 2 years if registered within 30 days.',
     files: [{ file: 'Beldray-EH3110V2-2000W-Smart-Ceramic-Core-Radiator-instruction-manual.pdf', label: 'Instruction manual (2000 W, EH3110V2)', pages: 24 }],
+  },
+  {
+    id: 'ecostrad', name: 'Ecostrad bedroom radiator', model: 'iQ Ceramic 1800W (HCT180T)', group: 'Bedroom', rooms: ['Bedroom'],
+    match: ['HCT180T', 'E-IQ-C-1800', 'EIQC1800', 'IQ CERAMIC', 'ECOSTRAD'],
+    words: 'ecostrad iq ceramic radiator electric heater 1800w 1.8kw bedroom wifi smart life alexa google child lock',
+    about: 'The 1800 W Ecostrad iQ Ceramic in the bedroom, from Electric Radiators Direct.',
+    notes: 'Child lock: hold + and − for 5 s (same to undo). Reset: in standby, hold power for 15 s. ' +
+      'Anti-freeze mode keeps 7°C. Open-window detection (off by default): standby, hold + 5 s, ✓ to F2, pick 60 or 90 min. ' +
+      'Don’t cover it; don’t run it off a timer, smart plug or switched circuit. Er1/Er2 = sensor fault, contact the seller. ' +
+      'Clean: unplug, cool, damp cloth only. Wi-Fi: Smart Life app, 2.4 GHz; turn on F4, then in standby hold ✓ to pair (3 min). ' +
+      'Guarantee: 2 years electrics, 3 paintwork, 10 body; claim via the seller with proof of purchase.',
+    files: [{ file: 'Ecostrad-iQ-Ceramic-HCT180T-1800W-manual-V1.7-pre2024.pdf', label: 'User manual (iQ Ceramic, V1.7)', pages: 29 }],
   },
   {
     id: 'stove', name: 'Mi-Fires Loughrigg stove', model: 'Loughrigg', group: 'Living room', rooms: ['Living room'],
