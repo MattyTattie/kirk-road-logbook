@@ -60,7 +60,7 @@ const state = {
   chartMode: 'all', // dashboard chart: 'all' spending or just 'bills'
   chartPick: -1, // which bar is tapped
   chartYear: 0, // dashboard chart: 0 = last 12 months, or a calendar year
-  meterYear: 0, // meter chart: 0 = periods between readings, or a calendar year
+  meterYear: 0, // meter chart: 0 = "Last 12 months" (the last 12 periods between readings), or a calendar year
   room: '', // list screen: only this room ('' = every room)
 };
 
@@ -413,10 +413,11 @@ async function renderHome() {
   }
 
   // --- Section tiles: count and £ for the year picked in the chart
-  // (the "12 months" view shows this year, "2026 so far"). Press and hold
+  // (the "12 months" view shows this calendar year, "2026 so far", with a
+  // "Calendar year, 1 Jan – today" line under it, v13.5). Press and hold
   // (or Edit) to hide / reorder sections on this phone (homeui.js). ---
   const tiles = tilesSection({ everything, sectionTile, thisYear: year, onChange: () => { applyNavPrefs(); redrawHero(); } });
-  function drawTiles() { tiles.draw(state.chartYear || year); }
+  function drawTiles() { tiles.draw(state.chartYear || year, { rolling: !state.chartYear }); }
 
   // --- Spending chart ---
   const chartCard = el('section', { class: 'card chart-card', id: 'spend-chart', 'aria-labelledby': 'chart-title' });
@@ -730,7 +731,7 @@ function meterInsights(everything) {
         describe: (bar, v) => `${bar.title}: ${Math.round(v)} ${unit}; ${bar.compareTitle}: ${Math.round(bar.compare)} ${unit}`, onSelect: pickM });
       const d = sumNow - sumThen;
       box.replaceChildren(
-        yearPicker('meter-years', years, yr, (y) => { state.meterYear = y; draw(); }, 'Periods'),
+        yearPicker('meter-years', years, yr, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }),
         el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `${unit} used per month in ${yr}`,
           upTo.length ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'meter-yoy' }, ` · ${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(sumThen ? (d / sumThen) * 100 : 0))}% vs ${yr - 1} (${upTo.length} month${upTo.length === 1 ? '' : 's'} with readings in both)`) : el('span', { class: 'yoy', id: 'meter-yoy' }, ` · no ${yr - 1} readings to compare`)),
         chart,
@@ -746,7 +747,7 @@ function meterInsights(everything) {
       intervals.map((i) => ({ label: new Date(i.to.date).toLocaleDateString('en-GB', { month: 'short' }).slice(0, 1), title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
       { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
     ) : null;
-    box.replaceChildren(...(chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Periods') : null,
+    box.replaceChildren(...(chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null,
       el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot].filter(Boolean) : []));
   }
   draw();
@@ -885,9 +886,11 @@ function periodDetail(interval, prev, everything) {
 }
 
 // "12 months | 2024 | 2025 | 2026" chips above a chart. 0 = the default view.
-function yearPicker(id, years, current, onPick, defaultLabel) {
+// v13.5: { newestFirst: true } lists the years 2026, 2025, 2024 (Electricity page).
+function yearPicker(id, years, current, onPick, defaultLabel, { newestFirst = false } = {}) {
   const chip = (y, label) => el('button', { type: 'button', class: 'year-chip' + (current === y ? ' active' : ''), 'aria-pressed': String(current === y), 'data-year': String(y), onclick: () => onPick(y) }, label);
-  return el('div', { class: 'year-picker', id, role: 'group', 'aria-label': 'Choose year' }, chip(0, defaultLabel), years.map((y) => chip(y, String(y))));
+  const list = newestFirst ? [...years].sort((a, b) => b - a) : years;
+  return el('div', { class: 'year-picker', id, role: 'group', 'aria-label': 'Choose year' }, chip(0, defaultLabel), list.map((y) => chip(y, String(y))));
 }
 
 function monthDetail(month, prevMonth, source, yearOnYear = false) {
@@ -1192,7 +1195,9 @@ async function renderForm(type, id) {
 
   const form = el('form', { class: 'form', id: 'entry-form', novalidate: true });
 
-  form.append(
+  // v13.5: drop the nulls first — Element.append(null) prints the word "null"
+  // (it showed above Title/Date on every non-insurance form).
+  form.append(...[
     el('header', { class: 'form-head' },
       el('a', { class: 'back', href: id ? `#/view/${id}` : '#/new', onclick: (ev) => { ev.preventDefault(); history.back(); } }, icon('back', 20), 'Back'),
       el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title' }, `${id ? 'Edit' : 'New'} ${section.single.toLowerCase()}`))
@@ -1236,7 +1241,7 @@ async function renderForm(type, id) {
           field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
             CURRENCIES.map(([code, sym]) => el('option', { value: code, selected: (entry.currency || 'GBP') === code }, `${sym} ${code}`))))),
     ins ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' }))
-  );
+  ].filter(Boolean));
 
   // Suggest suppliers you've used before (a "datalist" gives autocomplete).
   const allEntries = await db.getAllEntries();

@@ -18,6 +18,9 @@
 //              // day/night (Economy 7) meters
 //     currency: 'GBP' | 'EUR' | 'USD'  // what the amounts are in (holiday receipts)
 //     items: [{ name, qty, price }]    // receipt lines, when they can be read
+//     contactEmail                     // the seller's contact email (v13.5), also put in notes
+//     company                          // the legal seller when it differs, e.g. 'Lampenwelt GmbH'
+//     vehicleTax: { reg, months, amount } // DVLA vehicle tax confirmations (v13.5)
 //     title, notes, found: { … }       // which fields we're confident about
 //   }
 //
@@ -73,6 +76,10 @@ export const SUPPLIERS = [
   { name: 'Morrisons', kind: 'shop', re: /morrisons/i },
   { name: 'Aldi', kind: 'shop', re: /\baldi\b/i },
   { name: 'Lidl', kind: 'shop', re: /\blidl\b/i },
+  // v13.5: lights.co.uk invoices come from Lampenwelt GmbH (Germany).
+  { name: 'lights.co.uk', kind: 'shop', re: /\blights\.co\.uk\b|\blampenwelt\b/i, company: { name: 'Lampenwelt GmbH', re: /\blampenwelt\s+gmbh\b/i } },
+  // v13.5: DVLA vehicle tax confirmations (emails / screenshots).
+  { name: 'DVLA', kind: 'gov', re: /\bDVLA\b|\bgov\.uk\/vehicle-tax\b/i },
 ];
 
 // ---------- Dates ----------
@@ -129,8 +136,10 @@ export function addDays(isoDate, n) {
 // "€9.50" and "9,50 €" too; with { comma: true } (euro receipts) a bare
 // "11,90" is 11.90. Long digit runs (barcodes like 7622400008948) never count.
 const MONEY = /(-)?\s?[£€]\s?(-)?\s?(\d{1,3}(?:[,.]\d{3})*(?:[.,]\d{2})|\d+(?:[.,]\d{2}))(?!\d)|(?<![\d.,£€])(-)?(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?![\d%])/g;
+// v13.5: "GBP 167,65" / "EUR 9,50" / "200.00 GBP" count like "£167,65".
 export function findAmounts(line, { comma = false } = {}) {
   const out = [];
+  line = codesToSymbols(line);
   if (comma) line = line.replace(/(?<![\d.,])(\d{1,4}),(\d{2})(?![\d,.])/g, '$1.$2');
   for (const m of line.matchAll(MONEY)) {
     if (/\d{8,}/.test(line.slice(Math.max(0, m.index - 8), m.index + m[0].length + 1).replace(/[.,]/g, ''))) continue;
@@ -143,6 +152,23 @@ export function findAmounts(line, { comma = false } = {}) {
     out.push({ value: neg ? -v : v, pound: !!m[3], index: m.index });
   }
   return out;
+}
+
+const SYM_OF = { GBP: '£', EUR: '€' };
+function codesToSymbols(line) {
+  return line
+    .replace(/\b(GBP|EUR)\s?(?=-?\d)/g, (m, c) => SYM_OF[c])
+    .replace(/(?<![\d.,])(\d[\d.,]*[.,]\d{2})\s?(GBP|EUR)\b/g, (m, n, c) => SYM_OF[c] + n);
+}
+
+// European number style ("167,65", "1.234,56")? Then a comma before the
+// last two digits is the decimal point, even on a pounds invoice (v13.5:
+// lights.co.uk / Lampenwelt print "Total incl. VAT GBP 167,65").
+export function europeanNumbers(text) {
+  const t = codesToSymbols(text);
+  const eu = (t.match(/[£€]\s?-?\d{1,3}(?:\.\d{3})*,\d{2}(?![\d.,])|(?<![\d.,])\d{1,3}(?:\.\d{3})*,\d{2}\s?[£€]/g) || []).length;
+  const uk = (t.match(/[£€]\s?-?\d{1,3}(?:,\d{3})*\.\d{2}(?![\d.,])|(?<![\d.,])\d{1,3}(?:,\d{3})*\.\d{2}\s?[£€]/g) || []).length;
+  return eu > 0 && eu > uk;
 }
 
 // ---------- helpers ----------
@@ -162,16 +188,13 @@ function detectSupplier(text) {
 }
 
 // Customer-address-ish lines we must never mistake for the shop's name.
-const NOT_A_NAME = /\b\d+[a-z]?\s+[a-z]+\s+(?:road|rd|street|st|avenue|ave|lane|drive|close|way|crescent|terrace|place|court|gardens)\b|address|united kingdom|^(mr|mrs|ms|miss|dr)\b|\b[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}\b|invoice|receipt|statement|page \d|smell gas|power cut|tel\b|phone|e-?mail|www\.|https?:|@|order|customer|account|vat|date|total|bill to|deliver|ship|^your\b|^\W*$|comunitario|factura|\bfact\b|ticket|datos|vuelo|extranjero|\biva\b|cliente|tarjeta|art[ií]culos|descrip|precio|cantidad|unidad/i;
+// v13.5: "Contact:", "Contact person", "Customer service" are labels, not the seller.
+const NOT_A_NAME = /\bcontact\b|\bkontakt\b|ansprechpartner|customer\s+service|kundenservice|^[\w .'-]{1,25}:\s*$|\b\d+[a-z]?\s+[a-z]+\s+(?:road|rd|street|st|avenue|ave|lane|drive|close|way|crescent|terrace|place|court|gardens)\b|address|united kingdom|^(mr|mrs|ms|miss|dr)\b|\b[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}\b|invoice|receipt|statement|page \d|smell gas|power cut|tel\b|phone|e-?mail|www\.|https?:|@|order|customer|account|vat|date|total|bill to|deliver|ship|^your\b|^\W*$|comunitario|factura|\bfact\b|ticket|datos|vuelo|extranjero|\biva\b|cliente|tarjeta|art[ií]culos|descrip|precio|cantidad|unidad/i;
 
 function fallbackSupplier(allLines) {
   // A line that looks like a company ("… Ltd", "… Limited") near the top…
-  for (const l of allLines.slice(0, 25)) {
-    const m = l.match(/([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC))\b/) ||
-      // European companies: "… S.L.", "… SA", "… GmbH", "… SRL", "… B.V."
-      l.match(/^([A-Z][A-Za-z&'’.\- ]{5,60}?)[\s,]+(?:S\.?L\.?U?|S\.?A\.?|GmbH|S\.?R\.?L\.?|S\.?A\.?S\.?|B\.?V\.?|Lda)\.?$/);
-    if (m && !/trading name|registered|reg\.? office|customers ltd/i.test(l)) return tidyName(m[1]);
-  }
+  const company = companyName(allLines);
+  if (company) return company;
   // …otherwise the first prominent line that isn't an address or boilerplate.
   for (const l of allLines.slice(0, 6)) {
     const name = tidyName(l);
@@ -179,6 +202,73 @@ function fallbackSupplier(allLines) {
     if (letters >= 4 && letters / name.length > 0.75 && name.length <= 40 && !NOT_A_NAME.test(name) && !repeats(name)) return name;
   }
   return '';
+}
+// The legal seller printed near the top: "Wren Kitchens Ltd", "Lampenwelt GmbH".
+function companyName(allLines) {
+  for (const l of allLines.slice(0, 25)) {
+    const m = l.match(/([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC))\b/) ||
+      // European companies: "… S.L.", "… SA", "… GmbH", "… SRL", "… B.V."
+      l.match(/^([A-Z][A-Za-z&'’.\- ]{5,60}?)[\s,]+(?:S\.?L\.?U?|S\.?A\.?|GmbH|S\.?R\.?L\.?|S\.?A\.?S\.?|B\.?V\.?|Lda)\.?$/) ||
+      // "Lampenwelt GmbH · Rudolf-Diesel-Str. 6 · …" (a sender line on a German invoice)
+      l.match(/^([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:GmbH|AG|KG|B\.V\.|S\.A\.|S\.L\.))\s*[·•|,\-–]/);
+    if (m && !/trading name|registered|reg\.? office|customers ltd/i.test(l) && !/\bcontact\b/i.test(m[1])) return tidyName(m[1]);
+  }
+  return '';
+}
+
+// ---------- Contact email (v13.5) ----------
+// The seller's email, e.g. "E-mail: info@lights.co.uk", for the notes.
+// Never a personal address (that's usually yours, printed as the customer),
+// and never a do-not-reply one.
+const PERSONAL_MAIL = /@(?:g(?:oogle)?mail|hotmail|outlook|live|yahoo|icloud|me|aol|btinternet|sky|virginmedia|talktalk|protonmail)\./i;
+export function findContactEmail(text, supplier = '') {
+  const found = [];
+  for (const m of String(text || '').matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)) {
+    const mail = m[0].replace(/\.$/, '');
+    if (PERSONAL_MAIL.test(mail) || /^(?:no-?reply|do-?not-?reply|donotreply|mailer-daemon)@/i.test(mail)) continue;
+    const before = text.slice(Math.max(0, m.index - 40), m.index);
+    let score = 0;
+    if (/contact|customer|service|support|help|e-?mail|kontakt|questions?/i.test(before)) score += 2;
+    if (/^(?:info|hello|help|support|service|customer|contact|sales|orders?|enquiries|kundenservice)/i.test(mail)) score += 1;
+    const dom = mail.split('@')[1].toLowerCase();
+    const sup = supplier.toLowerCase().replace(/[^a-z0-9.]/g, '');
+    if (sup && (dom.includes(sup.replace(/\.(?:co\.uk|com|uk)$/, '')) || sup.includes(dom.split('.')[0]))) score += 2;
+    found.push({ mail, score, index: m.index });
+  }
+  found.sort((a, b) => b.score - a.score || a.index - b.index);
+  return found.length ? found[0].mail : '';
+}
+
+// ---------- DVLA vehicle tax (v13.5) ----------
+// Confirmation emails / screenshots: "Vehicle registration number: W123 BEX",
+// "Amount GBP 200.00", "Tax period 12 months", "08/06/2026".
+// Current plates "AB12 CDE", older "W123 BEX" (prefix) and "ABC 123D" (suffix).
+const PLATE = /\b([A-Z]{2}[0-9]{2}\s?[A-Z]{3}|[A-Z][0-9]{1,3}\s?[A-Z]{3}|[A-Z]{3}\s?[0-9]{1,3}\s?[A-Z])\b/;
+export function parseVehicleTax(allLines, text) {
+  if (!/\bDVLA\b|vehicle\s+tax|tax(?:ed|ing)?\s+your\s+vehicle|\bV5C\b/i.test(text)) return null;
+  if (!/vehicle\s+tax|\btax(?:ed|ing)?\b/i.test(text)) return null;
+  let reg = '';
+  // Prefer a plate on (or just after) a "registration" line.
+  for (let i = 0; i < allLines.length && !reg; i++) {
+    if (!/regist(?:ration|ered)|\breg\b|number plate|vehicle\s*(?:no|number)?\s*:/i.test(allLines[i])) continue;
+    const m = (allLines[i].replace(/^.*?(?:number|mark|plate|reg(?:istration)?)\b\s*:?/i, '') + ' ' + (allLines[i + 1] || '')).toUpperCase().match(PLATE);
+    if (m) reg = m[1];
+  }
+  if (!reg) { const m = text.match(PLATE); if (m) reg = m[1]; }
+  reg = reg.replace(/\s+/g, '');
+  // Show it the way it's printed on the plate: "W123BEX" -> "W123 BEX".
+  if (reg) reg = reg.replace(/^([A-Z]{2}[0-9]{2}|[A-Z][0-9]{1,3})([A-Z]{3})$/, '$1 $2').replace(/^([A-Z]{3})([0-9]{1,3}[A-Z])$/, '$1 $2');
+  const per = text.match(/\b(6|12|six|twelve)[\s-]*months?\b/i);
+  const months = per ? ({ six: 6, twelve: 12 }[per[1].toLowerCase()] || Number(per[1])) : (/\bmonthly\b/i.test(text) ? 1 : 0);
+  let amount = null;
+  for (const l of allLines) {
+    if (!/amount|total|paid|payment|cost|charge|price|£|GBP/i.test(l) || /refund/i.test(l)) continue;
+    const a = findAmounts(l).filter((x) => x.value > 0);
+    if (a.length) { amount = a[a.length - 1].value; if (/amount|total|paid/i.test(l)) break; }
+  }
+  const startM = text.match(/(?:tax(?:ed)?|starts?|valid|from)\b[^\n]{0,30}?\b(?:on|from)?\s*(\d{1,2}\s*(?:st|nd|rd|th)?\s+[A-Za-z]{3,9}\.?\s+\d{4}|\d{1,2}[/.\-]\d{1,2}[/.\-]\d{4})/i);
+  const start = startM ? (findDates(startM[1])[0] || {}).iso || '' : '';
+  return { reg, months, amount, start };
 }
 // "Jane Smith Jane Smith" = a two-column address block, not a shop.
 const repeats = (s) => /^(.{3,})\s+\1$/i.test(s.trim());
@@ -582,8 +672,18 @@ export function parseDocument(text, { today = new Date() } = {}) {
   const airport = kind === 'receipt' && foreign ? airportInfo(clean) : null;
   const supplier = sup ? sup.name : (airport && airport.shop) || fallbackSupplier(allLines);
   const reference = pickReference(clean);
+  // v13.5: the seller's legal name when it isn't the shop name ("Lampenwelt
+  // GmbH" behind lights.co.uk; only for shops we know, because the first
+  // "… Ltd" on a page is often the CUSTOMER's business), and their contact
+  // email, both for the notes.
+  const company = kind === 'receipt' && sup && sup.company && sup.company.re.test(clean) ? sup.company.name : '';
+  const companyGuess = kind === 'receipt' && !sup && supplier && supplier === companyName(allLines);
+  const contactEmail = kind === 'receipt' ? findContactEmail(clean, supplier) : '';
+  const vehicleTax = kind === 'receipt' ? parseVehicleTax(allLines, clean) : null;
 
-  const result = { kind, supplier, reference, date: '', total: null, currency, items: [], meter: null, title: '', notes: '', found: {} };
+  const result = { kind, supplier: vehicleTax ? 'DVLA' : supplier, reference, date: '', total: null, currency, items: [], meter: null, title: '', notes: '', found: {} };
+  if (company) result.company = company;
+  if (contactEmail) result.contactEmail = contactEmail;
 
   if (kind === 'bill') {
     const { meter, total } = parseEnergy(allLines, clean, defaultYear);
@@ -605,11 +705,22 @@ export function parseDocument(text, { today = new Date() } = {}) {
     if (reference) bits.push(`Bill ref ${reference}`);
     result.notes = bits.join('. ') + (bits.length ? '.' : '');
   } else {
-    const opts = { foreign, comma: currency === 'EUR' };
+    // Comma decimals for euro receipts, and (v13.5) for pounds invoices
+    // printed European-style ("GBP 167,65").
+    const opts = { foreign, comma: currency === 'EUR' || europeanNumbers(clean) };
     result.total = pickTotal(allLines, opts);
     result.date = pickDate(allLines, defaultYear);
     result.title = `${supplier || 'Receipt'}${reference ? ' order ' + reference : ' receipt'}`;
     const bits = [];
+    if (vehicleTax) {
+      // DVLA: "Vehicle tax W123 BEX – 12 months", the amount actually paid.
+      if (vehicleTax.amount != null) result.total = vehicleTax.amount;
+      const months = vehicleTax.months ? (vehicleTax.months === 1 ? 'monthly' : `${vehicleTax.months} months`) : '';
+      result.title = ['Vehicle tax', vehicleTax.reg].filter(Boolean).join(' ') + (months ? ` – ${months}` : '');
+      result.vehicleTax = vehicleTax;
+      bits.push(['DVLA vehicle tax', vehicleTax.reg, months, result.total != null ? fmt(result.total, 'GBP') : ''].filter(Boolean).join(', '));
+      if (vehicleTax.start) bits.push(`Tax starts ${ukDate(vehicleTax.start)}`);
+    }
     if (foreign) {
       const card = (clean.match(/\b(master\s*car[dlu]|visa|maestro|amex|american express)\b/i) || [])[1];
       bits.push(`Paid ${fmt(result.total, currency)} (${currency})${card ? ' by ' + (/master/i.test(card) ? 'Mastercard' : titleCase(card)) : ''}`);
@@ -620,10 +731,14 @@ export function parseDocument(text, { today = new Date() } = {}) {
       if (airport && airport.flight) bits.push(`Flight ${airport.flight}`);
     }
     if (reference) bits.push(`Ref ${reference}`);
-    result.notes = bits.join('. ') + (foreign && bits.length ? '.' : '');
+    if (company) bits.push(`Sold by ${company}`);
+    if (contactEmail) bits.push(`Contact ${contactEmail}`);
+    result.notes = bits.join('. ') + ((foreign || vehicleTax || company || contactEmail) && bits.length ? '.' : '');
   }
   result.found = {
-    supplier: !!sup,
+    // v13.5: a company line ("… Ltd", "… GmbH") or a DVLA confirmation counts
+    // too, so the Supplier box is tinted rather than flagged as missing.
+    supplier: !!sup || !!companyGuess || !!vehicleTax,
     date: !!result.date,
     total: result.total != null,
     reading: !!(result.meter && result.meter.closing != null),

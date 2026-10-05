@@ -206,12 +206,21 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
   const grid = el('div', { class: 'section-grid', id: 'section-tiles' });
   const tray = el('div', { class: 'tiles-tray', id: 'tiles-tray', hidden: true });
   const hint = el('p', { class: 'small muted tiles-hint', id: 'tiles-hint', hidden: true }, 'Drag to reorder · tap − to hide. Hidden sections keep all their entries.');
+  // v13.5: when the chart is on "12 months", say plainly that the tiles are
+  // the calendar year (1 Jan to today), not the chart's last 12 months.
+  const sub = el('p', { class: 'small muted tiles-sub', id: 'tiles-sub', hidden: true });
   const box = el('section', { class: 'group tiles-group', id: 'tiles', 'aria-labelledby': 'tiles-title' },
-    el('div', { class: 'group-head' }, title, editBtn), hint, grid, tray);
+    el('div', { class: 'group-head' }, title, editBtn), sub, hint, grid, tray);
+  let rolling = true; // is the chart on "12 months"?
 
-  function draw(y = year) {
+  function draw(y = year, opts) {
     year = y;
-    title.textContent = y === new Date().getFullYear() ? `${y} so far` : `In ${y}`;
+    if (opts && 'rolling' in opts) rolling = Boolean(opts.rolling);
+    const now = new Date();
+    const current = y === now.getFullYear();
+    title.textContent = current ? `${y} so far` : `In ${y}`;
+    sub.hidden = !(current && rolling) || editing; // while editing, the drag hint takes its place
+    sub.textContent = sub.hidden ? '' : `Calendar year, 1 Jan – ${now.getDate()} ${now.toLocaleDateString('en-GB', { month: 'short' })}`;
     box.dataset.year = String(y);
     const shown = prefs.orderedSections();
     grid.replaceChildren(...shown.map((s) => {

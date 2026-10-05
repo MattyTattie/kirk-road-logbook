@@ -163,7 +163,8 @@ number of entries with a cost, change from the month before, and the three
 biggest costs (tap one to open it).
 
 **Year picker / year on year.** Both charts have chips above them:
-*12 months* (or *Periods* on the Electricity screen) and the last three years
+*12 months* (or *Last 12 months* on the Electricity screen, where the years
+are listed newest first: 2026, 2025, 2024) and the last three years
 with data (2024, 2025, 2026). Pick a year and you get Jan–Dec bars for that
 year with the same months of the year before as slim grey bars behind them.
 The heading compares like with like: for this year it's January to the
@@ -602,7 +603,9 @@ meanwhile: entries stay on the phone and sync after that tap.
 ## 10. What's new in v10
 
 **Home heading.** The tiles say *2026 so far* for this year, or *In 2025*
-when you pick a past year.
+when you pick a past year. (v13.5: while the chart is on *12 months*, a small
+line under it says *Calendar year, 1 Jan – 5 Oct*, so it's clear the tiles
+are this calendar year, not the chart's last 12 months.)
 
 **House picture.** A drawing of an end-terrace house (generic, with no
 address). It changes like this:
@@ -728,3 +731,15 @@ phone number (code, docs and the PDFs' text) or a keystore file.
 - **Year in review.** Tap *Year in review ›* on the spending card, or open it from More. It shows what the house cost in a year (bills, insurance pro rata, receipts, jobs), the biggest items, and a comparison with the year before.
 - **Sync fixes.** Restoring a backup while sync is on now sticks. Deletes made during a sync stay deleted. Uploads to Drive can resume after a dropped connection. More shows the size of the shared file.
 - **Updates.** When a new version arrives, the app reloads once, but never while you're filling in a form.
+
+## v13.5 quick fixes (5 Oct 2026)
+
+- **Electricity:** year chips read *Last 12 months*, 2026, 2025, 2024.
+- **Home tiles:** *Calendar year, 1 Jan – today* line while the chart is on 12 months.
+- **Scanner:** no stray "null" on the form; European-style totals on pounds
+  invoices ("Total incl. VAT GBP 167,65" = £167.65); a "Contact:" label is never
+  the supplier; lights.co.uk (Lampenwelt GmbH) invoices fill the Supplier box;
+  the seller's contact email goes into Notes; DVLA vehicle tax confirmations
+  (emails or screenshots) give the reg, amount, tax period and date.
+- **Updates:** the app only clears its own old caches (names starting
+  `hearthbook-`), never other apps' on the same github.io site.

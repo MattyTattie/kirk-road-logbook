@@ -825,6 +825,7 @@ body.ready #splash { animation: splash-out 0.3s ease 0.1s forwards; }
 .tile-hide { position: absolute; top: -7px; left: -7px; width: 28px; height: 28px; border-radius: 99px; display: grid; place-items: center; border: 2px solid var(--bg); background: var(--text); color: var(--bg); cursor: pointer; padding: 0; }
 .tile-hide::before { content: ''; position: absolute; inset: -9px; } /* bigger tap target */
 .tiles-hint { margin: -4px 2px 10px; }
+.tiles-sub { margin: -6px 2px 10px; }
 .tiles-tray { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -6px 0 18px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1.5px dashed var(--line); border-color: color-mix(in srgb, var(--text) 18%, transparent); }
 .tray-label { font-size: 13px; color: var(--text-2); font-weight: 600; margin-right: 4px; }
 .tray-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 12px; border-radius: 999px; border: 0; background: var(--tone-soft); color: var(--tone); font: 600 14px var(--font); cursor: pointer; }

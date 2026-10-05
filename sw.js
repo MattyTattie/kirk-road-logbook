@@ -34,8 +34,12 @@
 // v13.2 = Ecostrad iQ Ceramic 1800W bedroom radiator manual (tagged Bedroom).
 // v13.3 = Ecostrad iQ WiFi Heating Element 600W towel rail manual (tagged Bathroom).
 // v13.4 = electriQ VSTR9-650-0.6 600W smart towel rail manual (tagged Bathroom).
-// (Older caches such as 'kirk-road-logbook-v1' are deleted automatically on activate.)
-const CACHE_NAME = 'hearthbook-v13.4';
+// v13.5 = Electricity years newest first + "Last 12 months", clearer home tiles heading,
+//         receipt scanner fixes (European totals, supplier, contact email, DVLA tax),
+//         and only Hearthbook's own caches are cleared on update.
+// (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
+// same github.io origin keep theirs.)
+const CACHE_NAME = 'hearthbook-v13.5';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -131,7 +135,10 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((names) => Promise.all(names.filter((n) => n !== CACHE_NAME && n !== OCR_CACHE && n !== SHARE_CACHE && n !== MANUALS_CACHE).map((n) => caches.delete(n))))
+      // v13.5: only OUR old caches (names starting "hearthbook-"). Other apps on
+      // mattytattie.github.io (e.g. Fault Log) share this origin's cache storage,
+      // so never touch theirs.
+      .then((names) => Promise.all(names.filter((n) => n.startsWith('hearthbook-') && n !== CACHE_NAME && n !== OCR_CACHE && n !== SHARE_CACHE && n !== MANUALS_CACHE).map((n) => caches.delete(n))))
       .then(() => self.clients.claim()) // start controlling open pages straight away
   );
 });
