@@ -39,7 +39,7 @@
 //         and only Hearthbook's own caches are cleared on update.
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v13.5';
+const CACHE_NAME = 'hearthbook-v13.6';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -168,7 +168,7 @@ self.addEventListener('message', (event) => {
 });
 
 // 2c) When you tap "Save all for offline" in Manuals (v13: it asks first,
-//     ~57 MB), the page sends 'warm-manuals' with the list of PDFs; we save
+//     ~59 MB), the page sends 'warm-manuals' with the list of PDFs; we save
 //     the ones not already saved, one at a time. Otherwise each manual is
 //     saved the first time you open it (serveManual below).
 //     (The pdf.js reader used to show them comes along too.) If the

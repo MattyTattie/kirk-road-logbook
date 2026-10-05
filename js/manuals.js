@@ -1,7 +1,7 @@
 // =====================================================================
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
-// The PDFs live in the app's manuals/ folder. They're big (about 57 MB
+// The PDFs live in the app's manuals/ folder. They're big (about 59 MB
 // together), so they are NOT downloaded when the app installs: the first
 // time you open More → Manuals, the service worker (sw.js "warm-manuals")
 // saves them all for offline use. A manual you open before that is saved
@@ -56,6 +56,20 @@ export const APPLIANCES = [
     words: 'cda hood cooker extractor fan chimney',
     notes: 'Wash the grease filter monthly.',
     files: [{ file: 'CDA-CCA52WH-instruction-manual.pdf', label: 'Instruction manual', pages: 14 }],
+  },
+  {
+    // v13.6: kitchen pendant (dual PDF); with other Kitchen appliances so lights.co.uk / EGLO warranties match here.
+    id: 'eglo-andreas', name: 'EGLO connect Andreas-Z pendant', model: '900878 / lights.co.uk 10039462', group: 'Kitchen', rooms: ['Kitchen'],
+    match: ['900878', '10039462', 'ANDREAS-Z', 'ANDREAS Z', 'BLA900878', 'EGLO'],
+    words: 'eglo andreas andreas-z connect.z connectz pendant light led awox homecontrol bluetooth zigbee rgb cct kitchen',
+    about: 'The EGLO connect.z Andreas-Z LED pendant over the kitchen (lights.co.uk item 10039462, black steel).',
+    notes: 'App: AwoX HomeControl (Bluetooth + ZigBee). Add with + → a device, or pair an optional remote within 30 cm by holding ZONE 1/2/3 for ~10 s until it flashes 3×. ' +
+      'Reset: power off ≥30 s, then use the wall-switch ON/OFF sequence until the light flashes and settles to neutral white; delete from the app first if re-pairing. ' +
+      'Confirms with light flashes only — no beeps. Top and bottom LEDs can be set separately.',
+    files: [
+      { file: 'EGLO-Andreas-Z-900878-10039462-instruction-manual.pdf', label: 'Installation manual (Andreas-Z 900878)', pages: 2 },
+      { file: 'EGLO-connect-z-User-Guide.pdf', label: 'EGLO connect.z / AwoX HomeControl user guide', pages: 28 },
+    ],
   },
   {
     id: 'radiator', name: 'ECOSO Aruba Ardus radiator', model: 'DRDH178354D', group: 'Living room', rooms: ['Living room'],
