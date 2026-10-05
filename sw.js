@@ -39,7 +39,7 @@
 //         and only Hearthbook's own caches are cleared on update.
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v13.6';
+const CACHE_NAME = 'hearthbook-v13.7';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 

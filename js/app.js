@@ -1464,7 +1464,7 @@ async function syncCard(cardHead) {
   };
   const help = el('ul', { class: 'sync-help' },
     el('li', {}, 'Keeps one logbook on more than one phone: yours and anyone you want to share it with.'),
-    el('li', {}, 'Entries and photos are copied to a “Hearthbook” folder in your own Google Drive, which you share with them. No other company or server is involved.'),
+    el('li', {}, 'Entries go in a small “hearthbook-sync.json” file in your Hearthbook Drive folder; photos are stored next to it as separate picture files. You share that folder. No other company or server is involved.'),
     el('li', {}, 'Each phone keeps its own full copy, so the app still works with no signal. Changes are swapped when you open the app, a few seconds after you save, and when you tap Sync now.'),
     el('li', {}, 'If two phones change the same entry before syncing, the most recent save wins.'),
     el('li', {}, 'The app can only open its own Hearthbook files, nothing else in your Drive.'));
@@ -1522,7 +1522,7 @@ async function syncCard(cardHead) {
       st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, `${(st.fileSize / 1048576).toFixed(1)} MB`)) : null),
     // v13: a gentle heads-up as the one shared file (photos included) grows.
     st.fileSize >= SIZE_WARN ? el('p', { class: 'sync-size-warn small', id: 'sync-size-warn', role: 'note' }, icon('alert', 16),
-      `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB, mostly photos. It still syncs fine, but each sync takes longer and uses more mobile data. Deleting photos you don’t need keeps it smaller.`) : null,
+      `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB. Newer Hearthbook versions keep photos as separate Drive files so this stays small — tap Sync now to shrink it. It still syncs fine either way.`) : null,
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
         ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')

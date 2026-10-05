@@ -259,10 +259,12 @@ async function uploadedSoFar(session, total, token) {
   } catch {}
   return 0;
 }
-export function createFolder(name) {
+export function createFolder(name, parentId) {
+  const meta = { name, mimeType: 'application/vnd.google-apps.folder', appProperties: { hearthbook: 'folder' } };
+  if (parentId) meta.parents = [parentId];
   return call(`${API}/files?fields=${q(FIELDS)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', appProperties: { hearthbook: 'folder' } }),
+    body: JSON.stringify(meta),
   });
 }
 export async function createJSON(name, parentId, data) {
@@ -272,6 +274,43 @@ export async function createJSON(name, parentId, data) {
   });
   await writeJSON(meta.id, data);
   return meta;
+}
+// Binary files (photos). Same drive.file rules as JSON: the phone that
+// created the file can open it; the other phone gets the bytes via the
+// shared sync file the first time, then keeps them in its local cache.
+export async function createBlob(name, parentId, blob, mimeType = 'image/jpeg', appProperties = { hearthbook: 'photo' }) {
+  const metaBody = { name, mimeType, appProperties };
+  if (parentId) metaBody.parents = [parentId];
+  const meta = await call(`${API}/files?fields=${q(FIELDS)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(metaBody),
+  });
+  await writeBlob(meta.id, blob, mimeType);
+  return meta;
+}
+export async function writeBlob(id, blob, mimeType = 'image/jpeg') {
+  let session = null;
+  try {
+    const res = await call(`${UPLOAD}/files/${id}?uploadType=resumable&fields=${q(FIELDS)}&supportsAllDrives=true`, {
+      method: 'PATCH', raw: true,
+      headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mimeType, 'X-Upload-Content-Length': String(blob.size) },
+      body: '{}',
+    });
+    session = res.headers.get('Location');
+  } catch (err) {
+    if (err instanceof AuthError || err instanceof NotFoundError) throw err;
+    session = null;
+  }
+  if (!session) {
+    return call(`${UPLOAD}/files/${id}?uploadType=media&fields=${q(FIELDS)}&supportsAllDrives=true`, {
+      method: 'PATCH', body: blob, headers: { 'Content-Type': mimeType },
+    });
+  }
+  return sendResumable(session, blob);
+}
+export async function readBlob(id) {
+  const res = await call(`${API}/files/${id}?alt=media&supportsAllDrives=true`, { raw: true });
+  return res.blob();
 }
 // Give someone edit access to the shared folder (Google emails them).
 export function shareFolder(folderId, email) {

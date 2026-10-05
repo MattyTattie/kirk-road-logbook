@@ -10,9 +10,9 @@
 // receipt or a serial-number label, but usually only 200–500 KB.
 
 const MAX_SIZE = 1600; // longest side, in pixels
-// v13: 0.75 (was 0.8). Every photo also travels in the one shared sync
-// file, so smaller new photos keep that file well under Google's 5 MB
-// "simple upload" size for longer. Photos already saved are not touched.
+// v13: 0.75 (was 0.8). From v13.7 photos live as separate Drive files
+// when sync is on, so this mainly keeps the phone and offline backups
+// smaller. Photos already saved are not touched.
 const QUALITY = 0.75; // JPEG quality: 0 (awful) to 1 (best).
 
 // Takes a File (from the camera or gallery) and gives back a smaller JPEG Blob.
@@ -72,4 +72,26 @@ export async function dataURLToBlob(dataURL) {
   // fetch() understands data: URLs, which is a neat shortcut.
   const res = await fetch(dataURL);
   return res.blob();
+}
+
+// ---- Drive photo refs (sync v3) ----
+// In hearthbook-sync.json a photo is either the old base64 string, or a
+// small object { driveId, mimeType?, data? }. "data" is only kept for one
+// sync so the other phone can cache the picture despite drive.file limits.
+export function isDriveRef(value) {
+  return Boolean(value && typeof value === 'object' && typeof value.driveId === 'string' && value.driveId);
+}
+export function photoDriveId(value) {
+  if (isDriveRef(value)) return value.driveId;
+  return null;
+}
+export function photoEmbeddedData(value) {
+  if (typeof value === 'string' && value.startsWith('data:image/')) return value;
+  if (isDriveRef(value) && typeof value.data === 'string' && value.data.startsWith('data:image/')) return value.data;
+  return null;
+}
+export function packDrivePhoto(driveId, { mimeType = 'image/jpeg', data = null } = {}) {
+  const out = { driveId, mimeType: mimeType || 'image/jpeg' };
+  if (data) out.data = data;
+  return out;
 }

@@ -456,17 +456,17 @@ back. If both phones already have entries the first time they sync, they
 are combined by entry ID. Entries restored from the same backup on both
 phones are not duplicated.
 
-**What's in the folder:** one file, `hearthbook-sync.json`. It holds the
-text of every entry, the tombstones and the photos. Don't rename or delete
-it. Backups and restore work exactly as before. Sync uses the same database,
+**What's in the folder:** `hearthbook-sync.json` (the text of every entry,
+tombstones, and a small pointer per photo) plus a `Hearthbook photos/`
+subfolder of JPEG files (from v13.7). Don't rename or delete the sync file.
+Backups and restore work exactly as before. Sync uses the same database,
 plus a few settings in the `meta` store (`sync`, `syncTombstones`,
-`syncCache`, `syncDiag`) that backups don't include.
+`syncCache`, `syncDiag`, and optionally `photoFolderId`) that backups don't include.
 
-*Older layout.* The first version of sync (2 Oct 2026) also made
-`hearthbook-photos-1.json` … `-8.json`. The phone that created them (Matthew's)
-moves their photos into `hearthbook-sync.json` the next time it syncs. Nothing
-is deleted. Once the Sync details show "layout: v2", those 8 files are no
-longer used and can be deleted from Drive if you like.
+*Older layouts.* v1 (2 Oct 2026) also made `hearthbook-photos-1.json` … `-8.json`.
+v2 put photo bytes inside `hearthbook-sync.json`. v3 (13.7) moves photos to
+separate Drive JPEGs and keeps the sync file text-only. Opening the updated
+app and syncing once migrates; Sync details show "layout: v3" when done.
 
 ### Why "drive.file" permission, and why one file
 

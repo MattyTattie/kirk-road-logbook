@@ -5,16 +5,18 @@
 // app works exactly as before (phone-only, offline).
 //
 // WHAT'S IN THE SHARED FOLDER ("Hearthbook" in Google Drive):
-//   hearthbook-sync.json   ONE file: every entry's text, a "tombstone" for
-//                          each deleted entry, and the photos.
-// One file on purpose. The app uses the low-privilege drive.file
-// permission, so it can only open files it created or that you picked in
-// Google's file picker. Picking a folder does NOT unlock the files inside,
-// and the other phone can't see files created later. With a single file,
-// the person you share it with picks it once and that's it.
-// (Version 1 of sync spread photos over 8 extra files. The first phone to
-// sync with this version copies them into hearthbook-sync.json; the old
-// files are left alone, and you can delete them later.)
+//   hearthbook-sync.json   Text of every entry, tombstones, and a small
+//                          pointer per photo (Drive file id). Stays small.
+//   Hearthbook photos/     One JPEG file per photo (created by the phone
+//                          that first synced it). Each phone also keeps a
+//                          local copy so reopen is instant and offline.
+// The shared JSON is still the one file the other person picks once
+// (drive.file can't unlock a folder's children). New photos briefly carry
+// their image bytes inside the JSON for one sync so the other phone can
+// cache them; after that only the Drive id stays. Offline / no Drive:
+// photos stay on the phone as before.
+// (Version 1 spread photos over 8 JSON files; v2 put them inside the sync
+// file; v3 moves them to separate Drive JPEGs. Older layouts still load.)
 //
 // HOW TWO PHONES AGREE (per entry, "last write wins"):
 //   • every entry has updatedAt (set when you save it);
@@ -31,13 +33,16 @@
 
 import * as db from './db.js';
 import * as drive from './gdrive.js';
-import { blobToDataURL, dataURLToBlob } from './photos.js';
+import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
 export const REQUIRED = [INDEX_NAME]; // what the person joining has to pick
 const FOLDER_NAME = 'Hearthbook';
+const PHOTO_FOLDER_NAME = 'Hearthbook photos';
+const SYNC_VERSION = 3; // v3: photos as separate Drive files (pointers in the JSON)
+
 const STATE_KEY = 'sync'; // meta store: settings for this phone
 const TOMBS_KEY = 'syncTombstones'; // meta store: { entryId: deletedAtISO }
 const CACHE_KEY = 'syncCache'; // meta store: last-seen Drive file (text only), to skip re-downloading
@@ -199,7 +204,7 @@ export async function createShared() {
   try {
     const folder = await drive.createFolder(FOLDER_NAME);
     const index = await drive.createJSON(INDEX_NAME, folder.id, emptyIndex());
-    Object.assign(c, { folder: { id: folder.id, name: folder.name || FOLDER_NAME, owner: true }, files: { index: index.id }, layout: 2 });
+    Object.assign(c, { folder: { id: folder.id, name: folder.name || FOLDER_NAME, owner: true }, files: { index: index.id }, layout: 3 });
     await saveConfig(c);
   } catch (err) {
     await fail(err);
@@ -352,12 +357,12 @@ async function fail(err, c) {
   else setStatus({ ...baseStatus(c), state: 'error', message: err.message || String(err) });
 }
 
-const emptyIndex = () => ({ format: 'hearthbook-sync', version: 2, updatedAt: new Date().toISOString(), records: {}, tombstones: {}, photos: {} });
+const emptyIndex = () => ({ format: 'hearthbook-sync', version: SYNC_VERSION, updatedAt: new Date().toISOString(), records: {}, tombstones: {}, photos: {} });
 const emptyBucket = () => ({ format: 'hearthbook-photos', version: 1, photos: {} });
 function normIndex(d) {
   const e = emptyIndex();
   if (!d || d.format !== 'hearthbook-sync') return e;
-  return { ...e, ...d, records: d.records || {}, tombstones: d.tombstones || {}, photos: d.photos || {}, photoIndex: d.photoIndex || {} };
+  return { ...e, ...d, records: d.records || {}, tombstones: d.tombstones || {}, photos: d.photos || {}, photoIndex: d.photoIndex || {}, photoFolderId: d.photoFolderId || null };
 }
 const normBucket = (d) => (d && d.photos ? d : emptyBucket());
 
@@ -367,6 +372,118 @@ export function bucketOf(photoId) {
   for (const ch of String(photoId)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h % LEGACY_BUCKETS;
 }
+
+export { isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto };
+const photoFileName = (photoId) => `hearthbook-photo-${photoId}.jpg`;
+
+// Find or create the "Hearthbook photos" folder under the shared folder.
+// Joiners may not be able to see the parent folder (drive.file): then we
+// create the photos folder in their Drive root instead. Either way the
+// photo's Drive id is what the sync file stores.
+async function ensurePhotoFolder(c) {
+  if (c.photoFolderId) {
+    try {
+      await drive.getMeta(c.photoFolderId);
+      return c.photoFolderId;
+    } catch { /* recreate below */ }
+  }
+  const parent = c.folder && c.folder.id;
+  if (parent) {
+    try {
+      const kids = await drive.list(`'${parent}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'`);
+      const found = kids.find((k) => k.name === PHOTO_FOLDER_NAME);
+      if (found) {
+        await updateConfig(c, { photoFolderId: found.id });
+        c.photoFolderId = found.id;
+        return found.id;
+      }
+    } catch { /* can't list parent — fine for joiners */ }
+  }
+  try {
+    const folder = await drive.createFolder(PHOTO_FOLDER_NAME, parent || undefined);
+    await updateConfig(c, { photoFolderId: folder.id });
+    c.photoFolderId = folder.id;
+    return folder.id;
+  } catch (err) {
+    console.warn('sync: could not create photo folder', err && err.message);
+    return null;
+  }
+}
+
+async function uploadPhotoBlob(c, photoId, blob) {
+  const parent = await ensurePhotoFolder(c);
+  const meta = await drive.createBlob(
+    photoFileName(photoId),
+    parent,
+    blob,
+    (blob && blob.type) || 'image/jpeg',
+    { hearthbook: 'photo', photoId: String(photoId) },
+  );
+  return meta.id;
+}
+
+// Turn whatever is in the sync file's photos map into a Blob for this phone.
+async function blobFromRemotePhoto(value) {
+  const embedded = photoEmbeddedData(value);
+  if (embedded) return dataURLToBlob(embedded);
+  const driveId = photoDriveId(value);
+  if (driveId) {
+    try { return await drive.readBlob(driveId); } catch (err) {
+      console.info('sync: photo Drive download skipped', driveId, err && err.message);
+      return null;
+    }
+  }
+  return null;
+}
+
+// Build the photos map to write: Drive pointers, with embedded bytes only
+// when the other phone may not have them yet (first publish of this photo).
+async function buildPhotosMap(used, remotePhotos, localBlobs, c, previousDriveOnly) {
+  const photos = {};
+  const remote = remotePhotos || {};
+  for (const id of used) {
+    const existing = remote[id];
+    let driveId = photoDriveId(existing);
+    let blob = localBlobs.get(id) || null;
+    // Prefer an existing Drive file; otherwise upload from this phone.
+    if (!driveId && blob) {
+      try {
+        driveId = await uploadPhotoBlob(c, id, blob);
+      } catch (err) {
+        console.warn('sync: photo upload failed, keeping bytes in sync file', id, err && err.message);
+      }
+    }
+    if (driveId) {
+      // If this Drive id was already published without embedded bytes, keep
+      // it pointer-only. Otherwise include bytes once so the other phone can
+      // cache them (drive.file can't open files this phone created).
+      const alreadyThin = previousDriveOnly && previousDriveOnly.has(id) && previousDriveOnly.get(id) === driveId;
+      let data = null;
+      if (!alreadyThin) {
+        if (!blob && photoEmbeddedData(existing)) data = photoEmbeddedData(existing);
+        else if (blob) data = await blobToDataURL(blob);
+      }
+      photos[id] = packDrivePhoto(driveId, { data });
+      continue;
+    }
+    // No Drive id (offline upload failed, or no local blob): fall back to
+    // whatever we already have, or embed from this phone.
+    if (typeof existing === 'string' && existing.startsWith('data:image/')) photos[id] = existing;
+    else if (photoEmbeddedData(existing)) photos[id] = photoEmbeddedData(existing);
+    else if (blob) photos[id] = await blobToDataURL(blob);
+  }
+  return photos;
+}
+
+// Ids whose sync value is a Drive pointer with no embedded image bytes.
+export function driveOnlyPhotoIds(photosMap) {
+  const out = new Map();
+  for (const [id, value] of Object.entries(photosMap || {})) {
+    if (photoDriveId(value) && !photoEmbeddedData(value)) out.set(id, photoDriveId(value));
+  }
+  return out;
+}
+
 
 // Entries saved before sync existed may lack updatedAt: treat them as old
 // (createdAt, or 1970). Nothing is written back, so this is non-destructive.
@@ -452,7 +569,7 @@ async function syncOnce(c) {
     const before = await drive.getMeta(c.files.index);
     let fileSize = before.size != null ? Number(before.size) : null;
     // Unchanged since last time? Use our saved copy of the text and skip
-    // downloading the (photo-heavy) file.
+    // re-downloading the shared file.
     const cache = await db.getMeta(CACHE_KEY);
     let remote, full = false;
     if (cache && cache.fileId === c.files.index && cache.version === before.version) {
@@ -488,9 +605,24 @@ async function syncOnce(c) {
       return buckets[i].photos[id] || null;
     };
     const remoteHas = new Set(remote.photoIds);
-    const photoData = async (id) => {
-      if (remoteHas.has(id)) { await download(); if (remote.photos[id]) return remote.photos[id]; }
-      return legacy(id);
+    // Resolve a photo id to a Blob: local cache, embedded sync bytes, Drive
+    // file, or a leftover v1 photo bucket.
+    const loadPhotoBlob = async (id) => {
+      if (localBlobs.has(id)) return localBlobs.get(id);
+      if (remoteHas.has(id)) {
+        await download();
+        const value = remote.photos[id];
+        if (value) {
+          const blob = await blobFromRemotePhoto(value);
+          if (blob) return blob;
+        }
+      }
+      const legacyData = await legacy(id);
+      if (legacyData) {
+        if (typeof legacyData === 'string') return dataURLToBlob(legacyData);
+        return blobFromRemotePhoto(legacyData);
+      }
+      return null;
     };
 
     // Entries to write here: the other phone's changes, plus repairs for
@@ -501,41 +633,77 @@ async function syncOnce(c) {
       const l = localById.get(id);
       if (!l || incomingIds.has(id) || stamp(l) !== stamp(rec)) continue;
       const have = new Set((l.photos || []).filter((x) => x.blob).map((x) => x.id));
-      const canGet = (id) => remoteHas.has(id) || (c.files.buckets && remote.photoIndex[id] !== undefined);
+      const canGet = (pid) => remoteHas.has(pid) || (c.files.buckets && remote.photoIndex[pid] !== undefined);
       if ((rec.photos || []).some((ph) => !have.has(ph.id) && canGet(ph.id))) incoming.push(rec);
     }
     const toSave = [];
     for (const r of incoming) {
       const photos = [];
       for (const ph of r.photos || []) {
-        let blob = localBlobs.get(ph.id);
-        if (!blob) { const data = await photoData(ph.id); if (data) blob = await dataURLToBlob(data); }
+        const blob = await loadPhotoBlob(ph.id);
         if (blob) photos.push({ id: ph.id, blob });
       }
       toSave.push({ ...r, photos });
     }
 
-    // Photos the shared file should hold = those used by live entries.
+    // Photos the shared file should point at = those used by live entries.
     const used = new Set();
     for (const rec of Object.values(p.records)) for (const ph of rec.photos || []) used.add(ph.id);
+    const previousDriveOnly = new Map(Object.entries(cache && cache.driveOnlyPhotos || {}));
+    // Also treat remote thin Drive refs as "already published" so we don't
+    // re-embed every photo on every sync after migration.
+    if (full) {
+      for (const [id, value] of Object.entries(remote.photos || {})) {
+        if (photoDriveId(value) && !photoEmbeddedData(value)) previousDriveOnly.set(id, photoDriveId(value));
+      }
+    } else if (cache && cache.driveOnlyPhotos) {
+      for (const [id, did] of Object.entries(cache.driveOnlyPhotos)) previousDriveOnly.set(id, did);
+    }
+    const needsMigrate = [...used].some((id) => {
+      if (!localBlobs.has(id)) return false;
+      if (!remoteHas.has(id)) return true; // we can supply a brand-new photo
+      // Cache hit: photos map not loaded — migrate only if last sync did not
+      // already store this id as a thin Drive pointer.
+      if (!full) return !previousDriveOnly.has(id);
+      // Full download: migrate when the shared value still has no Drive id.
+      return !photoDriveId(remote.photos[id]);
+    });
+    // Need the photo map when migrating, even if cache skipped the download.
     const supplyable = [...used].filter((id) => !remoteHas.has(id) && (localBlobs.has(id) || (c.files.buckets && remote.photoIndex[id] !== undefined)));
     const unused = [...remoteHas].filter((id) => !used.has(id));
-    const legacyLeft = Object.keys(remote.photoIndex).length > 0 || remote.version !== 2;
+    const legacyLeft = Object.keys(remote.photoIndex).length > 0 || (remote.version && remote.version < SYNC_VERSION);
+    // Strip embedded bytes once a Drive id is known on both sides of a sync.
+    const fatLeft = full && [...used].some((id) => photoEmbeddedData(remote.photos[id]) && photoDriveId(remote.photos[id]) && previousDriveOnly.get(id) === photoDriveId(remote.photos[id]));
+    const shouldWrite = p.remoteChanged || supplyable.length || unused.length || needsMigrate || fatLeft || (legacyLeft && (c.files.buckets || needsMigrate || full));
 
-    if (p.remoteChanged || supplyable.length || unused.length || (legacyLeft && c.files.buckets)) {
-      await download(); // need the current photos to write the whole file back
-      const photos = {};
+    if (shouldWrite) {
+      await download(); // need the current photos map to rewrite
+      // Pull any still-embedded / legacy bytes into localBlobs so we can upload.
       for (const id of used) {
-        let data = remote.photos[id];
-        if (!data && localBlobs.has(id)) data = await blobToDataURL(localBlobs.get(id));
-        if (!data) data = await legacy(id);
-        if (data) photos[id] = data;
+        if (localBlobs.has(id)) continue;
+        const value = remote.photos[id];
+        if (photoEmbeddedData(value) || typeof value === 'string') {
+          try {
+            const blob = await blobFromRemotePhoto(value);
+            if (blob) localBlobs.set(id, blob);
+          } catch {}
+        } else {
+          const legacyData = await legacy(id);
+          if (legacyData) {
+            try {
+              const blob = typeof legacyData === 'string' ? await dataURLToBlob(legacyData) : await blobFromRemotePhoto(legacyData);
+              if (blob) localBlobs.set(id, blob);
+            } catch {}
+          }
+        }
       }
-      // v1 -> v2: keep pointers only for photos we still couldn't move.
+      const photos = await buildPhotosMap(used, remote.photos, localBlobs, c, previousDriveOnly);
+      // v1 leftovers we still couldn't move (rare).
       const photoIndex = {};
       for (const [id, i] of Object.entries(remote.photoIndex)) if (used.has(id) && !photos[id]) photoIndex[id] = i;
-      const out = { format: 'hearthbook-sync', version: 2, updatedAt: new Date().toISOString(), records: p.records, tombstones: p.tombstones, photos };
+      const out = { format: 'hearthbook-sync', version: SYNC_VERSION, updatedAt: new Date().toISOString(), records: p.records, tombstones: p.tombstones, photos };
       if (Object.keys(photoIndex).length) out.photoIndex = photoIndex;
+      if (c.photoFolderId) out.photoFolderId = c.photoFolderId;
       // If the other phone wrote the file while we were busy, start again
       // with its version, so neither phone's changes are lost.
       const now = await drive.getMeta(c.files.index);
@@ -543,10 +711,26 @@ async function syncOnce(c) {
       if (!(await stillOn(c))) throw new Error('Sync was switched off.');
       const written = await drive.writeJSON(c.files.index, out);
       fileSize = written && written.size != null ? Number(written.size) : null;
-      await db.setMeta(CACHE_KEY, { fileId: c.files.index, version: written && written.version, index: { records: out.records, tombstones: out.tombstones, photoIndex: out.photoIndex || {}, version: 2 }, photoIds: Object.keys(photos) });
-      if (!c.layout || c.layout < 2) { c.layout = 2; await updateConfig(c, { layout: 2 }); }
+      const driveOnly = Object.fromEntries(driveOnlyPhotoIds(photos));
+      await db.setMeta(CACHE_KEY, {
+        fileId: c.files.index,
+        version: written && written.version,
+        index: { records: out.records, tombstones: out.tombstones, photoIndex: out.photoIndex || {}, version: SYNC_VERSION, photoFolderId: out.photoFolderId },
+        photoIds: Object.keys(photos),
+        driveOnlyPhotos: driveOnly,
+      });
+      if (!c.layout || c.layout < 3) { c.layout = 3; await updateConfig(c, { layout: 3, ...(out.photoFolderId ? { photoFolderId: out.photoFolderId } : {}) }); }
     } else if (full) {
-      await db.setMeta(CACHE_KEY, { fileId: c.files.index, version: before.version, index: { records: remote.records, tombstones: remote.tombstones, photoIndex: remote.photoIndex, version: remote.version }, photoIds: remote.photoIds });
+      const driveOnly = Object.fromEntries(driveOnlyPhotoIds(remote.photos));
+      await db.setMeta(CACHE_KEY, {
+        fileId: c.files.index,
+        version: before.version,
+        index: { records: remote.records, tombstones: remote.tombstones, photoIndex: remote.photoIndex, version: remote.version, photoFolderId: remote.photoFolderId },
+        photoIds: remote.photoIds,
+        driveOnlyPhotos: driveOnly,
+      });
+      if (remote.photoFolderId && !c.photoFolderId) await updateConfig(c, { photoFolderId: remote.photoFolderId });
+      if (remote.version >= 3 && (!c.layout || c.layout < 3)) await updateConfig(c, { layout: 3 });
     }
 
     // Apply the other phone's changes here (unless you saved something
