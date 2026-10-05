@@ -454,12 +454,13 @@ async function buildPhotosMap(used, remotePhotos, localBlobs, c, previousDriveOn
       }
     }
     if (driveId) {
-      // If this Drive id was already published without embedded bytes, keep
-      // it pointer-only. Otherwise include bytes once so the other phone can
-      // cache them (drive.file can't open files this phone created).
-      const alreadyThin = previousDriveOnly && previousDriveOnly.has(id) && previousDriveOnly.get(id) === driveId;
+      // Include image bytes only the first time this Drive id is published,
+      // so the other phone can cache them (drive.file can't open files this
+      // phone created). Later syncs keep the pointer only and the file stays small.
+      const alreadyPublished = photoDriveId(existing) === driveId
+        || (previousDriveOnly && previousDriveOnly.has(id) && previousDriveOnly.get(id) === driveId);
       let data = null;
-      if (!alreadyThin) {
+      if (!alreadyPublished) {
         if (!blob && photoEmbeddedData(existing)) data = photoEmbeddedData(existing);
         else if (blob) data = await blobToDataURL(blob);
       }
@@ -673,7 +674,9 @@ async function syncOnce(c) {
     const unused = [...remoteHas].filter((id) => !used.has(id));
     const legacyLeft = Object.keys(remote.photoIndex).length > 0 || (remote.version && remote.version < SYNC_VERSION);
     // Strip embedded bytes once a Drive id is known on both sides of a sync.
-    const fatLeft = full && [...used].some((id) => photoEmbeddedData(remote.photos[id]) && photoDriveId(remote.photos[id]) && previousDriveOnly.get(id) === photoDriveId(remote.photos[id]));
+    // Any photo that still carries embedded bytes alongside a Drive id should
+    // be rewritten pointer-only so the shared file shrinks after migration.
+    const fatLeft = full && [...used].some((id) => photoEmbeddedData(remote.photos[id]) && photoDriveId(remote.photos[id]));
     const shouldWrite = p.remoteChanged || supplyable.length || unused.length || needsMigrate || fatLeft || (legacyLeft && (c.files.buckets || needsMigrate || full));
 
     if (shouldWrite) {
