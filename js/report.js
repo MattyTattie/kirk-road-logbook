@@ -7,7 +7,7 @@
 import { SECTIONS, getSection, soonDaysFor, insuranceTypeLabel, annualCost } from './sections.js';
 import { APP_NAME, ADDRESS } from './config.js';
 import { getAllEntries } from './db.js';
-import { el, money, totalCost, niceDate, daysUntil, dueText, newestFirst } from './utils.js';
+import { el, fill, money, totalCost, niceDate, daysUntil, dueText, newestFirst } from './utils.js';
 
 async function build() {
   const entries = (await getAllEntries()).sort(newestFirst);
@@ -46,7 +46,7 @@ async function build() {
       policies.length ? ` · insurance ${money(totalCost(policies.map((e) => ({ cost: annualCost(e) }))))} a year` : ''));
   }
 
-  root.replaceChildren(...parts);
+  fill(root, ...parts);
 
   // Wait until every thumbnail has loaded, then mark the page "ready" —
   // otherwise printing straight away could miss some pictures.

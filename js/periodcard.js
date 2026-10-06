@@ -9,7 +9,7 @@
 // It stops at the first and last period. onChange(i) lets the chart
 // highlight the matching bar.
 
-import { el } from './utils.js';
+import { el, fill } from './utils.js';
 import { icon } from './icons.js';
 
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -33,14 +33,14 @@ export function periodCard({ id, count, index, render, onChange, label = 'period
     pos
   );
 
-  function fill(i) {
+  function showAt(i) {
     const r = render(i);
     title.textContent = r.title;
     sub.textContent = r.sub || '';
-    slide.replaceChildren(r.body);
+    fill(slide, r.body);
     prev.disabled = i <= 0;
     next.disabled = i >= count - 1;
-    pos.replaceChildren(...Array.from({ length: count }, (_, k) => el('span', { class: 'dot' + (k === i ? ' on' : '') })));
+    fill(pos, ...Array.from({ length: count }, (_, k) => el('span', { class: 'dot' + (k === i ? ' on' : '') })));
     card.dataset.index = String(i);
   }
 
@@ -51,7 +51,7 @@ export function periodCard({ id, count, index, render, onChange, label = 'period
     current = i;
     onChange && onChange(i);
     if (reduceMotion()) {
-      fill(i);
+      showAt(i);
       busy = false;
       return;
     }
@@ -59,7 +59,7 @@ export function periodCard({ id, count, index, render, onChange, label = 'period
     slide.style.transform = `translateX(${dir * -60}%)`;
     slide.style.opacity = '0';
     await wait(180);
-    fill(i);
+    showAt(i);
     slide.style.transition = 'none';
     slide.style.transform = `translateX(${dir * 60}%)`;
     void slide.offsetWidth;
@@ -128,7 +128,7 @@ export function periodCard({ id, count, index, render, onChange, label = 'period
   viewport.addEventListener('pointerup', end);
   viewport.addEventListener('pointercancel', end);
 
-  fill(current);
+  showAt(current);
   card.show = (i) => { if (i !== current) { const dir = i > current ? -1 : 1; go(i, dir); } };
   card.getIndex = () => current;
   return card;

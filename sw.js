@@ -41,9 +41,10 @@
 // v13.8 = photo move to Drive resumes after an interruption (no duplicates or
 //         empty files), checked uploads, sync file rewritten every 10 photos,
 //         one sync at a time, "Moving photos to Drive: 12 of 38" progress.
+// v13.9 = no stray word "null" on entry pages, rooms, tagging or year in review.
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v13.8';
+const CACHE_NAME = 'hearthbook-v13.9';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 

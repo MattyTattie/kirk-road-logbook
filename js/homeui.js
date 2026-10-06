@@ -6,7 +6,7 @@
 // app.js hands in the few helpers these need (entryCard, sectionTile…),
 // so this file doesn't depend on app.js.
 
-import { el, money, niceDate } from './utils.js';
+import { el, fill, addTo, money, niceDate } from './utils.js';
 import { icon } from './icons.js';
 import { SECTIONS, getSection } from './sections.js';
 import { houseSVG, skyPhase, glowLevel } from './house.js';
@@ -55,7 +55,7 @@ export function houseCard(everything) {
         `Last bill ${money(f.latest.cost)} · ${pct === 0 ? 'about average' : `${Math.abs(pct)}% ${pct > 0 ? 'above' : 'below'} average`}`));
     }
     if (f.due) chips.push(el('a', { class: 'hc-chip due', href: '#coming-up', id: 'house-due' }, icon('clock', 14), `${f.due} due within 30 days`));
-    card.replaceChildren(pic, el('div', { class: 'house-caption' }, chips));
+    fill(card, pic, el('div', { class: 'house-caption' }, chips));
     card.dataset.phase = phase;
     card.dataset.glow = f.glow.toFixed(2);
     card.dataset.due = String(f.due);
@@ -138,15 +138,14 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
               el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`),
                 el('div', { class: 'entry-sub' }, a.notes || a.model))))))
       : null;
-    results.replaceChildren(...[
+    fill(results,
       answerCard(r.answer),
       r.results.length ? null : manualHits,
       el('p', { class: 'ask-summary', id: 'ask-summary' }, r.results.length
         ? `${r.results.length} ${r.results.length === 1 ? (scope === 'entries' ? 'entry' : scope.replace(/ies\b/, 'y').replace(/s\b/, '')) : scope}${r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) : ''}`
         : count ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`),
       el('div', { class: 'list', id: 'ask-list' }, shown.map(entryCard)),
-      r.results.length ? manualHits : null,
-    ].filter(Boolean));
+      r.results.length ? manualHits : null);
   }
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 120); });
   input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { clearTimeout(t); run(); input.blur(); } if (ev.key === 'Escape') { input.value = ''; run(); } });
@@ -179,7 +178,7 @@ export function tourCard() {
     const s = TOUR[step];
     const last = step === TOUR.length - 1;
     card.dataset.step = String(step + 1);
-    card.replaceChildren(
+    fill(card,
       el('div', { class: 'tour-body', role: 'group', 'aria-label': `Step ${step + 1} of ${TOUR.length}` },
         el('span', { class: 'badge badge-lg', 'data-tone': s.tone }, icon(s.glyph, 26)),
         el('div', {}, el('h2', { class: 'tour-title', id: 'tour-title' }, s.title), el('p', { class: 'tour-text' }, s.text))),
@@ -223,17 +222,17 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     sub.textContent = sub.hidden ? '' : `Calendar year, 1 Jan – ${now.getDate()} ${now.toLocaleDateString('en-GB', { month: 'short' })}`;
     box.dataset.year = String(y);
     const shown = prefs.orderedSections();
-    grid.replaceChildren(...shown.map((s) => {
+    fill(grid, ...shown.map((s) => {
       const t = sectionTile(s, everything, y);
       if (editing) {
         t.setAttribute('aria-describedby', 'tiles-hint');
-        t.append(el('button', { type: 'button', class: 'tile-hide', 'aria-label': `Hide ${s.label}`, 'data-hide': s.id }, icon('minus', 14)));
+        addTo(t, el('button', { type: 'button', class: 'tile-hide', 'aria-label': `Hide ${s.label}`, 'data-hide': s.id }, icon('minus', 14)));
       }
       return t;
     }));
     const hidden = prefs.orderedSections({ includeHidden: true }).filter((s) => prefs.isHidden(s.id));
     tray.hidden = !editing || !hidden.length;
-    tray.replaceChildren(el('span', { class: 'tray-label' }, 'Hidden'), ...hidden.map((s) =>
+    fill(tray, el('span', { class: 'tray-label' }, 'Hidden'), ...hidden.map((s) =>
       el('button', { type: 'button', class: 'tray-chip', 'data-show': s.id, 'aria-label': `Show ${s.label}`, 'data-tone': s.tone }, icon('plus', 14), s.label)));
   }
   function setEditing(on) {
@@ -308,7 +307,7 @@ export function customiseCard(cardHead, onChange = () => {}) {
   const list = el('ul', { class: 'customise-list', id: 'customise-list' });
   function draw() {
     const all = prefs.orderedSections({ includeHidden: true });
-    list.replaceChildren(...all.map((s, i) => {
+    fill(list, ...all.map((s, i) => {
       const shown = !prefs.isHidden(s.id);
       return el('li', { class: 'customise-row' + (shown ? '' : ' is-hidden'), 'data-section': s.id, 'data-tone': s.tone },
         el('span', { class: 'drag-handle', 'aria-hidden': 'true', title: 'Drag to reorder' }, el('i'), el('i'), el('i')),

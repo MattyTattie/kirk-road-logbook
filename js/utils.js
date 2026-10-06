@@ -23,12 +23,31 @@ export function el(tag, attrs = {}, ...children) {
       node.setAttribute(key, value === true ? '' : value);
     }
   }
-  for (const child of children.flat(Infinity)) { // flat(Infinity) unpacks lists inside lists
-    if (child === null || child === undefined || child === false) continue;
-    node.append(child instanceof Node ? child : String(child));
-  }
+  node.append(...kids(children));
   return node;
 }
+
+// v13.9: the browser's own node.replaceChildren(), node.append() and
+// node.prepend() print a null, undefined or false as the WORD "null" /
+// "undefined" / "false" (that's how "null" appeared on an entry with no
+// manual). So nothing in the app calls them with page content directly any
+// more: use these three instead. Like el(), they unpack lists inside lists
+// and skip null / undefined / false; anything else that isn't a piece of
+// the page is shown as text.
+//   fill(box, a, b)     — box now holds just a, b   (replaceChildren)
+//   addTo(box, a, b)    — a, b added at the end     (append)
+//   addFirst(box, a, b) — a, b added at the start   (prepend)
+export function kids(children) {
+  const out = [];
+  for (const child of [children].flat(Infinity)) { // flat(Infinity) unpacks lists inside lists
+    if (child === null || child === undefined || child === false) continue;
+    out.push(child instanceof Node ? child : String(child));
+  }
+  return out;
+}
+export function fill(node, ...children) { node.replaceChildren(...kids(children)); return node; }
+export function addTo(node, ...children) { node.append(...kids(children)); return node; }
+export function addFirst(node, ...children) { node.prepend(...kids(children)); return node; }
 
 // Formats a number as pounds, e.g. 1234.5 -> "£1,234.50". An entry from a
 // holiday can be in another currency (entry.currency, e.g. 'EUR' -> "€11.90").

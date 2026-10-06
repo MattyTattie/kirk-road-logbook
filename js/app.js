@@ -31,7 +31,7 @@ import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
 import { exportBackup, importBackup } from './backup.js';
-import { el, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
+import { el, fill, addTo, addFirst, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
@@ -142,7 +142,7 @@ async function drawScreen(parts, viaTransition) {
     else await renderHome();
   } catch (err) {
     console.error(err);
-    app.replaceChildren(el('div', { class: 'card error' }, 'Something went wrong: ' + err.message));
+    fill(app, el('div', { class: 'card error' }, 'Something went wrong: ' + err.message));
   }
   // Replay the gentle "slide in" animation for the new screen.
   app.classList.remove('screen-in');
@@ -204,7 +204,7 @@ function sectionBadge(section, size = 'md') {
 // A little pop-up message at the bottom of the screen, e.g. "Saved".
 function toast(message) {
   const t = el('div', { class: 'toast', role: 'status' }, icon('check', 18), message);
-  document.body.append(t);
+  addTo(document.body, t);
   setTimeout(() => t.classList.add('out'), 2200);
   setTimeout(() => t.remove(), 2600);
 }
@@ -264,7 +264,7 @@ function renderWelcome() {
   document.body.classList.add('no-nav'); // a clean, full-screen first impression
   const point = (glyph, tone, title, text) =>
     el('li', { class: 'welcome-point' }, el('span', { class: 'badge badge-md', 'data-tone': tone }, icon(glyph)), el('div', {}, el('strong', {}, title), el('span', {}, text)));
-  app.replaceChildren(
+  fill(app,
     el(
       'section',
       { class: 'welcome', id: 'welcome', 'aria-labelledby': 'welcome-title' },
@@ -304,7 +304,7 @@ async function renderHome() {
   );
 
   if (everything.length === 0) {
-    app.replaceChildren(
+    fill(app,
       el('div', { class: 'dash', id: 'dashboard' },
         head,
         tourCard(), // first run: the tour shows even before anything is added
@@ -463,7 +463,7 @@ async function renderHome() {
     chart = barChart(months, { height: 150, selected: pick, format: (v) => money(v).replace(/\.\d\d$/, ''),
       describe: yr ? (bar, v) => `${bar.title}: ${money(v)}; ${bar.compareTitle}: ${money(bar.compare)}` : undefined,
       onSelect: (i) => { state.chartPick = i; chart.select(i); card.show(i); } });
-    chartCard.replaceChildren(...[
+    fill(chartCard,
       el('div', { class: 'card-head' },
         el('div', {}, el('h2', { class: 'card-title', id: 'chart-title' }, 'Spending'), sub),
         el('div', { class: 'seg', role: 'group', 'aria-label': 'Chart shows' }, seg('all', 'All'), seg('bills', 'Bills'))
@@ -471,8 +471,7 @@ async function renderHome() {
       yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
-      card
-    ].filter(Boolean)); // (replaceChildren would print a null as "null")
+      card); // fill() skips the null (replaceChildren would print it as "null")
     drawTiles(); // the tiles follow the year picker
   }
   drawChart();
@@ -485,9 +484,9 @@ async function renderHome() {
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
   const dash = el('div', { class: 'dash', id: 'dashboard' });
   const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
-  function redrawHero() { hero.querySelector('.hero-split').replaceChildren(...heroChips()); }
+  function redrawHero() { fill(hero.querySelector('.hero-split'), ...heroChips()); }
 
-  dash.append(...[
+  addTo(dash,
       head,
       ask,
       tourCard(),
@@ -505,9 +504,8 @@ async function renderHome() {
       chartCard,
       el('section', { class: 'group' },
         el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
-        el('div', { class: 'list' }, recent.map(entryCard))),
-  ].filter(Boolean));
-  app.replaceChildren(dash);
+        el('div', { class: 'list' }, recent.map(entryCard))));
+  fill(app, dash);
   const heroValue = document.getElementById('spend-year');
   if (heroValue) countUp(heroValue, thisYear, (v) => money(v));
 }
@@ -610,7 +608,7 @@ async function renderList(type, year = 0) {
     const found = q ? askSearch(inSection, state.query, { sectionWords: type === 'all' }) : null;
     const hits = found ? new Set(found.results.map((x) => x.entry)) : null;
     const shown = hits ? inSection.filter((e) => hits.has(e)) : inSection;
-    answerBox.replaceChildren(...(found && found.answer && found.answer.kind === 'date'
+    fill(answerBox, ...(found && found.answer && found.answer.kind === 'date'
       ? [el('a', { class: 'answer-card', id: 'list-answer-card', href: `#/view/${found.answer.entry.id}` },
           el('span', { class: 'badge badge-md', 'data-tone': getSection(found.answer.entry.type).tone }, icon(getSection(found.answer.entry.type).glyph, 22)),
           el('div', { class: 'answer-text' }, el('span', { class: 'answer-title' }, found.answer.entry.title),
@@ -620,22 +618,22 @@ async function renderList(type, year = 0) {
     // Insurance: soonest renewal first, with the yearly cost of all policies.
     if (section && section.kind === 'insurance') {
       const byRenewal = [...shown].sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
-      summary.replaceChildren(
+      fill(summary,
         el('span', {}, `${shown.length} polic${shown.length === 1 ? 'y' : 'ies'}`),
         el('span', { class: 'total' }, 'Yearly ', el('strong', { id: 'total' }, money(totalCost(shown.map((e) => ({ cost: annualCost(e) })))))));
-      list.replaceChildren(...(byRenewal.length ? byRenewal.map(entryCard)
+      fill(list, ...(byRenewal.length ? byRenewal.map(entryCard)
         : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
             el('p', {}, q ? 'Nothing matches your search.' : 'No insurance policies yet. Tap + to add home, car or life cover and get a reminder before each renewal.'))]));
       return;
     }
 
-    summary.replaceChildren(
+    fill(summary,
       el('span', {}, `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`),
       el('span', { class: 'total' }, 'Total ', el('strong', { id: 'total' }, money(totalCost(shown.filter(isSpend)))))
     );
 
     if (shown.length === 0) {
-      list.replaceChildren(
+      fill(list,
         el(
           'div',
           { class: 'empty' },
@@ -653,7 +651,7 @@ async function renderList(type, year = 0) {
       if (!g || g.key !== key) groups.push((g = { key, items: [] }));
       g.items.push(e);
     }
-    list.replaceChildren(
+    fill(list,
       ...groups.flatMap((g) => [
         el('div', { class: 'month-head' },
           el('span', {}, g.key === 'undated' ? 'No date' : monthName(g.key)),
@@ -669,7 +667,7 @@ async function renderList(type, year = 0) {
   });
   drawList();
 
-  app.replaceChildren(...screen.filter(Boolean));
+  fill(app, screen);
 }
 
 // Summary card + usage chart at the top of the meter readings list.
@@ -704,7 +702,7 @@ function meterInsights(everything) {
       onChange: (k) => chart.select(k),
     });
     hint.remove();
-    slot.replaceChildren(card);
+    fill(slot, card);
   };
   const years = yearsWithData(r).slice(-3);
   if (state.meterYear && !years.includes(state.meterYear)) state.meterYear = 0;
@@ -725,12 +723,12 @@ function meterInsights(everything) {
         if (card) return card.show(i);
         card = periodCard({ id: 'period', label: 'month', count: 12, index: i, render: (k) => meterMonthDetail(now[k], then[k], unit, everything), onChange: (k) => chart.select(k) });
         hint.remove();
-        slot.replaceChildren(card);
+        fill(slot, card);
       };
       chart = barChart(months, { height: 120, selected: -1, format: (v) => Math.round(v).toLocaleString('en-GB'),
         describe: (bar, v) => `${bar.title}: ${Math.round(v)} ${unit}; ${bar.compareTitle}: ${Math.round(bar.compare)} ${unit}`, onSelect: pickM });
       const d = sumNow - sumThen;
-      box.replaceChildren(
+      fill(box,
         yearPicker('meter-years', years, yr, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }),
         el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `${unit} used per month in ${yr}`,
           upTo.length ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'meter-yoy' }, ` · ${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(sumThen ? (d / sumThen) * 100 : 0))}% vs ${yr - 1} (${upTo.length} month${upTo.length === 1 ? '' : 's'} with readings in both)`) : el('span', { class: 'yoy', id: 'meter-yoy' }, ` · no ${yr - 1} readings to compare`)),
@@ -747,8 +745,8 @@ function meterInsights(everything) {
       intervals.map((i) => ({ label: new Date(i.to.date).toLocaleDateString('en-GB', { month: 'short' }).slice(0, 1), title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
       { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
     ) : null;
-    box.replaceChildren(...(chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null,
-      el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot].filter(Boolean) : []));
+    fill(box, chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null,
+      el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot] : null);
   }
   draw();
   return el(
@@ -951,7 +949,7 @@ function entryCard(e) {
 // SEARCH: "Ask Hearthbook" on its own screen (app shortcut "Search")
 // ---------------------------------------------------------------------
 function renderSearch(initial = '') {
-  app.replaceChildren(
+  fill(app,
     screenHead('Ask Hearthbook', { back: { href: '#/home', label: 'Home' }, sub: 'Search everything on this phone — or ask “when does … renew?”' }),
     askBox({ getEntries: () => db.getAllEntries(), entryCard, autofocus: true, examples: true, initial }));
 }
@@ -961,7 +959,7 @@ function renderSearch(initial = '') {
 // ---------------------------------------------------------------------
 const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Electricity bills and meter readings', insurance: 'Home, car and life policies' };
 function renderChooser() {
-  app.replaceChildren(
+  fill(app,
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
     el('a', { class: 'scan-choice', href: '#/scan', id: 'scan-choice' },
       el('span', { class: 'scan-choice-icon' }, icon('scan', 26)),
@@ -1014,12 +1012,12 @@ async function renderScan(arg) {
   const body = el('div', { class: 'scan-body', id: 'scan-body' });
   const offline = el('p', { class: 'scan-offline', id: 'scan-offline' });
   ocrReady().then((ready) => {
-    offline.replaceChildren(icon(ready ? 'check' : 'download', 16), ready ? 'Works offline — nothing leaves this phone' : 'Nothing leaves this phone. The reader downloads once (about 8 MB) for offline use.');
+    fill(offline, icon(ready ? 'check' : 'download', 16), ready ? 'Works offline — nothing leaves this phone' : 'Nothing leaves this phone. The reader downloads once (about 8 MB) for offline use.');
   });
 
   function picker(error) {
-    body.replaceChildren(
-      ...[error ? el('div', { class: 'banner warn', id: 'scan-error', role: 'alert' }, icon('alert', 20), el('div', {}, el('strong', {}, 'Couldn’t read that'), el('p', {}, error))) : null,
+    fill(body,
+      error ? el('div', { class: 'banner warn', id: 'scan-error', role: 'alert' }, icon('alert', 20), el('div', {}, el('strong', {}, 'Couldn’t read that'), el('p', {}, error))) : null,
       el('div', { class: 'scan-hero' },
         el('div', { class: 'scan-art', 'aria-hidden': 'true' }, el('span', { class: 'scan-doc' }, el('i'), el('i'), el('i'), el('i')), el('span', { class: 'scan-beam' })),
         el('h2', {}, 'Snap it, we’ll fill it in'),
@@ -1027,7 +1025,7 @@ async function renderScan(arg) {
       el('div', { class: 'scan-actions' },
         el('button', { type: 'button', class: 'btn btn-lg', id: 'scan-camera', onclick: () => cameraInput.click() }, icon('camera', 20), 'Take photo'),
         el('button', { type: 'button', class: 'btn btn-lg secondary', id: 'scan-pick', onclick: () => fileInput.click() }, icon('file', 20), 'Choose photo or PDF')),
-      offline].filter(Boolean)
+      offline
     );
   }
 
@@ -1037,9 +1035,9 @@ async function renderScan(arg) {
     const bar = el('span', { class: 'scan-bar-fill' });
     const status = el('p', { class: 'scan-status', id: 'scan-status', 'aria-live': 'polite' }, 'Getting ready…');
     const preview = el('div', { class: 'scan-preview' + (isPdf ? ' is-pdf' : '') }, el('span', { class: 'scan-beam' }));
-    if (!isPdf) preview.prepend(el('img', { src: photoURL(file), alt: '' }));
-    else preview.prepend(el('span', { class: 'scan-pdf-icon' }, icon('file', 40), el('span', {}, file.name || 'PDF')));
-    body.replaceChildren(
+    if (!isPdf) addFirst(preview, el('img', { src: photoURL(file), alt: '' }));
+    else addFirst(preview, el('span', { class: 'scan-pdf-icon' }, icon('file', 40), el('span', {}, file.name || 'PDF')));
+    fill(body,
       el('div', { class: 'scan-reading', id: 'scan-reading' },
         preview,
         el('h2', {}, 'Reading…'),
@@ -1104,14 +1102,14 @@ async function renderScan(arg) {
     const manualFirst = /manual|guide|instruction|handbook|user|install/i.test(file.name || '') || pages >= 6;
     const asScan = el('button', { type: 'button', class: 'btn btn-lg' + (manualFirst ? ' secondary' : ''), id: 'shared-as-scan', onclick: () => go(file) }, icon('scan', 20), 'Read it as a bill or receipt');
     const asManual = el('button', { type: 'button', class: 'btn btn-lg' + (manualFirst ? '' : ' secondary'), id: 'shared-as-manual', onclick: () => { pendingManualFile = file; location.replace('#/addmanual/shared'); } }, icon('book', 20), 'Keep it as a manual');
-    body.replaceChildren(
+    fill(body,
       el('div', { class: 'scan-hero', id: 'shared-choice' },
         el('span', { class: 'scan-pdf-icon' }, icon('file', 40), el('span', {}, file.name || 'PDF')),
         el('h2', {}, 'What is this PDF?'),
         el('p', {}, `${userManuals.sizeText(file.size)}${pages ? ` · ${pages} page${pages === 1 ? '' : 's'}` : ''}`)),
       el('div', { class: 'scan-actions' }, ...(manualFirst ? [asManual, asScan] : [asScan, asManual])));
   }
-  app.replaceChildren(
+  fill(app,
     el('div', { class: 'scan', id: 'scan' },
       screenHead('Scan receipt or bill', { back: { href: '#/new', label: 'Add' }, sub: 'Photo, screenshot or PDF' }),
       body, cameraInput, fileInput)
@@ -1196,8 +1194,8 @@ async function renderForm(type, id) {
   const form = el('form', { class: 'form', id: 'entry-form', novalidate: true });
 
   // v13.5: drop the nulls first — Element.append(null) prints the word "null"
-  // (it showed above Title/Date on every non-insurance form).
-  form.append(...[
+  // (it showed above Title/Date on every non-insurance form). v13.9: addTo() does that.
+  addTo(form,
     el('header', { class: 'form-head' },
       el('a', { class: 'back', href: id ? `#/view/${id}` : '#/new', onclick: (ev) => { ev.preventDefault(); history.back(); } }, icon('back', 20), 'Back'),
       el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title' }, `${id ? 'Edit' : 'New'} ${section.single.toLowerCase()}`))
@@ -1240,16 +1238,15 @@ async function renderForm(type, id) {
           ),
           field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
             CURRENCIES.map(([code, sym]) => el('option', { value: code, selected: (entry.currency || 'GBP') === code }, `${sym} ${code}`))))),
-    ins ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' }))
-  ].filter(Boolean));
+    ins ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' })));
 
   // Suggest suppliers you've used before (a "datalist" gives autocomplete).
   const allEntries = await db.getAllEntries();
   const suppliers = [...new Set(allEntries.map((e) => e.supplier).filter(Boolean))].sort();
-  form.append(el('datalist', { id: 'supplier-list' }, suppliers.map((s) => el('option', { value: s }))));
+  addTo(form, el('datalist', { id: 'supplier-list' }, suppliers.map((s) => el('option', { value: s }))));
 
   if (section.showMeter) {
-    form.append(
+    addTo(form,
       el(
         'div',
         { class: 'row' },
@@ -1261,7 +1258,7 @@ async function renderForm(type, id) {
     // Tariff from the bill. Several unit rates when the price changed part way
     // through ("21.074 to 26 Feb, 20.189 from 27 Feb") or for day/night meters.
     const t = entry.tariff || null;
-    form.append(
+    addTo(form,
       el('details', { class: 'tariff-fields', open: Boolean(t && (t.rates || []).length) || undefined },
         el('summary', {}, 'Tariff from the bill (optional)'),
         field('Unit rate(s), pence per kWh', el('input', { name: 'unitRates', value: t ? ratesToText(t.rates) : '', autocomplete: 'off', placeholder: 'e.g. 21.074  or  Day 30.1, Night 15.2' }),
@@ -1270,20 +1267,20 @@ async function renderForm(type, id) {
     );
   }
   if (section.showDue) {
-    form.append(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : null));
+    addTo(form, field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : null));
   }
-  if (ins) form.append(field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
+  if (ins) addTo(form, field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
   // v13: which room it belongs to (optional; jobs, receipts, warranties).
   const roomable = rooms.ROOM_TYPES.includes(entry.type);
   if (roomable) {
     const names = rooms.roomList(await rooms.getStored(), allEntries);
     if (entry.room && !names.some((r) => rooms.sameRoom(r, entry.room))) names.push(entry.room);
-    form.append(field('Room (optional)', el('select', { name: 'room', id: 'room-select' },
+    addTo(form, field('Room (optional)', el('select', { name: 'room', id: 'room-select' },
       el('option', { value: '' }, 'No room'),
       names.map((r) => el('option', { value: r, selected: Boolean(entry.room) && rooms.sameRoom(r, entry.room) }, r))),
       'Add or rename rooms under More → Rooms.'));
   }
-  form.append(field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
+  addTo(form, field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
 
   // --- Photos ---
   // Two hidden file pickers. capture="environment" opens the back camera
@@ -1294,7 +1291,7 @@ async function renderForm(type, id) {
   const busy = el('p', { class: 'hint', hidden: true }, 'Shrinking photo…');
 
   function drawPhotos() {
-    photoGrid.replaceChildren(
+    fill(photoGrid,
       ...photos.map((p, i) =>
         el(
           'div',
@@ -1330,7 +1327,7 @@ async function renderForm(type, id) {
   cameraInput.addEventListener('change', () => { addFiles([...cameraInput.files]); cameraInput.value = ''; });
   galleryInput.addEventListener('change', () => { addFiles([...galleryInput.files]); galleryInput.value = ''; });
 
-  form.append(
+  addTo(form,
     el('div', { class: 'field' }, el('span', { class: 'label' }, ins ? 'Photos & documents' : 'Photos'), photoGrid, busy,
       el(
         'div',
@@ -1345,7 +1342,7 @@ async function renderForm(type, id) {
   drawPhotos();
 
   const errorBox = el('p', { class: 'error', id: 'form-error', hidden: true });
-  form.append(
+  addTo(form,
     errorBox,
     el('div', { class: 'row sticky-actions' },
       el('button', { type: 'button', class: 'btn secondary', onclick: () => history.back() }, 'Cancel'),
@@ -1428,7 +1425,7 @@ async function renderForm(type, id) {
       if (input && String(input.value ?? '') !== '') input.classList.add('prefilled');
     }
   }
-  app.replaceChildren(form);
+  fill(app, form);
   if (!id && !scan) form.elements.title.focus();
 }
 
@@ -1450,7 +1447,7 @@ const SIZE_WARN = 4 * 1048576; // "getting big" note from 4 MB (Google's simple-
 async function syncCard(cardHead) {
   const st = sync.getStatus();
   const card = el('section', { class: 'card sync-card', id: 'sync-card', 'data-state': st.state });
-  const add = (...kids) => card.append(...kids.flat().filter(Boolean));
+  const add = (...parts) => addTo(card, parts); // v13.9: addTo skips the nulls
   const head = cardHead('backup', 'violet', 'Share with Google Drive');
   const rerender = async () => { if (card.isConnected) card.replaceWith(await syncCard(cardHead)); };
   const busyBtn = async (btn, label, fn) => {
@@ -1577,7 +1574,7 @@ async function syncCard(cardHead) {
 // app can open, so a problem can be diagnosed from a screenshot.
 async function syncDetails() {
   const box = el('pre', { class: 'sync-diag', id: 'sync-diag' });
-  const fill = async () => {
+  const loadDiag = async () => {
     const [c, d, st] = [await sync.getConfig(), await sync.getDiag(), sync.getStatus()];
     const short = (id) => (!id ? '—' : String(id).length > 16 ? String(id).slice(0, 10) + '…' + String(id).slice(-4) : String(id));
     const lines = [
@@ -1599,7 +1596,7 @@ async function syncDetails() {
     ].filter(Boolean);
     box.textContent = lines.join('\n');
   };
-  await fill();
+  await loadDiag();
   return el('details', { class: 'sync-more', id: 'sync-details' },
     el('summary', {}, 'Sync details (for troubleshooting)'),
     box,
@@ -1607,7 +1604,7 @@ async function syncDetails() {
       const btn = ev.currentTarget;
       btn.disabled = true;
       try { await sync.refreshDiag(); } catch (err) { box.textContent += `\nrefresh failed: ${err.message}`; }
-      await fill();
+      await loadDiag();
       btn.disabled = false;
     } }, 'Refresh details'));
 }
@@ -1668,7 +1665,7 @@ function parseMoney(text) {
 async function renderDetail(id) {
   const e = await db.getEntry(id);
   if (!e) {
-    app.replaceChildren(
+    fill(app,
       el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon('file', 36)), el('p', {}, 'That entry was not found.')),
       el('a', { class: 'btn', href: '#/list/all' }, 'Back to list')
     );
@@ -1717,7 +1714,9 @@ async function renderDetail(id) {
             el('a', { class: 'btn secondary manual-btn', href: `#/manual/${encodeURIComponent(f.file)}`, id: i ? null : 'manual-btn', 'data-file': f.file }, icon('book', 20), appliance.files.length + mine.length > 1 ? f.label : 'Manual')),
           mine.map((m) => el('a', { class: 'btn secondary manual-btn user-manual-btn', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id }, icon('book', 20), m.name))))
     : null;
-  app.replaceChildren(
+  // v13.9: fill() (utils.js) skips the nulls: no manual, no notes or no
+  // photos used to print the word "null" here (replaceChildren does that).
+  fill(app,
     el('a', { class: 'back', href: `#/list/${e.type}` }, icon('back', 20), section.label),
     el(
       'header',
@@ -1772,7 +1771,7 @@ function showFullPhoto(url) {
   const overlay = el('div', { class: 'overlay', role: 'dialog', 'aria-label': 'Photo', onclick: () => overlay.remove() },
     el('img', { src: url, alt: 'Photo' }),
     el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close' }, icon('x', 22)));
-  document.body.append(overlay);
+  addTo(document.body, overlay);
 }
 
 // ---------------------------------------------------------------------
@@ -1803,7 +1802,7 @@ function warmManuals() {
 // Room chips you can switch on and off (manuals: one or more rooms).
 function roomToggles(all, selected, onChange, id) {
   const box = el('div', { class: 'room-toggles', id, role: 'group', 'aria-label': 'Rooms' });
-  const draw = () => box.replaceChildren(...all.map((r) => {
+  const draw = () => fill(box, ...all.map((r) => {
     const on = rooms.hasRoom(selected, r);
     return el('button', { type: 'button', class: 'room-chip' + (on ? ' on' : ''), 'aria-pressed': String(on), 'data-room': r,
       onclick: () => {
@@ -1832,7 +1831,7 @@ async function renderManuals(focus = '') {
     const { done, total, saved } = await manualsSaved();
     const all = done === total;
     status.classList.toggle('ok', all);
-    status.replaceChildren(icon(all ? 'check' : 'download', 16),
+    fill(status, icon(all ? 'check' : 'download', 16),
       all ? `All ${total} guides are saved on this phone and open without signal.`
         : offlineChosen() && navigator.onLine !== false ? `Saving for offline use: ${done} of ${total}…`
         : navigator.onLine === false ? `${done} of ${total} guides saved on this phone. The others need signal the first time.`
@@ -1857,10 +1856,10 @@ async function renderManuals(focus = '') {
     const editor = el('div', { class: 'manual-room-edit', hidden: true });
     const roomsBtn = el('button', { type: 'button', class: 'btn link-btn quiet small manual-rooms-btn', 'data-appliance': a.id, onclick: () => {
       if (editor.hidden) {
-        editor.replaceChildren(roomToggles(allRooms, tags, async (sel) => {
+        fill(editor, roomToggles(allRooms, tags, async (sel) => {
           const next = { ...(await rooms.getManualRooms()), [a.id]: [...sel] };
           await rooms.setManualRooms(next);
-          tagBox.replaceChildren(...[roomChips(sel)].filter(Boolean));
+          fill(tagBox, roomChips(sel));
         }, `manual-rooms-${a.id}`));
       }
       editor.hidden = !editor.hidden;
@@ -1888,7 +1887,7 @@ async function renderManuals(focus = '') {
     linkedTitles(m).length ? el('p', { class: 'small muted' }, 'For: ', linkedTitles(m).map((e, i) => [i ? ', ' : '', el('a', { href: `#/view/${e.id}` }, e.title)])) : null,
     el('div', { class: 'manual-files' }, el('a', { class: 'manual-file saved', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id }, icon('file', 18), el('span', {}, 'Open'), el('span', { class: 'small muted' }, 'saved in the app'), icon('chevron', 16))));
 
-  app.replaceChildren(
+  fill(app,
     screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, kept on this phone' }),
     el('section', { class: 'group manuals-group', id: 'your-manuals' },
       el('div', { class: 'group-head' }, el('h2', {}, 'Your manuals'), el('a', { class: 'link', href: '#/addmanual', id: 'add-manual' }, icon('plus', 14), 'Add a manual')),
@@ -1922,7 +1921,7 @@ async function openElsewhere(getBlob, fileName, title) {
   }
   const url = URL.createObjectURL(file);
   const a = el('a', { href: url, download: file.name, hidden: true });
-  document.body.append(a); a.click(); a.remove();
+  addTo(document.body, a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
   return 'downloaded';
 }
@@ -1936,14 +1935,14 @@ async function renderManualViewer(file) {
     const rec = await userManuals.get(id);
     data = rec ? await userManuals.getFile(id) : null;
     if (!rec || !data) {
-      app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
+      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
       return;
     }
     title = rec.name; label = `${userManuals.sizeText(rec.size)} · on this phone`; notes = rec.notes; back = '#/manuals'; fileName = rec.fileName || `${rec.name}.pdf`;
   } else {
     const found = manuals.findFile(file);
     if (!found) {
-      app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearthbook.')));
+      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearthbook.')));
       return;
     }
     title = found.appliance.name; label = found.file.label; notes = found.appliance.notes ? ['Handy notes: ', found.appliance.notes] : null;
@@ -1962,7 +1961,7 @@ async function renderManualViewer(file) {
   const saveLink = data
     ? el('a', { class: 'btn link-btn quiet', href: photoURL(data), download: fileName, id: 'pdf-download' }, icon('download', 16), 'Save a copy')
     : el('a', { class: 'btn link-btn quiet', href: url, download: fileName, id: 'pdf-download' }, icon('download', 16), 'Save a copy');
-  app.replaceChildren(
+  fill(app,
     el('div', { class: 'pdf-screen', id: 'manual-viewer', 'data-file': file },
       el('header', { class: 'pdf-bar' },
         el('a', { class: 'back', href: back, onclick: (ev) => { if (history.length > 1) { ev.preventDefault(); history.back(); } } }, icon('back', 20), 'Manuals'),
@@ -1997,7 +1996,7 @@ async function renderManualViewer(file) {
 async function renderManualForm(id, arg) {
   const editing = id ? await userManuals.get(id) : null;
   if (id && !editing) {
-    app.replaceChildren(el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
+    fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
     return;
   }
   let file = !id && arg === 'shared' ? pendingManualFile : null;
@@ -2012,7 +2011,7 @@ async function renderManualForm(id, arg) {
   const notesInput = el('textarea', { name: 'notes', id: 'manual-notes', rows: '3', placeholder: 'Model number, where it lives, handy tips…' }, editing ? editing.notes || '' : '');
   const fileInput = el('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true, id: 'manual-file-input' });
   const fileBox = el('div', { class: 'manual-file-box', id: 'manual-file-box' });
-  const drawFile = () => fileBox.replaceChildren(
+  const drawFile = () => fill(fileBox,
     file ? el('p', {}, icon('file', 18), el('strong', {}, file.name || 'PDF'), ` · ${userManuals.sizeText(file.size)}`) : el('p', { class: 'muted' }, 'No PDF chosen yet.'),
     el('button', { type: 'button', class: 'btn secondary', id: 'manual-pick', onclick: () => fileInput.click() }, icon('file', 20), file ? 'Choose a different PDF' : 'Choose PDF'));
   fileInput.addEventListener('change', () => {
@@ -2029,7 +2028,7 @@ async function renderManualForm(id, arg) {
   const drawLinks = () => {
     const q = filter.value.trim().toLowerCase();
     const shown = taggable.filter((e) => selEntries.has(e.id) || !q || [e.title, e.supplier, e.notes].join(' ').toLowerCase().includes(q)).slice(0, q ? 60 : 30);
-    linkList.replaceChildren(...(shown.length ? shown.map((e) => el('label', { class: 'tag-row' },
+    fill(linkList, ...(shown.length ? shown.map((e) => el('label', { class: 'tag-row' },
       el('input', { type: 'checkbox', checked: selEntries.has(e.id), 'data-id': e.id, onchange: (ev) => { if (ev.target.checked) selEntries.add(e.id); else selEntries.delete(e.id); } }),
       el('span', { class: 'tag-text' }, el('strong', {}, e.title), el('span', { class: 'small muted' }, [getSection(e.type).single, niceDate(e.date)].filter(Boolean).join(' · ')))))
       : [el('p', { class: 'small muted' }, 'No matching entries.')]));
@@ -2086,7 +2085,7 @@ async function renderManualForm(id, arg) {
       show(err.message || String(err));
     } finally { saveBtn.disabled = false; saveBtn.textContent = 'Save manual'; }
   });
-  app.replaceChildren(form);
+  fill(app, form);
 }
 
 // ---------------------------------------------------------------------
@@ -2120,7 +2119,7 @@ async function renderRooms() {
     renderRooms();
   };
   input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); addRoom(); } });
-  app.replaceChildren(
+  fill(app,
     screenHead('Rooms', { back: { href: '#/export', label: 'More' }, sub: 'Tag manuals, warranties, receipts and jobs to a room' }),
     el('div', { class: 'room-list', id: 'room-list' }, list.map((r) => el('a', { class: 'card more-row room-row', href: `#/room/${encodeURIComponent(r)}`, 'data-room': r },
       el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('door')),
@@ -2168,7 +2167,7 @@ async function renderRoom(name) {
       el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
       el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`), el('div', { class: 'entry-sub' }, a.model)))),
   ];
-  app.replaceChildren(
+  fill(app,
     screenHead(room, { back: { href: '#/rooms', label: 'Rooms' }, id: 'room-title', sub: [tagged.length ? `${tagged.length} entr${tagged.length === 1 ? 'y' : 'ies'}` : '', manualRows.length ? `${manualRows.length} manual${manualRows.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ') || 'Nothing tagged yet' }),
     el('div', { class: 'room-actions' },
       el('a', { class: 'btn', href: `#/room/${encodeURIComponent(room)}/add`, id: 'room-tag' }, icon('tag', 18), 'Add or remove things'),
@@ -2209,7 +2208,7 @@ async function renderRoomTagger(name) {
          ...manuals.APPLIANCES.map((a) => ({ key: 'b:' + a.id, title: `${a.name} manual`, sub: a.model, other: rooms.manualRoomsOf(a, overrides).filter((r) => !rooms.sameRoom(r, room)) }))]
           .filter((m) => !q || `${m.title} ${m.sub}`.toLowerCase().includes(q))
       : [];
-    listBox.replaceChildren(
+    fill(listBox,
       ...es.map((e) => row(e.id, checked, e.title, [getSection(e.type).single, niceDate(e.date), e.room && !rooms.sameRoom(e.room, room) ? `now in ${e.room}` : ''].filter(Boolean).join(' · '))),
       ms.length ? el('p', { class: 'tag-sep small muted' }, 'Manuals') : null,
       ...ms.map((m) => row(m.key, manualOn, m.title, [m.sub, m.other.length ? `also ${m.other.join(', ')}` : ''].filter(Boolean).join(' · '))),
@@ -2218,7 +2217,7 @@ async function renderRoomTagger(name) {
   };
   filter.addEventListener('input', draw);
   const seg = el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Show' });
-  const drawSeg = () => seg.replaceChildren(...[['all', 'All'], ...rooms.ROOM_TYPES.filter((t) => !prefs.isHidden(t)).map((t) => [t, getSection(t).label]), ['manuals', 'Manuals']].map(([t, l]) =>
+  const drawSeg = () => fill(seg, ...[['all', 'All'], ...rooms.ROOM_TYPES.filter((t) => !prefs.isHidden(t)).map((t) => [t, getSection(t).label]), ['manuals', 'Manuals']].map(([t, l]) =>
     el('button', { type: 'button', class: 'seg-btn' + (type === t ? ' active' : ''), 'aria-pressed': String(type === t), 'data-type': t, onclick: () => { type = t; drawSeg(); draw(); } }, l)));
   drawSeg();
   const selectShown = el('button', { type: 'button', class: 'btn link-btn quiet small', id: 'tag-select-shown', onclick: () => { for (const e of shownEntries()) checked.add(e.id); draw(); } }, 'Tick all shown');
@@ -2244,7 +2243,7 @@ async function renderRoomTagger(name) {
     location.replace(`#/room/${encodeURIComponent(room)}`);
   } }, icon('check', 18), 'Save');
   draw();
-  app.replaceChildren(
+  fill(app,
     screenHead(`Tag to ${room}`, { back: { href: `#/room/${encodeURIComponent(room)}`, label: room }, sub: 'Tick everything that belongs in this room' }),
     seg,
     el('div', { class: 'tag-tools' }, el('label', { class: 'search-wrap' }, icon('search', 20), filter), selectShown),
@@ -2266,7 +2265,7 @@ async function renderYearReview(year) {
   const max = Math.max(1, ...r.categories.map((c) => c.total));
   const hrefFor = (id) => (id === 'insurance' ? '#/list/insurance' : `#/list/${id}/${year}`);
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  app.replaceChildren(
+  fill(app,
     screenHead('Year in review', { back: { href: '#/export', label: 'More' }, sub: 'What the house cost, from what’s in Hearthbook' }),
     el('nav', { class: 'year-picker', 'aria-label': 'Year' }, years.map((y) => el('a', { class: 'year-chip' + (y === year ? ' active' : ''), href: `#/year/${y}`, 'aria-current': y === year ? 'page' : null, onclick: (ev) => { ev.preventDefault(); location.replace(`#/year/${y}`); } }, String(y)))),
     el('section', { class: 'card review-hero', id: 'review-total' },
@@ -2344,7 +2343,7 @@ async function renderExport() {
     el('button', { type: 'button', class: 'seg-btn' + (theme === value ? ' active' : ''), 'aria-pressed': String(theme === value), id: `theme-${value}`,
       onclick: () => { setTheme(value); renderExport(); } }, icon(glyph, 16), label);
 
-  app.replaceChildren(
+  fill(app,
     screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
     el('a', { class: 'card more-row', href: '#/manuals', id: 'more-manuals' },
       el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
