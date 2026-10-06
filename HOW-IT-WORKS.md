@@ -400,6 +400,11 @@ joining a shared logbook, edits, photos, deletes, offline, a clash, an
 expired sign-in and disconnecting:
 `LOGBOOK_BASE=http://localhost:8766/ python tests/test_sync.py`.
 `node tests/sync_plan.mjs` checks the merge rules on their own.
+`tests/test_v13_8.py` (same server) checks the v13.8 photo move: reloading
+half way carries on with no duplicate uploads, a 0-byte upload is retried
+then skipped, the sync file shrinks batch by batch, only one sync runs at a
+time, leftover copies are binned, and a joined phone doesn't move the shared
+photos. `node tests/v13_8_units.mjs` checks the reuse and tidy rules.
 
 `tests/test_insurance.py` checks the Insurance section, unit rates and
 standing charges, the year pickers, the EDF gap-fill backup, and that the
@@ -467,6 +472,21 @@ plus a few settings in the `meta` store (`sync`, `syncTombstones`,
 v2 put photo bytes inside `hearthbook-sync.json`. v3 (13.7) moves photos to
 separate Drive JPEGs and keeps the sync file text-only. Opening the updated
 app and syncing once migrates; Sync details show "layout: v3" when done.
+
+*Moving photos safely (v13.8).* The move is done by the phone that owns the
+sync file, in batches of 10: the sync file is rewritten after each batch, so
+it shrinks as it goes. Every upload is checked (the size Drive stored must
+match the photo) and remembered on the phone at once (`syncPhotoUploads` in
+the `meta` store), and before uploading the app looks for a file it already
+made with the same name and size. So if the app is closed or reloaded half
+way, the next sync carries on where it stopped and never uploads a photo
+twice. A bad upload is moved to Drive's bin and tried again a couple of
+times; if it still fails, that photo stays inside the sync file and the card
+says "1 photo will retry next sync". While it runs the card says "Moving
+photos to Drive: 12 of 38". Only one sync runs at a time, even with the app
+open twice. After a sync the app bins spare copies of photos it uploaded
+twice and empty files, but never a file the sync file points at
+(`syncPhotoTidy` remembers when).
 
 ### Why "drive.file" permission, and why one file
 
@@ -743,3 +763,13 @@ phone number (code, docs and the PDFs' text) or a keystore file.
   (emails or screenshots) give the reg, amount, tax period and date.
 - **Updates:** the app only clears its own old caches (names starting
   `hearthbook-`), never other apps' on the same github.io site.
+
+## v13.8 photo-move fix (6 Oct 2026)
+
+- **Moving photos to Drive** (the first sync after v13.7) now survives being
+  interrupted: it carries on where it stopped, never uploads the same photo
+  twice, checks every upload, skips a photo that keeps failing (it stays in
+  the sync file and is tried again next sync), rewrites the sync file every
+  10 photos so it shrinks as it goes, and shows "Moving photos to Drive:
+  12 of 38". One sync at a time. Leftover duplicate or empty photo files the
+  app made are moved to Drive's bin. Sync details show the app version.

@@ -37,9 +37,13 @@
 // v13.5 = Electricity years newest first + "Last 12 months", clearer home tiles heading,
 //         receipt scanner fixes (European totals, supplier, contact email, DVLA tax),
 //         and only Hearthbook's own caches are cleared on update.
+// v13.6 = EGLO Andreas-Z pendant manuals. v13.7 = photos as separate Drive files.
+// v13.8 = photo move to Drive resumes after an interruption (no duplicates or
+//         empty files), checked uploads, sync file rewritten every 10 photos,
+//         one sync at a time, "Moving photos to Drive: 12 of 38" progress.
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v13.7';
+const CACHE_NAME = 'hearthbook-v13.8';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 

@@ -1511,11 +1511,18 @@ async function syncCard(cardHead) {
   }
 
   const stateText = st.state === 'error' ? st.message || SYNC_TEXT.error : SYNC_TEXT[st.state] || st.state;
+  // v13.8: plain-words progress while photos move to Drive, and a note when
+  // some are left for next time.
+  const progressText = (s) => (s.state === 'syncing' && s.progress && s.progress.total ? `Moving photos to Drive: ${s.progress.done} of ${s.progress.total}` : '');
+  const leftText = (s) => (s.state !== 'syncing' && s.photosLeft > 0 ? `${s.photosLeft} photo${s.photosLeft === 1 ? '' : 's'} will retry next sync.` : '');
+  const progressEl = el('p', { class: 'small sync-progress', id: 'sync-progress', role: 'status', 'aria-live': 'polite', hidden: !progressText(st) }, progressText(st));
+  const leftEl = el('p', { class: 'small muted sync-left', id: 'sync-photos-left', hidden: !leftText(st) }, leftText(st));
   const inviteInput = el('input', { type: 'email', id: 'sync-invite-email', placeholder: 'name@example.com', autocomplete: 'off', 'aria-label': 'Email address to share with' });
   add(head,
     el('div', { class: 'sync-status', 'data-state': st.state, id: 'sync-status', role: 'status', 'aria-live': 'polite' },
       el('span', { class: 'dot' }),
       el('div', {}, el('strong', {}, stateText), el('span', { id: 'sync-last' }, `Last synced: ${sync.ago(st.lastSync)}`))),
+    progressEl, leftEl,
     el('ul', { class: 'sync-facts' },
       el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who)),
       el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`)),
@@ -1526,7 +1533,10 @@ async function syncCard(cardHead) {
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
         ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')
-        : el('button', { type: 'button', class: 'btn', id: 'sync-now', disabled: st.state === 'syncing', onclick: (ev) => busyBtn(ev.currentTarget, 'Syncing…', () => sync.syncNow({ interactive: true })) }, icon('backup', 20), 'Sync now'),
+        : el('button', { type: 'button', class: 'btn', id: 'sync-now', disabled: st.state === 'syncing', onclick: (ev) => busyBtn(ev.currentTarget, 'Syncing…', async () => {
+          const r = await sync.syncNow({ interactive: true });
+          if (r && r.busy) syncMsg = { text: 'Already syncing in another Hearthbook window. Give it a moment.' };
+        }) }, icon('backup', 20), 'Sync now'),
       st.state === 'signin' ? el('p', { class: 'small muted', id: 'sync-signin-note' }, 'Google asks for a quick check now and then. Nothing is lost: your entries are safe on this phone and will sync as soon as you tap.') : null,
       msg,
       st.owner
@@ -1552,7 +1562,12 @@ async function syncCard(cardHead) {
   setTimeout(() => {
     off = sync.onStatus((s) => {
       if (!card.isConnected) { if (off) off(); return; }
-      if (s.state !== card.dataset.state || s.lastSync !== st.lastSync) { if (off) off(); rerender(); }
+      if (s.state !== card.dataset.state || s.lastSync !== st.lastSync) { if (off) off(); rerender(); return; }
+      const pt = progressText(s), lt = leftText(s);
+      if (progressEl.textContent !== pt) progressEl.textContent = pt;
+      progressEl.hidden = !pt;
+      if (leftEl.textContent !== lt) leftEl.textContent = lt;
+      leftEl.hidden = !lt;
     });
   }, 0);
   return card;
@@ -1566,7 +1581,10 @@ async function syncDetails() {
     const [c, d, st] = [await sync.getConfig(), await sync.getDiag(), sync.getStatus()];
     const short = (id) => (!id ? '—' : String(id).length > 16 ? String(id).slice(0, 10) + '…' + String(id).slice(-4) : String(id));
     const lines = [
+      `app version: ${sync.APP_VERSION}`,
       `state: ${st.state}${st.message ? ' — ' + st.message : ''}`,
+      st.progress && st.progress.total ? `photos: ${st.progress.done} of ${st.progress.total} moved${st.progress.skipped ? `, ${st.progress.skipped} skipped` : ''}` : '',
+      st.photosLeft ? `photos waiting to move: ${st.photosLeft}` : '',
       `account: ${(c.account && c.account.email) || '—'}`,
       `layout: ${c.files && c.files.index ? "v" + (c.layout || 1) : "—"} · file: ${short(c.files && c.files.index)}`,
       `old photo files: ${c.files && c.files.buckets ? c.files.buckets.filter(Boolean).length + ' of 8' : 'none'}`,
@@ -1609,7 +1627,7 @@ function wireSyncChip() {
     chip.dataset.syncs = String(s.count || 0); // how many syncs finished (handy for tests)
     text.textContent = !on ? 'On this phone'
       : s.state === 'idle' ? `Synced ${sync.ago(s.lastSync)}`
-      : s.state === 'syncing' ? 'Syncing…'
+      : s.state === 'syncing' ? (s.progress && s.progress.total ? `Photos ${s.progress.done}/${s.progress.total}` : 'Syncing…')
       : s.state === 'offline' ? 'Offline'
       : s.state === 'signin' ? 'Tap to sync'
       : s.state === 'nofolder' ? 'Finish sync setup'

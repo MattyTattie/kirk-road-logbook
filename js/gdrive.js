@@ -155,13 +155,19 @@ function rkHeader() {
   return pairs.length ? { 'X-Goog-Drive-Resource-Keys': pairs.join(',') } : {};
 }
 
-async function call(url, { method = 'GET', body, headers = {}, raw = false } = {}) {
+async function call(url, { method = 'GET', body, headers = {}, raw = false, timeoutMs = 0 } = {}) {
   const token = await getToken();
   let res;
+  // v13.8: photo uploads pass a time limit, so a stalled request fails (and
+  // is retried for that one photo) instead of hanging for minutes.
+  const ctl = timeoutMs && typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
   try {
-    res = await fetch(url, { method, body, headers: { Authorization: `Bearer ${token}`, ...rkHeader(), ...headers } });
+    res = await fetch(url, { method, body, headers: { Authorization: `Bearer ${token}`, ...rkHeader(), ...headers }, ...(ctl ? { signal: ctl.signal } : {}) });
   } catch {
-    throw new OfflineError();
+    throw new OfflineError(ctl && ctl.signal.aborted ? 'Google Drive took too long to answer.' : undefined);
+  } finally {
+    clearTimeout(timer);
   }
   if (res.status === 401) { forgetToken(); throw new AuthError(); }
   if (res.status === 404) throw new NotFoundError();
@@ -177,17 +183,29 @@ async function call(url, { method = 'GET', body, headers = {}, raw = false } = {
 }
 
 const q = (s) => encodeURIComponent(s);
-const FIELDS = 'id,name,version,modifiedTime,parents,mimeType,size,resourceKey,ownedByMe,capabilities(canEdit,canShare)';
+const FIELDS = 'id,name,version,modifiedTime,createdTime,trashed,parents,mimeType,size,resourceKey,ownedByMe,capabilities(canEdit,canShare)';
 
 export function whoAmI() {
   return call(`${API}/about?fields=${q('user(displayName,emailAddress)')}`).then((r) => r.user);
 }
+// v13.8: small metadata requests give up after 30 s (a stalled request
+// used to hold the whole sync up for minutes); the sync tries again later.
+const META_TIMEOUT = 30_000;
 export function getMeta(id) {
-  return call(`${API}/files/${id}?fields=${q(FIELDS)}&supportsAllDrives=true`);
+  return call(`${API}/files/${id}?fields=${q(FIELDS)}&supportsAllDrives=true`, { timeoutMs: META_TIMEOUT });
 }
+// v13.8: follows nextPageToken, so folders with more than 100 files
+// (e.g. many photos) are listed in full.
 export async function list(query) {
-  const r = await call(`${API}/files?q=${q(query)}&fields=${q(`files(${FIELDS})`)}&pageSize=100&spaces=drive&includeItemsFromAllDrives=true&supportsAllDrives=true`);
-  return r.files || [];
+  const out = [];
+  let page = '';
+  for (let i = 0; i < 50; i++) {
+    const r = await call(`${API}/files?q=${q(query)}&fields=${q(`nextPageToken,files(${FIELDS})`)}&pageSize=100&spaces=drive&includeItemsFromAllDrives=true&supportsAllDrives=true${page ? `&pageToken=${q(page)}` : ''}`, { timeoutMs: META_TIMEOUT });
+    out.push(...(r.files || []));
+    if (!r.nextPageToken) break;
+    page = r.nextPageToken;
+  }
+  return out;
 }
 export async function readJSON(id) {
   const res = await call(`${API}/files/${id}?alt=media&supportsAllDrives=true`, { raw: true });
@@ -223,22 +241,28 @@ function writeSimple(id, body) {
     method: 'PATCH', body, headers: { 'Content-Type': 'application/json' },
   });
 }
-async function sendResumable(session, body) {
+async function sendResumable(session, body, { tries = 4, timeoutMs = 0 } = {}) {
   const total = body.size;
   let from = 0;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < tries; attempt++) {
     const token = await getToken();
     const headers = { Authorization: `Bearer ${token}` };
     if (from > 0) headers['Content-Range'] = `bytes ${from}-${total - 1}/${total}`;
     let res;
+    const ctl = timeoutMs && typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
     try {
-      res = await fetch(session, { method: 'PUT', headers, body: from > 0 ? body.slice(from) : body });
+      res = await fetch(session, { method: 'PUT', headers, body: from > 0 ? body.slice(from) : body, ...(ctl ? { signal: ctl.signal } : {}) });
     } catch {
-      // Dropped connection: ask how much Drive has, then send the rest.
+      // Dropped connection (or too slow): ask how much Drive has, then send the rest.
+      clearTimeout(timer);
       await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
-      from = await uploadedSoFar(session, total, token);
-      if (from === total) return null; // all there; caller re-reads metadata on the next sync
+      const got = await uploadedSoFar(session, total, token);
+      if (got && typeof got === 'object') return got.meta; // all there (meta may be null: caller checks)
+      from = got;
       continue;
+    } finally {
+      clearTimeout(timer);
     }
     if (res.ok) return res.status === 204 ? null : res.json();
     if (res.status === 401) { forgetToken(); throw new AuthError(); }
@@ -251,10 +275,12 @@ async function sendResumable(session, body) {
   throw new OfflineError('The upload to Google Drive kept being interrupted. It will try again shortly.');
 }
 const rangeEnd = (range) => { const m = /bytes=0-(\d+)/.exec(range || ''); return m ? Number(m[1]) + 1 : 0; };
+// How much of an interrupted upload Drive has. A finished upload answers
+// with the file itself: then { meta } is returned instead of a byte count.
 async function uploadedSoFar(session, total, token) {
   try {
     const res = await fetch(session, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Range': `bytes */${total}` } });
-    if (res.ok) return total;
+    if (res.ok) { let meta = null; try { meta = await res.json(); } catch {} return { meta }; }
     if (res.status === 308) return rangeEnd(res.headers.get('Range'));
   } catch {}
   return 0;
@@ -278,21 +304,54 @@ export async function createJSON(name, parentId, data) {
 // Binary files (photos). Same drive.file rules as JSON: the phone that
 // created the file can open it; the other phone gets the bytes via the
 // shared sync file the first time, then keeps them in its local cache.
-export async function createBlob(name, parentId, blob, mimeType = 'image/jpeg', appProperties = { hearthbook: 'photo' }) {
+//
+// v13.8: uploadNewBlob creates the file and sends its bytes in ONE
+// resumable upload (name + folder go with the first request). Drive only
+// makes the file once every byte has arrived, so an interrupted upload no
+// longer leaves an empty 0-byte file behind. It answers with the file's
+// details, including the size Drive stored, so the caller can check it.
+export async function uploadNewBlob(name, parentId, blob, mimeType = 'image/jpeg', appProperties = { hearthbook: 'photo' }, { timeoutMs = 60_000, tries = 2 } = {}) {
+  const metaBody = { name, mimeType, appProperties };
+  if (parentId) metaBody.parents = [parentId];
+  let session = null;
+  try {
+    const res = await call(`${UPLOAD}/files?uploadType=resumable&fields=${q(FIELDS)}&supportsAllDrives=true`, {
+      method: 'POST', raw: true, timeoutMs,
+      headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mimeType, 'X-Upload-Content-Length': String(blob.size) },
+      body: JSON.stringify(metaBody),
+    });
+    session = res.headers.get('Location');
+  } catch (err) {
+    if (err instanceof AuthError || err instanceof NotFoundError || err instanceof OfflineError) throw err;
+    session = null;
+  }
+  if (!session) return createBlob(name, parentId, blob, mimeType, appProperties, { timeoutMs }); // old two-step way
+  return sendResumable(session, blob, { tries, timeoutMs });
+}
+// The older two-step way (create an empty file, then send the bytes). Kept
+// as a fallback; returns the file's details after the bytes went up (or
+// null if Drive didn't say: the caller then reads them).
+export async function createBlob(name, parentId, blob, mimeType = 'image/jpeg', appProperties = { hearthbook: 'photo' }, { timeoutMs = 0 } = {}) {
   const metaBody = { name, mimeType, appProperties };
   if (parentId) metaBody.parents = [parentId];
   const meta = await call(`${API}/files?fields=${q(FIELDS)}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(metaBody),
+    body: JSON.stringify(metaBody), timeoutMs,
   });
-  await writeBlob(meta.id, blob, mimeType);
-  return meta;
+  let after = null;
+  try {
+    after = await writeBlob(meta.id, blob, mimeType, { timeoutMs });
+  } catch (err) {
+    err.createdId = meta.id; // so the caller can bin the empty file
+    throw err;
+  }
+  return after && after.id ? after : { ...meta, size: after && after.size != null ? after.size : undefined, unchecked: !after };
 }
-export async function writeBlob(id, blob, mimeType = 'image/jpeg') {
+export async function writeBlob(id, blob, mimeType = 'image/jpeg', { timeoutMs = 0 } = {}) {
   let session = null;
   try {
     const res = await call(`${UPLOAD}/files/${id}?uploadType=resumable&fields=${q(FIELDS)}&supportsAllDrives=true`, {
-      method: 'PATCH', raw: true,
+      method: 'PATCH', raw: true, timeoutMs,
       headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mimeType, 'X-Upload-Content-Length': String(blob.size) },
       body: '{}',
     });
@@ -303,10 +362,18 @@ export async function writeBlob(id, blob, mimeType = 'image/jpeg') {
   }
   if (!session) {
     return call(`${UPLOAD}/files/${id}?uploadType=media&fields=${q(FIELDS)}&supportsAllDrives=true`, {
-      method: 'PATCH', body: blob, headers: { 'Content-Type': mimeType },
+      method: 'PATCH', body: blob, headers: { 'Content-Type': mimeType }, timeoutMs,
     });
   }
-  return sendResumable(session, blob);
+  return sendResumable(session, blob, { timeoutMs, tries: timeoutMs ? 2 : 4 });
+}
+// v13.8: move a file this app made to Drive's bin (never a permanent
+// delete; it can be restored from the bin for 30 days).
+export function trash(id) {
+  return call(`${API}/files/${id}?fields=${q('id,trashed')}&supportsAllDrives=true`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, timeoutMs: META_TIMEOUT,
+    body: JSON.stringify({ trashed: true }),
+  });
 }
 export async function readBlob(id) {
   const res = await call(`${API}/files/${id}?alt=media&supportsAllDrives=true`, { raw: true });

@@ -629,6 +629,8 @@ body.no-nav .bottom-nav { display: none; }
 .sync-invite { display: flex; gap: 8px; margin-top: 4px; }
 .sync-invite input { flex: 1; min-width: 0; }
 .sync-msg { font-size: 13.5px; margin: 8px 0 0; }
+.sync-progress { font-size: 14px; font-weight: 600; margin: -2px 0 8px; color: var(--text); }
+.sync-left { font-size: 13px; margin: -2px 0 8px; }
 .sync-msg.bad { color: var(--bad); }
 .btn.link-btn { background: none; color: var(--bad); min-height: 44px; }
 .sync-invite .btn { flex: none; padding: 0 18px; }
