@@ -42,7 +42,7 @@ import * as sync from './sync.js';
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
 import { countUp, transition, haptic, reducedMotion } from './motion.js';
-import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock } from './homeui.js';
+import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock, placePicker } from './homeui.js';
 import { search as askSearch } from './search.js';
 import { classify, addYears } from './autosort.js';
 import * as manuals from './manuals.js';
@@ -50,6 +50,9 @@ import * as native from './native.js';
 import * as rooms from './rooms.js';
 import * as userManuals from './usermanuals.js';
 import { yearReview, reviewYears } from './review.js';
+import { backupDue, sizeLabel } from './homelogic.js';
+import * as lookup from './manuallookup.js';
+import * as weather from './weather.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -104,7 +107,7 @@ let linkTapAt = 0;
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[href^="#"]')) linkTapAt = performance.now(); }, true);
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
-  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, rooms: 2, year: 2, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
@@ -133,6 +136,7 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'manuals') await renderManuals(arg ? decodeURIComponent(arg) : '');
     else if (page === 'manual') await renderManualViewer(arg ? decodeURIComponent(arg) : '');
     else if (page === 'addmanual') await renderManualForm(null, arg);
+    else if (page === 'findmanual') await renderManualLookup();
     else if (page === 'editmanual') await renderManualForm(arg ? decodeURIComponent(arg) : '');
     else if (page === 'rooms') await renderRooms();
     else if (page === 'room' && parts[2] === 'add') await renderRoomTagger(decodeURIComponent(arg || ''));
@@ -157,7 +161,7 @@ function setChrome(page, arg) {
   const tab =
     page === 'list' && arg === 'meter' ? 'meter'
     : page === 'list' || page === 'view' || page === 'new' ? 'list'
-    : ['export', 'manuals', 'manual', 'addmanual', 'editmanual', 'rooms', 'room', 'year'].includes(page) ? 'export'
+    : ['export', 'manuals', 'manual', 'addmanual', 'editmanual', 'findmanual', 'rooms', 'room', 'year'].includes(page) ? 'export'
     : 'home';
   document.querySelectorAll('.bottom-nav [data-tab]').forEach((a) => {
     const on = a.dataset.tab === tab;
@@ -224,13 +228,16 @@ function screenHead(title, { back, sub, id, action } = {}) {
 }
 
 // "You haven't made a backup" banner, if it's due.
-async function backupReminder(count) {
+// v14: only when a backup is actually overdue (homelogic.js backupDue): never
+// while Drive sync is working or synced in the last 7 days, not for a logbook
+// less than a month old, and otherwise after 30 days without a backup file.
+async function backupReminder(everything) {
+  const count = everything.length;
   if (count === 0) return null;
-  // Drive sync keeps a copy in Google Drive, so no nagging while it's working.
-  if (await sync.isHealthy()) return null;
   const lastBackup = await db.getMeta('lastBackup');
-  const days = lastBackup ? Math.floor((Date.now() - new Date(lastBackup)) / 86400000) : null;
-  if (days !== null && days <= BACKUP_REMINDER_DAYS) return null;
+  const oldestAdded = everything.map((e) => e.createdAt || '').filter(Boolean).sort()[0] || null;
+  const { due, days } = backupDue({ count, lastBackup, syncHealthy: await sync.isHealthy(), lastSync: (await sync.getConfig()).lastSync || null, oldestAdded, limitDays: BACKUP_REMINDER_DAYS });
+  if (!due) return null;
   return el(
     'div',
     { class: 'banner warn compact', id: 'backup-reminder', role: 'note' },
@@ -307,7 +314,7 @@ async function renderHome() {
     fill(app,
       el('div', { class: 'dash', id: 'dashboard' },
         head,
-        tourCard(), // first run: the tour shows even before anything is added
+        prefs.homeTidy() ? null : tourCard(), // v14: the tour lives under More (tidy home)
         houseCard([]),
         el('div', { class: 'empty empty-hero' },
           el('div', { class: 'empty-art' }, icon('home', 44)),
@@ -486,28 +493,53 @@ async function renderHome() {
   const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
   function redrawHero() { fill(hero.querySelector('.hero-split'), ...heroChips()); }
 
-  addTo(dash,
-      head,
-      ask,
-      tourCard(),
-      houseCard(everything),
-      tiles.element,
-      soonList.length
-        ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
-            el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
-            el('div', { class: 'list' }, soonList.map(entryCard)),
-            remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
-        : null,
-      await backupReminder(everything.length),
-      hero,
-      el('div', { class: 'stat-grid' }, nextCard, meterCard, billCard),
-      chartCard,
-      el('section', { class: 'group' },
+  const comingUp = soonList.length
+    ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
+        el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
+        el('div', { class: 'list' }, soonList.map(entryCard)),
+        remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
+    : null;
+  const banner = await backupReminder(everything);
+  const statGrid = el('div', { class: 'stat-grid' }, nextCard, meterCard, billCard);
+
+  if (!prefs.homeTidy()) {
+    // The v13.9 layout, everything on show (More → "Tidy home screen" off).
+    addTo(dash, head, ask, tourCard(), houseCard(everything), tiles.element, comingUp, banner, hero, statGrid, chartCard,
+      el('section', { class: 'group', id: 'recent' },
         el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
         el('div', { class: 'list' }, recent.map(entryCard))));
+    fill(app, dash);
+    const heroValue = document.getElementById('spend-year');
+    if (heroValue) countUp(heroValue, thisYear, (v) => money(v));
+    return;
+  }
+
+  // v14 tidy home (Option 2): house, tiles, Coming up on top; spending, the
+  // meter / bill cards and the chart fold into one "This month" card that
+  // opens on a tap and remembers (this phone) whether you left it open.
+  // Recent and the tour moved to More. Nothing removed.
+  const now = new Date();
+  const monthSpent = monthlySpend(everything, 1, now)[0].value;
+  const summary = [`${money(monthSpent)} spent in ${now.toLocaleDateString('en-GB', { month: 'long' })}`, lastBill ? `last bill ${money(lastBill.cost)}` : null].filter(Boolean).join(' · ');
+  const open = prefs.monthOpen();
+  const body = el('div', { class: 'month-fold-body', id: 'this-month-body', hidden: !open }, hero, statGrid, chartCard);
+  const toggle = el('button', { type: 'button', class: 'month-fold-head', id: 'this-month-toggle', 'aria-expanded': String(open), 'aria-controls': 'this-month-body',
+    onclick: () => {
+      const on = body.hidden;
+      body.hidden = !on;
+      toggle.setAttribute('aria-expanded', String(on));
+      monthCard.classList.toggle('open', on);
+      prefs.setMonthOpen(on);
+      if (on) { const v = document.getElementById('spend-year'); if (v) countUp(v, thisYear, (x) => money(x)); }
+    } },
+    el('span', { class: 'badge badge-md', 'data-tone': 'brand' }, icon('chart')),
+    el('span', { class: 'month-fold-text' }, el('strong', { class: 'month-fold-title' }, 'This month'), el('span', { class: 'small muted', id: 'this-month-summary' }, summary)),
+    el('span', { class: 'month-fold-chev', 'aria-hidden': 'true' }, icon('chevron', 18)));
+  const monthCard = el('section', { class: 'month-fold' + (open ? ' open' : ''), id: 'this-month', 'aria-label': 'This month: spending, meter readings and charts' }, toggle, body);
+  addTo(dash, head, ask, houseCard(everything), tiles.element, comingUp, banner, monthCard);
   fill(app, dash);
   const heroValue = document.getElementById('spend-year');
-  if (heroValue) countUp(heroValue, thisYear, (v) => money(v));
+  if (heroValue && open) countUp(heroValue, thisYear, (v) => money(v));
 }
 
 // One section tile on the home screen: how many and how much in one year.
@@ -552,7 +584,7 @@ async function renderList(type, year = 0) {
   }
 
   // --- Backup reminder ---
-  screen.push(await backupReminder(everything.length));
+  screen.push(await backupReminder(everything));
 
   // --- "Coming up" banner on the All screen: things due/expiring soon ---
   if (type === 'all') {
@@ -670,6 +702,9 @@ async function renderList(type, year = 0) {
   fill(app, screen);
 }
 
+// v14: "Aug", "Sep" under the bars (charts.js falls back to "A", "S" if narrow).
+// Written out, because some phones say "Sept" for the short month.
+const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 // Summary card + usage chart at the top of the meter readings list.
 function meterInsights(everything) {
   const r = readings(everything);
@@ -742,7 +777,7 @@ function meterInsights(everything) {
     hint.textContent = 'Tap a bar to see that period';
     slot.replaceChildren();
     chart = intervals.length > 1 ? barChart(
-      intervals.map((i) => ({ label: new Date(i.to.date).toLocaleDateString('en-GB', { month: 'short' }).slice(0, 1), title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
+      intervals.map((i) => ({ label: MON3[new Date(i.to.date).getMonth()].slice(0, 1), short: MON3[new Date(i.to.date).getMonth()], title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
       { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
     ) : null;
     fill(box, chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null,
@@ -992,6 +1027,7 @@ function renderChooser() {
 // scanning works offline too.
 let pendingScan = null; // { type, fields, photos, parsed } handed to renderForm
 let pendingManualFile = null; // a PDF shared to Hearthbook, on its way to "Add a manual"
+let pendingLookup = null; // v14: { brand, model } from "Find a manual from a label", on its way to "Add a manual"
 
 // A photo or PDF shared to Hearthbook from another app arrives through the
 // service worker (sw.js "share target"), which parks it in a cache.
@@ -1523,7 +1559,7 @@ async function syncCard(cardHead) {
     el('ul', { class: 'sync-facts' },
       el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who)),
       el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`)),
-      st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, `${(st.fileSize / 1048576).toFixed(1)} MB`)) : null),
+      st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, sizeLabel(st.fileSize))) : null),
     // v13: a gentle heads-up as the one shared file (photos included) grows.
     st.fileSize >= SIZE_WARN ? el('p', { class: 'sync-size-warn small', id: 'sync-size-warn', role: 'note' }, icon('alert', 16),
       `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB. Newer Hearthbook versions keep photos as separate Drive files so this stays small — tap Sync now to shrink it. It still syncs fine either way.`) : null,
@@ -1891,6 +1927,10 @@ async function renderManuals(focus = '') {
     screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, kept on this phone' }),
     el('section', { class: 'group manuals-group', id: 'your-manuals' },
       el('div', { class: 'group-head' }, el('h2', {}, 'Your manuals'), el('a', { class: 'link', href: '#/addmanual', id: 'add-manual' }, icon('plus', 14), 'Add a manual')),
+      el('a', { class: 'card more-row', href: '#/findmanual', id: 'find-manual' },
+        el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('scan')),
+        el('span', { class: 'more-row-text' }, el('strong', {}, 'Find a manual from a label'), el('span', { class: 'small muted' }, 'Photograph the model sticker; Hearthbook checks what it has, or searches the web')),
+        icon('chevron', 18)),
       mine.length ? el('div', { class: 'manual-list' }, mine.map(mineCard))
         : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it from your phone, or share it to Hearthbook from your email or browser.'),
       el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add are kept on this phone only: they aren’t in Drive sync or backup files (PDFs are too big for the one shared file). Add them on the other phone too if needed.')),
@@ -1993,6 +2033,81 @@ async function renderManualViewer(file) {
 // ---------------------------------------------------------------------
 // ADD / EDIT one of your own manuals (v13)
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
+// v14: FIND A MANUAL FROM A LABEL (Manuals → Find a manual from a label)
+// Photo of the rating label → the scanner reads it on the phone → brand +
+// model (manuallookup.js) → already in Hearthbook? open it : search the web
+// for "<brand> <model> manual pdf" in a new tab, then "Add it to Hearthbook"
+// opens the usual Add a manual form, filled in, for you to pick the PDF and
+// Save. Free (no paid search service); nothing saved without your Save.
+// ---------------------------------------------------------------------
+async function renderManualLookup() {
+  const mine = await userManuals.list();
+  const photoInput = el('input', { type: 'file', accept: 'image/*', hidden: true, id: 'lookup-photo-input' });
+  const status = el('p', { class: 'small muted', id: 'lookup-status', role: 'status' }, 'Works offline: the label is read on this phone.');
+  const brandInput = el('input', { id: 'lookup-brand', autocomplete: 'off', placeholder: 'e.g. Bosch', maxlength: '40' });
+  const modelInput = el('input', { id: 'lookup-model', autocomplete: 'off', placeholder: 'e.g. WAN28281GB', maxlength: '40', autocapitalize: 'characters' });
+  const chips = el('div', { class: 'lookup-chips', id: 'lookup-chips' });
+  const result = el('div', { class: 'lookup-result', id: 'lookup-result', 'aria-live': 'polite' });
+  const show = () => {
+    const brand = brandInput.value.trim(), model = modelInput.value.trim();
+    if (!brand && !model) { fill(result); return; }
+    const found = lookup.findExisting(brand, model, manuals.APPLIANCES, mine);
+    if (found) {
+      const a = found.appliance, m = found.manual;
+      const href = a ? (a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`) : `#/manual/u:${encodeURIComponent(m.id)}`;
+      fill(result, el('div', { class: 'card lookup-found', id: 'lookup-found', 'data-kind': found.kind },
+        el('p', { class: 'lookup-head' }, icon('check', 18), el('strong', {}, 'Hearthbook already has this manual')),
+        el('p', {}, a ? `${a.name} · ${a.model}` : m.name),
+        el('a', { class: 'btn', href, id: 'lookup-open' }, icon('book', 20), 'Open the manual')));
+      return;
+    }
+    const q = [brand, model, 'manual pdf'].filter(Boolean).join(' ');
+    fill(result, el('div', { class: 'card lookup-none', id: 'lookup-none' },
+      el('p', { class: 'lookup-head' }, icon('search', 18), el('strong', {}, 'Not in Hearthbook yet')),
+      model ? null : el('p', { class: 'small warn-text' }, 'Tip: add the model number for a better match.'),
+      el('a', { class: 'btn', href: lookup.searchUrl(brand, model), target: '_blank', rel: 'noopener noreferrer', id: 'lookup-web' }, icon('search', 20), `Search the web for “${q}”`),
+      el('ol', { class: 'lookup-steps small' },
+        el('li', {}, 'Pick the maker’s PDF (their own website is best) and download it.'),
+        el('li', {}, 'Come back here and tap “Add it to Hearthbook”.'),
+        el('li', {}, 'Choose the PDF, check the name, and tap Save. Nothing is saved before that.')),
+      el('button', { type: 'button', class: 'btn secondary', id: 'lookup-add', onclick: () => { pendingLookup = { brand, model }; location.hash = '#/addmanual/lookup'; } }, icon('plus', 20), 'Add it to Hearthbook')));
+  };
+  const drawChips = (list) => fill(chips, list.length > 1 ? [el('span', { class: 'small muted' }, 'Other codes on the label: '),
+    ...list.slice(1).map((c) => el('button', { type: 'button', class: 'year-chip', 'data-code': c, onclick: () => { modelInput.value = c; show(); } }, c))] : []);
+  const pick = el('button', { type: 'button', class: 'btn btn-lg', id: 'lookup-photo', onclick: () => photoInput.click() }, icon('scan', 20), 'Photograph the label');
+  photoInput.addEventListener('change', async () => {
+    const f = photoInput.files[0]; photoInput.value = '';
+    if (!f) return;
+    pick.disabled = true;
+    status.textContent = 'Reading the label…';
+    try {
+      const scan = await import('./scan.js');
+      const { text } = await scan.readFile(f, (p, msg) => { status.textContent = `${msg || 'Reading the label…'} ${Math.round(p * 100)}%`; });
+      const r = lookup.readLabel(text);
+      if (r.brand) brandInput.value = r.brand;
+      modelInput.value = r.model || '';
+      drawChips(r.candidates);
+      status.textContent = r.model || r.brand ? 'Check the brand and model below (you can correct them).' : 'Couldn’t read a model number. Try a closer, sharper photo, or type it in.';
+      show();
+    } catch (err) {
+      status.textContent = 'Couldn’t read that photo. Try again, or type the brand and model.';
+    } finally { pick.disabled = false; }
+  });
+  let t = null;
+  for (const inp of [brandInput, modelInput]) inp.addEventListener('input', () => { clearTimeout(t); t = setTimeout(show, 250); });
+  fill(app,
+    screenHead('Find a manual', { back: { href: '#/manuals', label: 'Manuals' }, sub: 'From the label with the model number on it' }),
+    el('section', { class: 'card lookup-card', id: 'lookup-card' },
+      el('p', {}, 'Take a photo of the appliance’s rating label (the sticker with the model number, often inside the door or on the back).'),
+      pick, photoInput, status,
+      el('div', { class: 'lookup-fields' },
+        el('label', { class: 'field' }, el('span', { class: 'label' }, 'Brand'), brandInput),
+        el('label', { class: 'field' }, el('span', { class: 'label' }, 'Model'), modelInput)),
+      chips),
+    result);
+}
+
 async function renderManualForm(id, arg) {
   const editing = id ? await userManuals.get(id) : null;
   if (id && !editing) {
@@ -2001,14 +2116,16 @@ async function renderManualForm(id, arg) {
   }
   let file = !id && arg === 'shared' ? pendingManualFile : null;
   pendingManualFile = null;
+  const fromLookup = !id && arg === 'lookup' ? pendingLookup : null; // v14
+  pendingLookup = null;
   const allEntries = await db.getAllEntries();
   const taggable = allEntries.filter((e) => rooms.ROOM_TYPES.includes(e.type)).sort(newestFirst);
   const mine = await userManuals.list();
   const allRooms = rooms.roomList(await rooms.getStored(), allEntries, mine.flatMap((m) => m.rooms || []));
   const selRooms = [...((editing && editing.rooms) || [])];
   const selEntries = new Set((editing && editing.entryIds) || []);
-  const nameInput = el('input', { name: 'name', id: 'manual-name', value: editing ? editing.name : file ? userManuals.nameFromFile(file.name) : '', maxlength: '80', autocomplete: 'off', placeholder: 'e.g. Bosch washing machine' });
-  const notesInput = el('textarea', { name: 'notes', id: 'manual-notes', rows: '3', placeholder: 'Model number, where it lives, handy tips…' }, editing ? editing.notes || '' : '');
+  const nameInput = el('input', { name: 'name', id: 'manual-name', value: editing ? editing.name : fromLookup ? lookup.suggestedName(fromLookup.brand, fromLookup.model) : file ? userManuals.nameFromFile(file.name) : '', maxlength: '80', autocomplete: 'off', placeholder: 'e.g. Bosch washing machine' });
+  const notesInput = el('textarea', { name: 'notes', id: 'manual-notes', rows: '3', placeholder: 'Model number, where it lives, handy tips…' }, editing ? editing.notes || '' : fromLookup && fromLookup.model ? `Model ${fromLookup.model}` : '');
   const fileInput = el('input', { type: 'file', accept: 'application/pdf,.pdf', hidden: true, id: 'manual-file-input' });
   const fileBox = el('div', { class: 'manual-file-box', id: 'manual-file-box' });
   const drawFile = () => fill(fileBox,
@@ -2043,7 +2160,8 @@ async function renderManualForm(id, arg) {
       el('div', { class: 'form-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')), el('h1', { class: 'screen-title' }, editing ? 'Edit manual' : 'Add a manual'))),
     editing
       ? el('p', { class: 'small muted' }, `${userManuals.sizeText(editing.size)}${editing.pages ? ` · ${editing.pages} pages` : ''} · saved on this phone`)
-      : el('div', { class: 'field' }, el('span', { class: 'label' }, 'PDF'), fileBox, fileInput),
+      : el('div', { class: 'field' }, el('span', { class: 'label' }, 'PDF'), fileBox, fileInput,
+          fromLookup ? el('span', { class: 'hint', id: 'manual-from-lookup' }, 'Choose the PDF you just downloaded (usually in Downloads), check the name, then tap Save manual. Nothing is saved until then.') : null),
     el('label', { class: 'field' }, el('span', { class: 'label' }, 'Name *'), nameInput),
     el('label', { class: 'field' }, el('span', { class: 'label' }, 'Notes (optional)'), notesInput, el('span', { class: 'hint' }, 'Ask Hearthbook finds manuals by their name and notes.')),
     el('div', { class: 'field' }, el('span', { class: 'label' }, 'Rooms (optional)'), roomToggles(allRooms, selRooms, null, 'manual-room-toggles')),
@@ -2303,6 +2421,22 @@ async function renderYearReview(year) {
 // ---------------------------------------------------------------------
 // EXPORT screen: backup, restore, report, appearance
 // ---------------------------------------------------------------------
+// v14: More → Appearance: this phone's weather location (weather.js).
+function weatherPlaceBox() {
+  const box = el('div', { class: 'place-setting', id: 'weather-place' });
+  const draw = (open = false) => {
+    const p = weather.getPlace();
+    fill(box,
+      el('p', { class: 'small', id: 'weather-place-text' }, p ? `Weather location: ${p.name || 'your area'} (rounded to about 10 km, on this phone only)` : 'Weather location: not set, so the house shows a plain sky.'),
+      open ? placePicker({ idp: 'more-place', onDone: () => draw(false), onCancel: () => draw(false), cancelText: 'Cancel' })
+        : el('div', { class: 'place-row' },
+            el('button', { type: 'button', class: 'btn small-btn secondary', id: 'weather-place-set', onclick: () => draw(true) }, p ? 'Change' : 'Set location'),
+            p ? el('button', { type: 'button', class: 'btn link-btn', id: 'weather-place-clear', onclick: () => { weather.clearPlace(); draw(false); } }, 'Remove') : null));
+  };
+  draw();
+  return box;
+}
+
 async function renderExport() {
   const entries = await db.getAllEntries();
   const lastBackup = await db.getMeta('lastBackup');
@@ -2343,8 +2477,12 @@ async function renderExport() {
     el('button', { type: 'button', class: 'seg-btn' + (theme === value ? ' active' : ''), 'aria-pressed': String(theme === value), id: `theme-${value}`,
       onclick: () => { setTheme(value); renderExport(); } }, icon(glyph, 16), label);
 
+  // v14: Recent entries and the quick tour live here (tidy home screen).
+  const recent = entries.slice().sort(newestFirst).slice(0, 4);
+  const tidy = prefs.homeTidy();
   fill(app,
     screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
+    tidy ? tourCard() : null,
     el('a', { class: 'card more-row', href: '#/manuals', id: 'more-manuals' },
       el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
       el('span', { class: 'more-row-text' }, el('strong', {}, 'Manuals'), el('span', { class: 'small muted' }, `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides${mineManuals.length ? ` · ${mineManuals.length} of yours` : ''}`)),
@@ -2357,6 +2495,9 @@ async function renderExport() {
       el('span', { class: 'badge badge-md', 'data-tone': 'brand' }, icon('chart')),
       el('span', { class: 'more-row-text' }, el('strong', {}, 'Year in review'), el('span', { class: 'small muted' }, 'What the house cost each year')),
       icon('chevron', 18)),
+    tidy && recent.length ? el('section', { class: 'group', id: 'recent' },
+      el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
+      el('div', { class: 'list' }, recent.map(entryCard))) : null,
     el(
       'section',
       { class: 'card' },
@@ -2407,11 +2548,18 @@ async function renderExport() {
       { class: 'card' },
       cardHead('sun', 'amber', 'Appearance'),
       el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark')),
-      el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} location.hash = '#/home'; } }, 'Show the quick tour again')
+      el('label', { class: 'check-row', id: 'weather-row' },
+        el('input', { type: 'checkbox', id: 'weather-on', checked: weather.enabled(), onchange: (ev) => { weather.setEnabled(ev.currentTarget.checked); } }),
+        el('span', {}, el('strong', {}, 'Weather on the house picture'), el('span', { class: 'small muted' }, ' Clouds, rain, snow, stars and wind for your area, from Open-Meteo (free, no account). Only a rough area (about 10 km) is sent, never your address.'))),
+      weatherPlaceBox(),
+      el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} if (prefs.homeTidy()) { renderExport().then(() => window.scrollTo(0, 0)); } else location.hash = '#/home'; } }, 'Show the quick tour again')
     ),
     el('section', { class: 'card', id: 'reminders-card' }, cardHead('clock', 'rose', 'Reminders'),
       remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => renderExport() })),
-    customiseCard(cardHead, applyNavPrefs),
+    addTo(customiseCard(cardHead, applyNavPrefs),
+      el('label', { class: 'check-row', id: 'home-tidy-row' },
+        el('input', { type: 'checkbox', id: 'home-tidy', checked: tidy, onchange: (ev) => { prefs.setHomeTidy(ev.currentTarget.checked); renderExport(); } }),
+        el('span', {}, el('strong', {}, 'Tidy home screen'), el('span', { class: 'small muted' }, ' Spending, readings and charts fold into one “This month” card; Recent and the tour are here under More. Untick to show everything on the home screen like before.')))),
     el(
       'p',
       { class: 'small muted footnote' },
@@ -2464,7 +2612,7 @@ if ('serviceWorker' in navigator) {
   // until you leave it.
   let hadController = Boolean(navigator.serviceWorker.controller);
   let reloading = false;
-  const busyHash = () => /^#\/(new|edit|scan|addmanual|editmanual|room\/.+\/add)/.test(location.hash);
+  const busyHash = () => /^#\/(new|edit|scan|addmanual|editmanual|findmanual|room\/.+\/add)/.test(location.hash);
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     // The very first install taking over isn't an update: just remember it.
     if (!hadController) { hadController = true; return; }

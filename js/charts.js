@@ -13,6 +13,15 @@
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
+// v14: month names under the bars as "Aug", "Sep" (small text) when each bar
+// has room (slot = width per bar in chart units, 340 across), otherwise the
+// single letter. A bar gives its long form as `short` (stats.js does).
+export const SHORT_LABEL_MIN_SLOT = 24; // 3 letters at 9.5 px ≈ 18 units, plus a gap
+export function axisLabel(bar, slot) {
+  const short = bar && bar.short ? String(bar.short) : '';
+  return short && slot >= SHORT_LABEL_MIN_SLOT && short.length <= 4 ? short : String((bar && bar.label) ?? '');
+}
+
 export function barChart(bars, { height = 150, format = (v) => String(v), onSelect, selected = -1, unitLabel = '', describe } = {}) {
   const W = 340;
   const H = height;
@@ -65,7 +74,8 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
       svg += `<path d="M${x - 2} ${zy + 3} l${barW / 3 + 1} -5 l${barW / 3} 5 l${barW / 3 + 1} -5" class="chart-break"/>`;
       svg += `<text x="${x + barW / 2}" y="${top - 6}" text-anchor="middle" class="chart-peak">${esc(format(v))}</text>`;
     }
-    svg += `<text x="${slot * i + slot / 2}" y="${H - 6}" text-anchor="middle" class="chart-label${i === selected ? ' is-selected' : ''}">${esc(b.label)}</text></g>`;
+    const lbl = axisLabel(b, slot);
+    svg += `<text x="${slot * i + slot / 2}" y="${H - 6}" text-anchor="middle" class="chart-label${lbl === b.label ? '' : ' short'}${i === selected ? ' is-selected' : ''}">${esc(lbl)}</text></g>`;
   });
   svg += '</svg>';
 

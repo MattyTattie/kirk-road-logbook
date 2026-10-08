@@ -9,7 +9,8 @@
 import { el, fill, addTo, money, niceDate } from './utils.js';
 import { icon } from './icons.js';
 import { SECTIONS, getSection } from './sections.js';
-import { houseSVG, skyPhase, glowLevel } from './house.js';
+import { houseSVG, glowLevel } from './house.js';
+import * as weather from './weather.js';
 import { search, whenText } from './search.js';
 import { searchManuals } from './manuals.js';
 import { list as userManuals, searchUser } from './usermanuals.js';
@@ -40,14 +41,51 @@ export function houseFacts(everything, now = new Date()) {
   return { latest, average, glow: glowLevel(latest && Number(latest.cost), average), due, battery: bat ? { pct: Number(bat.meterValue) } : null };
 }
 
+// v14: "Show your local weather?" — set this phone's weather place, either
+// from the phone's location or a typed town (Open-Meteo's free lookup).
+// Rounded to ~10 km and kept in this phone's settings only (weather.js).
+export function placePicker({ idp = 'place', onDone = () => {}, onCancel = null, cancelText = 'Not now' } = {}) {
+  const msg = el('p', { class: 'small muted place-msg', id: `${idp}-msg`, role: 'status', 'aria-live': 'polite' });
+  const results = el('div', { class: 'place-results', id: `${idp}-results` });
+  const input = el('input', { type: 'search', class: 'place-input', id: `${idp}-town`, placeholder: 'Or type your town', autocomplete: 'off', enterkeyhint: 'search', 'aria-label': 'Town name', maxlength: '60' });
+  const save = (p, name) => { weather.setPlace({ lat: p.lat, lon: p.lon, name }); haptic(); onDone(weather.getPlace()); };
+  const search = async () => {
+    if (input.value.trim().length < 2) { msg.textContent = 'Type at least two letters of your town.'; return; }
+    msg.textContent = 'Looking it up…'; fill(results);
+    try {
+      const list = await weather.findTown(input.value);
+      msg.textContent = list.length ? 'Tap your town:' : 'No town found with that name. Check the spelling?';
+      fill(results, list.map((p) => el('button', { type: 'button', class: 'place-hit', onclick: () => save(p, p.name) },
+        el('strong', {}, p.name), el('span', { class: 'small muted' }, p.area))));
+    } catch (e) { msg.textContent = e.message || 'Couldn’t look that up just now.'; }
+  };
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); search(); } });
+  const locate = el('button', { type: 'button', class: 'btn small-btn', id: `${idp}-locate`, onclick: async (ev) => {
+    const b = ev.currentTarget; b.disabled = true; msg.textContent = 'Finding your area…';
+    try { save(await weather.locate(), 'Your area'); } catch (e) { msg.textContent = e.message; } finally { b.disabled = false; }
+  } }, icon('home', 16), 'Use my location');
+  return el('div', { class: 'place-picker', id: `${idp}-picker` },
+    el('div', { class: 'place-row' }, locate, onCancel ? el('button', { type: 'button', class: 'btn link-btn', id: `${idp}-cancel`, onclick: onCancel }, cancelText) : null),
+    el('div', { class: 'place-row' }, input, el('button', { type: 'button', class: 'btn small-btn secondary', id: `${idp}-search`, onclick: search }, icon('search', 16), 'Find')),
+    msg, results,
+    el('p', { class: 'small muted place-note' }, 'Rounded to about 10 km and kept on this phone only (not shared or in backups).'));
+}
+
 export function houseCard(everything) {
   const card = el('section', { class: 'house-card', id: 'house', 'aria-label': 'Your house at a glance' });
+  const body = el('div', { class: 'house-body' });
+  addTo(card, body);
   const draw = () => {
     const now = new Date();
-    const phase = skyPhase(now);
+    // v14: day and night follow the real sunrise and sunset where you live, and
+    // the picture shows the weather (weather.js; clear sky if there's none).
+    const phase = weather.sunPhase(now);
+    const w = weather.cached(now);
     const f = houseFacts(everything, now);
     const pic = el('div', { class: 'house-pic' });
-    pic.innerHTML = houseSVG({ phase, glow: f.glow, due: f.due, battery: f.battery });
+    pic.innerHTML = houseSVG({ phase, glow: f.glow, due: f.due, battery: f.battery, weather: w, moon: weather.moonPhase(now) });
+    const words = weather.describe(w);
+    if (words) pic.firstElementChild.setAttribute('aria-label', `Your house: ${words}`);
     const chips = [];
     if (f.latest && f.average) {
       const pct = Math.round((Number(f.latest.cost) / f.average - 1) * 100);
@@ -55,11 +93,22 @@ export function houseCard(everything) {
         `Last bill ${money(f.latest.cost)} · ${pct === 0 ? 'about average' : `${Math.abs(pct)}% ${pct > 0 ? 'above' : 'below'} average`}`));
     }
     if (f.due) chips.push(el('a', { class: 'hc-chip due', href: '#coming-up', id: 'house-due' }, icon('clock', 14), `${f.due} due within 30 days`));
-    fill(card, pic, el('div', { class: 'house-caption' }, chips));
+    fill(body, pic, el('div', { class: 'house-caption' }, chips));
     card.dataset.phase = phase;
     card.dataset.glow = f.glow.toFixed(2);
     card.dataset.due = String(f.due);
+    card.dataset.weather = (w && w.cond) || '';
+    card.dataset.windy = String(Boolean(w && w.windy));
   };
+  // Ask for the weather now and then (cached 45 min, silent when offline);
+  // redraw only if it changed.
+  // (The answer can arrive before the home screen is on show: wait a moment.)
+  const apply = (w, tries = 0) => {
+    if (!w) return;
+    if (!card.isConnected) { if (tries < 20) setTimeout(() => apply(w, tries + 1), 250); return; }
+    if (w.cond !== card.dataset.weather || String(w.windy) !== card.dataset.windy) draw();
+  };
+  const freshen = () => weather.refresh().then((w) => apply(w)).catch(() => {});
   // The flag (and the "due" chip) scroll to Coming up instead of changing page.
   card.addEventListener('click', (ev) => {
     const a = ev.target.closest('a[href="#coming-up"]');
@@ -72,8 +121,17 @@ export function houseCard(everything) {
     }
   });
   draw();
-  // Keep the sky right while the home screen stays open.
-  const timer = setInterval(() => { if (!card.isConnected) clearInterval(timer); else draw(); }, 60_000);
+  freshen();
+  // One-time question (until answered or dismissed; More → Appearance any time).
+  if (weather.shouldAsk()) {
+    const ask = el('div', { class: 'place-ask', id: 'place-ask' },
+      el('p', { class: 'place-ask-q' }, icon('sun', 18), el('span', {}, el('strong', {}, 'Show your local weather?'), ' Clouds, rain, snow and stars on the house picture.')));
+    addTo(ask, placePicker({ idp: 'ask-place', onDone: () => { ask.remove(); draw(); freshen(); },
+      onCancel: () => { weather.dismissAsk(); ask.remove(); }, cancelText: 'No thanks' }));
+    addTo(card, ask);
+  }
+  // Keep the sky (and every so often the weather) right while home stays open.
+  const timer = setInterval(() => { if (!card.isConnected) clearInterval(timer); else { draw(); freshen(); } }, 60_000);
   return card;
 }
 

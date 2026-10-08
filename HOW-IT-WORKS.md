@@ -773,3 +773,44 @@ phone number (code, docs and the PDFs' text) or a keystore file.
   10 photos so it shrinks as it goes, and shows "Moving photos to Drive:
   12 of 38". One sync at a time. Leftover duplicate or empty photo files the
   app made are moved to Drive's bin. Sync details show the app version.
+
+## v14.0 (8 Oct 2026): tidy home, weather house, manual lookup
+
+- **Home screen** (`renderHome` in app.js): house, tiles, Coming up, the
+  backup warning (only when overdue, `backupDue` in `js/homelogic.js`), then
+  one "This month" card. Its button (`#this-month-toggle`) shows/hides
+  `#this-month-body`, which holds the same spending card, stat cards and
+  Spending chart as before (same ids). Open/closed is kept in localStorage
+  (`hearthbook.monthOpen`). Recent and the tour are on More. The old layout
+  comes back with More → Home screen & sections → "Tidy home screen" off
+  (`prefs.homeTidy()`, localStorage `hearthbook.homeLayout`).
+- **Chart labels**: `axisLabel()` in `js/charts.js` prints a bar's `short`
+  name ("Sep") when each bar has ≥ 24 units of the 340-wide chart, else its
+  one-letter `label`.
+- **Shared file size**: `sizeLabel()` in `js/homelogic.js` (KB under 1 MB).
+- **Find a manual from a label** (`#/findmanual`, `renderManualLookup`):
+  `scan.readFile` (OCR on the phone) → `readLabel` in `js/manuallookup.js`
+  → `findExisting` (built-in manuals by model codes, your own by name/notes)
+  → open it, or `searchUrl` (a Google search in a new tab) and "Add it to
+  Hearthbook" → `#/addmanual/lookup` (the normal form, pre-filled; saving
+  still needs the PDF and the Save tap).
+- **Weather house** (`js/weather.js` + `houseSVG` in `js/house.js`): sunrise
+  and sunset are calculated on the phone (`sunTimes`, `sunPhase`) for the
+  phone's own weather place, and the moon's phase too (`moonPhase`). There is
+  **no location in the code**: each phone sets its own through the one-time
+  "Show your local weather?" question on the house card or More → Appearance
+  (`placePicker` in `js/homeui.js`): "Use my location" (browser geolocation)
+  or a typed town looked up with Open-Meteo's free geocoding
+  (`findTown`). It's rounded to one decimal (about 10 km) and kept only in
+  that phone's localStorage (`hearthbook.place`), never in the shared sync
+  file or backups. Until it's set (or after "No thanks",
+  `hearthbook.placeAsk`), the house shows a plain sky with day/night from a
+  middle-of-the-UK default (`UK_DEFAULT`) and nothing is fetched. The weather is one request to
+  `api.open-meteo.com` (free, no key), kept 45 minutes in localStorage
+  `hearthbook.weather`; failures are silent. `houseSVG({ weather: { cond,
+  windy }, moon })` adds clouds/rain/snow/fog/storm and windy smoke; the
+  weather layer has `pointer-events="none"` so the door/window/flag links
+  keep working. CSS for it is under "v14 weather" in styles.css (and stops
+  under prefers-reduced-motion). Switch: More → Appearance.
+- Tests: `node tests/v14_units.mjs`; `LOGBOOK_BASE=http://localhost:8766/
+  python3 tests/test_v14.py` (also writes the screenshots to V14_SHOTS).

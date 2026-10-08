@@ -72,3 +72,12 @@ export function markNotified(keys, today) {
 // ---------- first-run tour ----------
 export const toured = () => readRaw('hearthbook.toured') === 'yes';
 export const markToured = () => writeRaw('hearthbook.toured', 'yes');
+
+// v14 home screen: the tidy layout (house, tiles, Coming up, then one
+// "This month" card that opens on a tap) is the normal one. Unticking
+// "Tidy home screen" under More brings back the v13.9 layout (everything
+// shown, tour + Recent on home). Only this phone.
+export const homeTidy = () => readRaw('hearthbook.homeLayout', 'tidy') !== 'full';
+export const setHomeTidy = (on) => writeRaw('hearthbook.homeLayout', on ? 'tidy' : 'full');
+export const monthOpen = () => readRaw('hearthbook.monthOpen') === 'yes';
+export const setMonthOpen = (on) => writeRaw('hearthbook.monthOpen', on ? 'yes' : 'no');

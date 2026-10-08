@@ -282,6 +282,7 @@ body.no-nav .bottom-nav { display: none; }
 .chart-col { cursor: pointer; }
 .chart-label { fill: var(--text-2); font-size: 11px; font-weight: 600; font-family: var(--font); }
 .chart-label.is-selected { fill: var(--text); font-weight: 750; }
+.chart-label.short { font-size: 9.5px; letter-spacing: -0.1px; }
 .chart-peak { fill: var(--text-2); font-size: 10.5px; font-weight: 700; font-family: var(--font); }
 .chart-break { fill: none; stroke: var(--surface); stroke-width: 3; }
 .chart-note { margin: 6px 0 0 !important; color: var(--text-2); font-size: 12px; }
@@ -708,22 +709,29 @@ body.no-nav .bottom-nav { display: none; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme='light']) .house-svg[data-phase='day'] { --sky-top: #3f74a6; --sky-bottom: #8fb9db; } }
 .house-svg .sky-top { stop-color: var(--sky-top); transition: stop-color 1s; }
 .house-svg .sky-bottom { stop-color: var(--sky-bottom); transition: stop-color 1s; }
-.h-stars circle { fill: #fff; opacity: 0; }
-.house-svg[data-phase='night'] .h-stars circle { opacity: 0.9; animation: twinkle 3.2s ease-in-out infinite; animation-delay: calc(var(--d) * -0.7s); }
-.h-moon { fill: #f4f1de; opacity: 0; } .h-moon-cut { fill: var(--sky-top); opacity: 0; }
-.house-svg[data-phase='night'] .h-moon, .house-svg[data-phase='evening'] .h-moon, .house-svg[data-phase='night'] .h-moon-cut, .house-svg[data-phase='evening'] .h-moon-cut { opacity: 1; }
+.h-stars circle { fill: #fff; opacity: 0.9; animation: twinkle 3.2s ease-in-out infinite; animation-delay: calc(var(--d) * -0.7s); }
+.house-svg[data-phase='evening'] .h-stars circle { opacity: 0.55; }
+/* v14: the moon is only drawn when it should show (clear night, not new moon) */
+.h-moon { fill: #f6f2dc; } .h-moon-shadow { fill: #16213d; opacity: 0.92; } .h-moon-halo { fill: #f6f2dc; opacity: 0.12; }
 .h-sun { fill: #ffd76a; opacity: 0; }
 .house-svg[data-phase='day'] .h-sun { opacity: 1; } .house-svg[data-phase='dawn'] .h-sun { opacity: 0.8; transform: translateY(40px); }
+.house-svg:is([data-weather='cloudy'], [data-weather='rain'], [data-weather='snow'], [data-weather='storm'], [data-weather='fog']) .h-sun { opacity: 0 !important; }
 .h-hill { fill: var(--hs-hill); } .h-ground { fill: var(--hs-ground); } .h-path path { fill: var(--hs-path); } .h-bushes circle { fill: var(--hs-bush); }
 .h-trunk { fill: var(--hs-chimney-top); } .h-leaves { fill: var(--hs-bush); }
 .h-wall { fill: var(--hs-wall); } .h-band { fill: var(--hs-band); }
 .h-roof { fill: var(--hs-roof); } .h-ridge { stroke: var(--hs-verge); stroke-width: 3; stroke-linecap: round; }
 .h-chimney { fill: var(--hs-chimney); } .h-chimney-top { fill: var(--hs-chimney-top); }
-.h-smoke circle { fill: var(--hs-smoke); opacity: 0.55; animation: smoke 6s ease-in infinite; transform-box: fill-box; transform-origin: center; }
-.h-smoke circle:nth-child(2) { animation-delay: -2s; } .h-smoke circle:nth-child(3) { animation-delay: -4s; }
+.h-smoke circle { fill: var(--hs-smoke); opacity: 0; animation: smoke 7s ease-out infinite; animation-delay: calc(var(--d) * -1.4s); transform-box: fill-box; transform-origin: center; }
+.h-smoke.windy circle { animation-name: smoke-wind; animation-duration: 3.2s; animation-delay: calc(var(--d) * -0.64s); }
+.house-svg:not([data-phase='day']) { --hs-smoke: rgba(215, 220, 235, 0.85); }
+.house-svg:is([data-phase='night'], [data-phase='evening']) .hw-light { fill: #ffd98a; }
 .hw-frame { fill: var(--hs-trim); } .hw-glass { fill: var(--hs-glass); }
 .house-svg:not([data-phase='day']) .hw-glass { fill: #26324a; }
-.hw-light { fill: var(--hs-light); transition: opacity 0.8s; } .hw-halo { fill: var(--hs-light); filter: blur(3px); }
+.hw-light { fill: var(--hs-light); transition: opacity 0.8s; } .hw-halo { fill: var(--hs-light); filter: blur(4px); }
+.h-spill .spill-in, .spill-in { stop-color: var(--hs-light); stop-opacity: 1; } .spill-out { stop-color: var(--hs-light); stop-opacity: 0; }
+.h-spill { filter: blur(2px); }
+.h-lamp { fill: var(--hs-light); opacity: 0; }
+.house-svg:is([data-phase='night'], [data-phase='evening']) .h-lamp { opacity: 0.95; filter: drop-shadow(0 0 3px var(--hs-light)); }
 .hw-bars { stroke: var(--hs-trim); stroke-width: 1.6; } .hw-sill { fill: var(--hs-band); }
 .h-door-arch { fill: var(--hs-trim); } .h-door-panel { fill: var(--hs-door); } .h-knob { fill: #f5d48a; } .h-step { fill: var(--hs-band); }
 .h-pole { fill: var(--hs-verge); } .h-flag-cloth { fill: var(--brand); transform-box: fill-box; transform-origin: left center; animation: wave 2.4s ease-in-out infinite; }
@@ -739,11 +747,46 @@ body.no-nav .bottom-nav { display: none; }
 .house-svg[data-phase='evening'] .h-shade { opacity: 0.38; }
 .house-svg[data-phase='night'] .h-shade { opacity: 0.5; }
 @keyframes twinkle { 50% { opacity: 0.35; } }
-@keyframes smoke { 0% { transform: translate(0, 10px) scale(0.6); opacity: 0; } 30% { opacity: 0.55; } 100% { transform: translate(8px, -14px) scale(1.4); opacity: 0; } }
+@keyframes smoke { 0% { transform: translate(0, 6px) scale(0.5); opacity: 0; } 20% { opacity: 0.6; } 100% { transform: translate(9px, -22px) scale(1.7); opacity: 0; } }
+@keyframes smoke-wind { 0% { transform: translate(0, 4px) scale(0.5); opacity: 0; } 15% { opacity: 0.6; } 100% { transform: translate(46px, -4px) scale(1.6, 1.1); opacity: 0; } }
+/* v14 weather: clouds, rain, snow, fog, storm (pointer-events off, so the door and windows still work) */
+:root .house-svg[data-phase='day'][data-weather='partly'] { --sky-top: #6faee0; --sky-bottom: #d6e9f6; }
+:root .house-svg[data-phase='day'][data-weather='cloudy'], :root .house-svg[data-phase='day'][data-weather='fog'] { --sky-top: #8e9fae; --sky-bottom: #d3dbe1; }
+:root .house-svg[data-phase='day'][data-weather='rain'] { --sky-top: #6f7f8f; --sky-bottom: #b4bfc8; }
+:root .house-svg[data-phase='day'][data-weather='storm'] { --sky-top: #4c5866; --sky-bottom: #8f9aa4; }
+:root .house-svg[data-phase='day'][data-weather='snow'] { --sky-top: #9fb0bf; --sky-bottom: #e4e9ee; }
+.house-svg:is([data-phase='dawn'], [data-phase='dusk']):is([data-weather='cloudy'], [data-weather='rain'], [data-weather='storm'], [data-weather='snow'], [data-weather='fog']) { --sky-top: #5d6577; --sky-bottom: #a9a3a6; }
+.house-svg:is([data-phase='night'], [data-phase='evening']):is([data-weather='cloudy'], [data-weather='rain'], [data-weather='storm'], [data-weather='snow'], [data-weather='fog']) { --sky-top: #141a2a; --sky-bottom: #2b3346; }
+.h-cloud { fill: #fff; opacity: 0.92; animation: cloud-drift 70s ease-in-out infinite alternate; }
+.h-cloud.c2 { animation-duration: 90s; animation-direction: alternate-reverse; } .h-cloud.c3 { animation-duration: 80s; }
+.house-svg[data-windy='true'] .h-cloud { animation-duration: 18s; }
+.house-svg:is([data-weather='cloudy'], [data-weather='fog']) .h-cloud { fill: #e9edf1; }
+.house-svg:is([data-weather='rain'], [data-weather='snow']) .h-cloud { fill: #a7b1bb; }
+.house-svg[data-weather='storm'] .h-cloud { fill: #6e7884; }
+.house-svg:not([data-phase='day']) .h-cloud { fill: #3a4459; opacity: 0.95; }
+.house-svg:is([data-phase='dawn'], [data-phase='dusk']) .h-cloud { fill: #8d8aa0; }
+.h-rain line { stroke: #dfe9f3; stroke-width: 1.2; stroke-linecap: round; opacity: 0; animation: rain 0.85s linear infinite; animation-delay: calc(var(--d) * -0.85s); }
+.house-svg[data-windy='true'] .h-rain line { animation-name: rain-wind; }
+.house-svg:not([data-phase='day']) .h-rain line { stroke: #9fb3c8; }
+.h-snow circle { fill: #fff; opacity: 0; animation: snow 5s linear infinite; animation-delay: calc(var(--d) * -5s); }
+.house-svg[data-windy='true'] .h-snow circle { animation-name: snow-wind; animation-duration: 3s; }
+.h-fog rect { fill: #e8ecef; opacity: 0.55; animation: cloud-drift 30s ease-in-out infinite alternate; }
+.house-svg:not([data-phase='day']) .h-fog rect { fill: #59627a; }
+.h-flash { fill: #fff; opacity: 0; animation: flash 9s linear infinite; }
+.h-flag-cloth.windy { animation-duration: 0.9s; }
+@keyframes cloud-drift { from { transform: translateX(-14px); } to { transform: translateX(14px); } }
+@keyframes rain { 0% { transform: translate(0, -24px); opacity: 0; } 15% { opacity: 0.85; } 100% { transform: translate(0, 46px); opacity: 0.5; } }
+@keyframes rain-wind { 0% { transform: translate(10px, -24px); opacity: 0; } 15% { opacity: 0.85; } 100% { transform: translate(-14px, 46px); opacity: 0.5; } }
+@keyframes snow { 0% { transform: translate(0, -20px); opacity: 0; } 15% { opacity: 0.95; } 50% { transform: translate(4px, 15px); } 100% { transform: translate(-2px, 50px); opacity: 0.6; } }
+@keyframes snow-wind { 0% { transform: translate(20px, -20px); opacity: 0; } 15% { opacity: 0.95; } 100% { transform: translate(-30px, 50px); opacity: 0.6; } }
+@keyframes flash { 0%, 88%, 92%, 100% { opacity: 0; } 89% { opacity: 0.45; } 90% { opacity: 0.05; } 91% { opacity: 0.3; } }
 @keyframes wave { 50% { transform: skewY(-4deg) scaleX(0.94); } }
 @media (prefers-reduced-motion: reduce) {
-  .h-stars circle, .h-smoke circle, .h-flag-cloth { animation: none !important; }
+  .h-stars circle, .h-smoke circle, .h-flag-cloth, .h-cloud, .h-rain line, .h-snow circle, .h-fog rect, .h-flash { animation: none !important; }
   .h-smoke circle { opacity: 0.35; }
+  .h-smoke circle:nth-child(2) { transform: translate(4px, -7px); } .h-smoke circle:nth-child(3) { transform: translate(8px, -14px); opacity: 0.25; } .h-smoke circle:nth-child(n+4) { opacity: 0; }
+  .h-smoke.windy circle:nth-child(2) { transform: translate(12px, -2px); } .h-smoke.windy circle:nth-child(3) { transform: translate(24px, -3px); }
+  .h-rain line { opacity: 0.6; } .h-snow circle { opacity: 0.85; } .h-flash { opacity: 0; }
   .house-svg .sky-top, .house-svg .sky-bottom, .hw-light { transition: none; }
 }
 
@@ -985,3 +1028,45 @@ a.hero-chip:active { transform: scale(0.97); }
 a.year-chip { text-decoration: none; display: inline-flex; align-items: center; min-height: 40px; }
 
 .hero-sub a.hero-review { color: var(--brand); font-weight: 600; text-decoration: none; white-space: nowrap; }
+
+/* =================================================================
+   v14: "This month" fold on the tidy home screen, settings tick rows,
+   Find a manual from a label
+   ================================================================= */
+.month-fold { margin: 4px 0 16px; }
+.month-fold-head { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 16px; border: 0; border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.month-fold-head:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.month-fold-text { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 2px; }
+.month-fold-title { font-size: 16px; }
+.month-fold-chev { display: inline-flex; color: var(--text-2); transform: rotate(90deg); transition: transform 0.2s var(--ease, ease); }
+.month-fold.open .month-fold-chev { transform: rotate(-90deg); }
+/* Open: the same cards as before, full width under the header. */
+.month-fold-body { padding-top: 14px; }
+.month-fold-body:not([hidden]) { animation: rise 0.28s var(--ease, ease) both; }
+@media (prefers-reduced-motion: reduce) { .month-fold-chev { transition: none; } .month-fold-body:not([hidden]) { animation: none; } }
+.check-row { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0 4px; cursor: pointer; }
+.check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; accent-color: var(--brand); }
+.check-row > span { display: block; }
+.lookup-card .btn-lg { width: 100%; margin: 6px 0 8px; }
+.lookup-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+.lookup-fields .field { margin: 0; }
+.lookup-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.lookup-result .card { margin-top: 12px; }
+.lookup-head { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; }
+.lookup-found .lookup-head { color: var(--good); }
+.lookup-steps { margin: 12px 0; padding-left: 20px; color: var(--text-2); }
+.lookup-steps li { margin: 4px 0; }
+.lookup-result .btn { width: 100%; }
+.warn-text { color: var(--soon); }
+/* v14: weather location question (house card) + setting */
+.place-ask { margin: 0 14px 14px; padding: 12px; border-radius: 12px; background: var(--surface-2); }
+.place-ask-q { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 10px; font-size: 14px; }
+.place-ask-q svg { flex: none; margin-top: 2px; color: var(--brand); }
+.place-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.place-input { flex: 1; min-width: 0; min-height: 44px; font: inherit; font-size: 16px; color: var(--text); padding: 9px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); -webkit-appearance: none; appearance: none; }
+.place-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 18%, transparent); }
+.place-msg { margin: 6px 0 4px; } .place-msg:empty { display: none; }
+.place-results { display: flex; flex-direction: column; gap: 6px; }
+.place-hit { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 9px 12px; border: 1px solid var(--line, rgba(0,0,0,0.1)); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.place-note { margin: 6px 0 0; }
+.place-setting { margin: 4px 0 8px 28px; }

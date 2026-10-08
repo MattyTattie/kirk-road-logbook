@@ -42,9 +42,10 @@
 //         empty files), checked uploads, sync file rewritten every 10 photos,
 //         one sync at a time, "Moving photos to Drive: 12 of 38" progress.
 // v13.9 = no stray word "null" on entry pages, rooms, tagging or year in review.
+// v14.0 = tidy home (This month card), house follows the weather, Aug/Sep chart labels, KB size, manual lookup from a label.
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v13.9';
+const CACHE_NAME = 'hearthbook-v14.0';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -117,6 +118,9 @@ const APP_SHELL = [
   './js/rooms.js',
   './js/usermanuals.js',
   './js/review.js',
+  './js/weather.js',
+  './js/manuallookup.js',
+  './js/homelogic.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',
