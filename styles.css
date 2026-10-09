@@ -1070,3 +1070,13 @@ a.year-chip { text-decoration: none; display: inline-flex; align-items: center; 
 .place-hit { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 9px 12px; border: 1px solid var(--line, rgba(0,0,0,0.1)); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .place-note { margin: 6px 0 0; }
 .place-setting { margin: 4px 0 8px 28px; }
+/* v14.1: part-month ("so far") bars, legend, VAT line */
+.chart-bar.is-partial { opacity: 0.55; }
+.chart-hatch { stroke: var(--text-2); stroke-width: 1.6; opacity: 0.55; }
+.chart-sofar { fill: var(--text-2); font-size: 9px; font-weight: 700; font-family: var(--font); }
+.chart-legend { flex-wrap: wrap; row-gap: 4px; }
+.chart-legend .lg-part-wrap { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.chart-legend .lg-part { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--amber) 30%, var(--surface)) 0 2px, var(--text-3) 2px 3px); opacity: 0.8; }
+.period-vat { margin: 10px 0 0; font-size: 13px; color: var(--text-2); line-height: 1.4; }
+.period-vat strong { color: var(--text); }
+.place-row .link-btn { flex: none; width: auto; padding-left: 10px; padding-right: 10px; }

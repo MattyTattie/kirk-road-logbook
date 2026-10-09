@@ -35,7 +35,8 @@ import { el, fill, addTo, addFirst, money, totalCost, niceDate, todayISO, daysUn
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
-import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName } from './stats.js';
+import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey } from './stats.js';
+import { vatFor, allInNote } from './vat.js';
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
 import * as sync from './sync.js';
@@ -341,7 +342,7 @@ async function renderHome() {
   const heroChip = (s) => {
     const v = spendInYear(everything.filter((e) => e.type === s.id), year);
     const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
-    return v > 0 ? el('a', { class: 'hero-chip', href: `#/list/${s.id}/${year}`, 'data-section': s.id, 'aria-label': `${s.label} in ${year}: ${money(v)}` }, icon(s.glyph, 14), `${name} ${money(v).replace(/\.\d\d$/, '')}`) : null;
+    return v > 0 ? el('a', { class: 'hero-chip', href: `#/list/${s.id}/${year}`, 'data-section': s.id, 'aria-label': `${s.label} in ${year}: ${money(v)}` }, icon(s.glyph, 14), `${name} ${money(Math.round(v)).replace(/\.\d\d$/, '')}`) : null;
   };
   const heroChips = () => prefs.orderedSections().map(heroChip).filter(Boolean);
   const hero = el(
@@ -433,11 +434,14 @@ async function renderHome() {
   function drawChart() {
     const source = state.chartMode === 'bills' ? everything.filter((e) => e.type === 'meter') : everything;
     const yr = state.chartYear;
+    // v14.1: energy bills count under the month they cover (3 Sep–3 Oct → Sep),
+    // the same month the Electricity page shows them under.
+    const cover = coverMonths(everything);
     let months, months13, sub;
     if (yr) {
       // One calendar year, with last year's same months as faded bars.
-      const prevYear = yearSpend(source, yr - 1);
-      months = yearSpend(source, yr).map((m, i) => ({ ...m, compare: prevYear[i].value, compareTitle: prevYear[i].title }));
+      const prevYear = yearSpend(source, yr - 1, { cover });
+      months = yearSpend(source, yr, { cover }).map((m, i) => ({ ...m, compare: prevYear[i].value, compareTitle: prevYear[i].title }));
       months13 = prevYear; // in this view the "previous" month is the same month last year
       // Compare like with like: this year so far vs the same months last year.
       const upTo = yr === year ? new Date().getMonth() + 1 : 12;
@@ -448,7 +452,7 @@ async function renderHome() {
       sub = el('p', { class: 'card-sub', id: 'chart-sub' }, `${yr} · ${money(total)}`,
         then > 0 ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'chart-yoy' }, ` ${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} vs ${yr - 1}${upTo < 12 ? ' (Jan–' + months[upTo - 1].short + ')' : ''}`) : el('span', { class: 'yoy', id: 'chart-yoy' }, ` · nothing in ${yr - 1} to compare`));
     } else {
-      months13 = monthlySpend(source, 13); // one extra so the first month has a "previous"
+      months13 = monthlySpend(source, 13, new Date(), { cover }); // one extra so the first month has a "previous"
       months = months13.slice(1);
       sub = el('p', { class: 'card-sub', id: 'chart-sub' }, `Last 12 months · ${money(totalCost(months.map((m) => ({ cost: m.value }))))}`);
     }
@@ -464,10 +468,10 @@ async function renderHome() {
       label: 'month',
       count: months.length,
       index: pick,
-      render: (i) => monthDetail(months[i], months13[i], source, Boolean(yr)),
+      render: (i) => monthDetail(months[i], months13[i], source, Boolean(yr), cover),
       onChange: (i) => { state.chartPick = i; chart.select(i); },
     });
-    chart = barChart(months, { height: 150, selected: pick, format: (v) => money(v).replace(/\.\d\d$/, ''),
+    chart = barChart(months, { height: 150, selected: pick, format: (v) => money(Math.round(v)).replace(/\.\d\d$/, ''),
       describe: yr ? (bar, v) => `${bar.title}: ${money(v)}; ${bar.compareTitle}: ${money(bar.compare)}` : undefined,
       onSelect: (i) => { state.chartPick = i; chart.select(i); card.show(i); } });
     fill(chartCard,
@@ -478,6 +482,7 @@ async function renderHome() {
       yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
+      cover.size ? el('p', { class: 'chart-hint', id: 'chart-cover-note' }, 'Energy bills show under the month they cover.') : null,
       card); // fill() skips the null (replaceChildren would print it as "null")
     drawTiles(); // the tiles follow the year picker
   }
@@ -515,7 +520,7 @@ async function renderHome() {
   }
 
   // v14 tidy home (Option 2): house, tiles, Coming up on top; spending, the
-  // meter / bill cards and the chart fold into one "This month" card that
+  // meter / bill cards and the chart fold into one "Money & energy" card that
   // opens on a tap and remembers (this phone) whether you left it open.
   // Recent and the tour moved to More. Nothing removed.
   const now = new Date();
@@ -533,9 +538,9 @@ async function renderHome() {
       if (on) { const v = document.getElementById('spend-year'); if (v) countUp(v, thisYear, (x) => money(x)); }
     } },
     el('span', { class: 'badge badge-md', 'data-tone': 'brand' }, icon('chart')),
-    el('span', { class: 'month-fold-text' }, el('strong', { class: 'month-fold-title' }, 'This month'), el('span', { class: 'small muted', id: 'this-month-summary' }, summary)),
+    el('span', { class: 'month-fold-text' }, el('strong', { class: 'month-fold-title' }, 'Money & energy'), el('span', { class: 'small muted', id: 'this-month-summary' }, summary)),
     el('span', { class: 'month-fold-chev', 'aria-hidden': 'true' }, icon('chevron', 18)));
-  const monthCard = el('section', { class: 'month-fold' + (open ? ' open' : ''), id: 'this-month', 'aria-label': 'This month: spending, meter readings and charts' }, toggle, body);
+  const monthCard = el('section', { class: 'month-fold' + (open ? ' open' : ''), id: 'this-month', 'aria-label': 'Money & energy: spending, meter readings and charts' }, toggle, body);
   addTo(dash, head, ask, houseCard(everything), tiles.element, comingUp, banner, monthCard);
   fill(app, dash);
   const heroValue = document.getElementById('spend-year');
@@ -714,8 +719,9 @@ function meterInsights(everything) {
   const b = bills(everything);
   const latest = r[r.length - 1];
   if (!latest) return null;
-  const recent = intervals.slice(-3);
-  const avg = recent.length ? recent.reduce((s, i) => s + i.used, 0) / recent.reduce((s, i) => s + i.days, 0) : null;
+  // v14.1: "Daily use" = the latest period between readings (matches its bar).
+  const last = all[all.length - 1] || null;
+  const avg = last ? last.perDay : null;
   const year = new Date().getFullYear();
   const billsYear = totalCost(b.filter((x) => (x.date || '').startsWith(String(year))));
   const unit = latest.meterUnit || '';
@@ -748,27 +754,39 @@ function meterInsights(everything) {
     if (yr) {
       // Calendar months of one year, with the same months last year faded behind.
       const now = monthlyUsage(everything, yr), then = monthlyUsage(everything, yr - 1);
-      const months = now.map((m, i) => ({ ...m, value: m.value, compare: then[i].value, compareTitle: then[i].title, muted: m.days === 0 }));
-      const covered = (list) => list.filter((m) => m.days > 0);
-      const upTo = now.filter((m, i) => m.days > 0 && then[i].days > 0);
+      // v14.1: a month the readings only partly cover is drawn pale + hatched;
+      // the latest such month (readings stop inside it) is marked "so far".
+      const fullDays = (m) => new Date(Number(m.key.slice(0, 4)), Number(m.key.slice(5)), 0).getDate();
+      const lastCovered = now.reduce((k, m, i) => (m.days > 0 ? i : k), -1);
+      const months = now.map((m, i) => {
+        const part = m.days > 0 && m.days < fullDays(m);
+        return { ...m, value: m.value, compare: then[i].value, compareTitle: then[i].title, muted: m.days === 0, partial: part, partialNote: part ? (i === lastCovered ? 'so far' : 'part') : '' };
+      });
+      const soFar = months.find((m) => m.partialNote === 'so far');
+      const partOnly = months.some((m) => m.partialNote === 'part');
+      // v14.1: compare only months the readings cover fully in both years (a
+      // part month like "Oct so far" would look like a big drop).
+      const isFull = (m) => m.days > 0 && m.days >= fullDays(m);
+      const upTo = now.filter((m, i) => isFull(m) && isFull(then[i]));
       const sumNow = upTo.reduce((t, m) => t + m.value, 0);
       const sumThen = upTo.reduce((t, m) => t + then[now.indexOf(m)].value, 0);
       const pickM = (i) => {
         chart.select(i);
         if (card) return card.show(i);
-        card = periodCard({ id: 'period', label: 'month', count: 12, index: i, render: (k) => meterMonthDetail(now[k], then[k], unit, everything), onChange: (k) => chart.select(k) });
+        card = periodCard({ id: 'period', label: 'month', count: 12, index: i, render: (k) => meterMonthDetail(months[k], then[k], unit, everything), onChange: (k) => chart.select(k) });
         hint.remove();
         fill(slot, card);
       };
       chart = barChart(months, { height: 120, selected: -1, format: (v) => Math.round(v).toLocaleString('en-GB'),
-        describe: (bar, v) => `${bar.title}: ${Math.round(v)} ${unit}; ${bar.compareTitle}: ${Math.round(bar.compare)} ${unit}`, onSelect: pickM });
+        describe: (bar, v) => `${bar.title}${bar.partial ? ` (${bar.partialNote === 'so far' ? 'so far' : 'part of the month'}, ${bar.days} days)` : ''}: ${Math.round(v)} ${unit}; ${bar.compareTitle}: ${Math.round(bar.compare)} ${unit}`, onSelect: pickM });
       const d = sumNow - sumThen;
       fill(box,
         yearPicker('meter-years', years, yr, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }),
         el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `${unit} used per month in ${yr}`,
-          upTo.length ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'meter-yoy' }, ` · ${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(sumThen ? (d / sumThen) * 100 : 0))}% vs ${yr - 1} (${upTo.length} month${upTo.length === 1 ? '' : 's'} with readings in both)`) : el('span', { class: 'yoy', id: 'meter-yoy' }, ` · no ${yr - 1} readings to compare`)),
+          upTo.length ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'meter-yoy' }, ` · ${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(sumThen ? (d / sumThen) * 100 : 0))}% vs ${yr - 1} (${upTo.length === 1 ? upTo[0].short + ' only' : `${upTo.length} full months`})`) : el('span', { class: 'yoy', id: 'meter-yoy' }, ` · no full months in ${yr - 1} to compare`)),
         chart,
-        el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1), covered(now).length < 12 ? ' · pale = no readings' : ''),
+        el('p', { class: 'chart-legend', id: 'meter-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1),
+          soFar || partOnly ? el('span', { class: 'lg-part-wrap' }, el('i', { class: 'lg-part' }), soFar ? `${soFar.short} so far (${soFar.days} day${soFar.days === 1 ? '' : 's'})` : 'part month') : null),
         hint, slot);
       hint.textContent = 'Tap a month to compare it with last year';
       slot.replaceChildren();
@@ -777,11 +795,13 @@ function meterInsights(everything) {
     hint.textContent = 'Tap a bar to see that period';
     slot.replaceChildren();
     chart = intervals.length > 1 ? barChart(
-      intervals.map((i) => ({ label: MON3[new Date(i.to.date).getMonth()].slice(0, 1), short: MON3[new Date(i.to.date).getMonth()], title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
+      // v14.1: each bar is named after the month it mostly covers (its middle day).
+      intervals.map((i) => ({ key: midMonthKey(i.from.date, i.to.date), label: MON3[Number(midMonthKey(i.from.date, i.to.date).slice(5)) - 1].slice(0, 1), short: MON3[Number(midMonthKey(i.from.date, i.to.date).slice(5)) - 1], title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
       { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
     ) : null;
     fill(box, chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null,
-      el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart, hint, slot] : null);
+      el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart,
+      el('p', { class: 'chart-legend', id: 'meter-legend' }, 'Each bar is named after the month it mostly covers.'), hint, slot] : null);
   }
   draw();
   return el(
@@ -789,8 +809,8 @@ function meterInsights(everything) {
     { class: 'card meter-card', id: 'meter-insights', 'aria-label': 'Meter summary' },
     el('div', { class: 'meter-stats' },
       el('div', {}, el('span', { class: 'stat-label' }, 'Latest'), el('span', { class: 'stat-value' }, Number(latest.meterValue).toLocaleString('en-GB')), el('span', { class: 'stat-title' }, `${unit} · ${niceDate(latest.date)}`)),
-      el('div', {}, el('span', { class: 'stat-label' }, 'Daily use'), el('span', { class: 'stat-value' }, avg !== null ? avg.toFixed(1) : '–'), el('span', { class: 'stat-title' }, `${unit}/day, recent`)),
-      el('div', {}, el('span', { class: 'stat-label' }, `Bills ${year}`), el('span', { class: 'stat-value' }, money(billsYear).replace(/\.\d\d$/, '')), el('span', { class: 'stat-title' }, `${b.filter((x) => (x.date || '').startsWith(String(year))).length} bills`))
+      el('div', {}, el('span', { class: 'stat-label' }, 'Daily use'), el('span', { class: 'stat-value' }, avg !== null ? avg.toFixed(1) : '–'), el('span', { class: 'stat-title', id: 'daily-use-note', title: last ? `${niceDate(last.from.date)} to ${niceDate(last.to.date)}` : '' }, last ? `${unit}/day, latest period` : `${unit}/day`)),
+      el('div', {}, el('span', { class: 'stat-label' }, `Bills ${year}`), el('span', { class: 'stat-value' }, money(Math.round(billsYear)).replace(/\.\d\d$/, '')), el('span', { class: 'stat-title' }, `${b.filter((x) => (x.date || '').startsWith(String(year))).length} bills`))
     ),
     box
   );
@@ -798,7 +818,8 @@ function meterInsights(everything) {
 
 // One calendar month of energy use, compared with the same month last year.
 function meterMonthDetail(m, prev, unit, everything) {
-  const bill = everything.find((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date && monthKeyOfBill(e) === m.key);
+  const cover = coverMonths(everything);
+  const bill = everything.find((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date && spendMonthKey(e, cover) === m.key);
   const d = m.days && prev.days ? m.value - prev.value : null;
   const pct = d !== null && prev.value > 0 ? ` (${d >= 0 ? '+' : '−'}${Math.round(Math.abs(d / prev.value) * 100)}%)` : '';
   const body = el('div', { class: 'period-body' },
@@ -811,15 +832,15 @@ function meterMonthDetail(m, prev, unit, everything) {
     el('div', { class: 'period-change', id: 'pd-change' }, el('span', {}, `vs ${prev.title}:`),
       d !== null ? changePill(d, (v) => `${fmtNum(v, 0)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'Not enough readings')),
     m.days && m.days < new Date(Number(m.key.slice(0, 4)), Number(m.key.slice(5)), 0).getDate()
-      ? el('p', { class: 'chart-hint' }, `Readings cover ${m.days} of this month’s days.`) : null
+      ? el('p', { class: 'chart-hint', id: 'pd-partial' }, `${m.partialNote === 'so far' ? 'So far: r' : 'R'}eadings cover ${m.days} of this month’s days.`) : null,
+    bill ? vatLine(vatFor(`${m.key}-01`, nextMonthStart(m.key))) : null
   );
-  return { title: m.title, sub: m.days ? `${fmtNum(m.value, 0)} ${unit}` : 'No readings', body };
+  return { title: m.title, sub: m.days ? `${fmtNum(m.value, 0)} ${unit}${m.partialNote === 'so far' ? ' so far' : ''}` : 'No readings', body };
 }
-// The month a bill is "for": EDF bills dated the 3rd cover the month before.
-function monthKeyOfBill(e) {
-  const d = new Date(e.date);
-  if (d.getDate() <= 5) d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+// v14.1: VAT wording for a period (vat.js) — the bill amounts never change.
+const nextMonthStart = (key) => { const y = Number(key.slice(0, 4)), m = Number(key.slice(5)); return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`; };
+function vatLine(v) {
+  return el('p', { class: 'period-vat', id: 'pd-vat', 'data-vat': v.kind }, el('strong', {}, 'VAT: '), v.text);
 }
 
 // The bill that belongs to a period between two readings: the closing reading
@@ -831,6 +852,8 @@ function billFor(interval, everything) {
   return everything.find((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date > interval.from.date && e.date <= interval.to.date) || null;
 }
 
+// v14.1: "35,880.9" everywhere (the list used to say "35880.9").
+const fmtReading = (v) => (v !== '' && isFinite(Number(v)) ? Number(v).toLocaleString('en-GB', { maximumFractionDigits: 3 }) : String(v));
 const fmtNum = (n, dp = 1) => Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
 
 function changePill(delta, fmt, id) {
@@ -854,7 +877,7 @@ function tariffOf(bill) {
   return t && (t.rates.length || t.standing.length) ? t : null;
 }
 const pence = (p) => `${fmtNum(p, 2)}p`;
-const shortDay = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const shortDay = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MON3[d.getMonth()]}`; };
 // "21.07p" · "24.51p → 21.07p" (tariff changed, with "from 14 May") · "Day 30.10p · Night 15.20p"
 function rateText(list) {
   const one = (r) => `${r.label ? r.label + ' ' : ''}${pence(r.p)}`;
@@ -868,7 +891,7 @@ function rateText(list) {
   if (list.some((r) => r.label) || list.length === 1) return { v: list.map(one).join(' · '), sub: '' };
   return { v: list.map(one).join(' / '), sub: 'tariff changed in this period' };
 }
-function tariffStats(t, days, unit) {
+function tariffStats(t, days, unit) { // standing charge and unit rates are as billed (VAT, if any, included)
   if (!t) return [];
   const out = [];
   if (t.rates.length) {
@@ -878,7 +901,7 @@ function tariffStats(t, days, unit) {
   if (t.standing.length) {
     const r = rateText(t.standing);
     const one = t.standing.length === 1 ? t.standing[0].p : null;
-    out.push(stat('Standing charge', r.v, one && days ? `a day · ${money((one * Math.round(days)) / 100)} for ${Math.round(days)} days before VAT` : r.sub || 'a day', 'pd-standing'));
+    out.push(stat('Standing charge', r.v, one && days ? `a day · ${money((one * Math.round(days)) / 100)} for ${Math.round(days)} days` : r.sub || 'a day', 'pd-standing'));
   }
   return out;
 }
@@ -894,19 +917,21 @@ function periodDetail(interval, prev, everything) {
   const pct = prev && prev.used > 0 ? ` (${dUsed >= 0 ? '+' : '−'}${Math.round(Math.abs(dUsed / prev.used) * 100)}%)` : '';
   const photo = bill && bill.photos && bill.photos[0] ? bill.photos[0].blob : null;
   const tariff = bill ? tariffOf(bill) : null;
+  const vat = vatFor(interval.from.date, interval.to.date);
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
       stat('Used', fmtNum(interval.used), unit, 'pd-used'),
       stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
       cost !== null ? stat('Bill', money(cost), null, 'pd-cost') : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
       ...tariffStats(tariff, interval.days, unit),
-      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(perUnit * 100, 1)}p`, tariff ? 'incl. standing & VAT' : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
+      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(perUnit * 100, 1)}p`, tariff ? allInNote(vat) : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
     ),
     el('div', { class: 'period-change', id: 'pd-change' },
       el('span', {}, 'vs previous:'),
       prev ? changePill(dUsed, (v) => `${fmtNum(v)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'First period'),
       prev ? changePill(dCost, (v) => money(v), 'pd-change-cost') : null
     ),
+    bill ? vatLine(vat) : null,
     bill
       ? el('div', { class: 'period-bill', id: 'pd-bill' },
           photo ? el('img', { src: photoURL(photo), alt: 'Bill photo', id: 'pd-bill-thumb' }) : el('span', { class: 'pb-icon' }, icon('file', 20)),
@@ -926,8 +951,8 @@ function yearPicker(id, years, current, onPick, defaultLabel, { newestFirst = fa
   return el('div', { class: 'year-picker', id, role: 'group', 'aria-label': 'Choose year' }, chip(0, defaultLabel), list.map((y) => chip(y, String(y))));
 }
 
-function monthDetail(month, prevMonth, source, yearOnYear = false) {
-  const items = source.filter((e) => e.type !== 'insurance' && (e.date || '').startsWith(month.key) && Number(e.cost) > 0).sort((a, b) => Number(b.cost) - Number(a.cost));
+function monthDetail(month, prevMonth, source, yearOnYear = false, cover = null) {
+  const items = source.filter((e) => e.type !== 'insurance' && spendMonthKey(e, cover) === month.key && Number(e.cost) > 0).sort((a, b) => Number(b.cost) - Number(a.cost));
   const delta = prevMonth ? month.value - prevMonth.value : null;
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
@@ -972,7 +997,7 @@ function entryCard(e) {
       el('div', { class: 'entry-title' }, e.title),
       el('div', { class: 'entry-sub' }, details),
       e.meterValue !== null && e.meterValue !== undefined && e.meterValue !== ''
-        ? el('div', { class: 'entry-meter' }, `${e.meterValue} ${e.meterUnit || ''}`)
+        ? el('div', { class: 'entry-meter' }, `${fmtReading(e.meterValue)} ${e.meterUnit || ''}`)
         : null,
       e.dueDate ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
     ),
@@ -985,7 +1010,7 @@ function entryCard(e) {
 // ---------------------------------------------------------------------
 function renderSearch(initial = '') {
   fill(app,
-    screenHead('Ask Hearthbook', { back: { href: '#/home', label: 'Home' }, sub: 'Search everything on this phone — or ask “when does … renew?”' }),
+    screenHead('Ask Hearth', { back: { href: '#/home', label: 'Home' }, sub: 'Search everything on this phone — or ask “when does … renew?”' }),
     askBox({ getEntries: () => db.getAllEntries(), entryCard, autofocus: true, examples: true, initial }));
 }
 
@@ -1128,7 +1153,7 @@ async function renderScan(arg) {
     const isPdf = file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || ''));
     if (isPdf) sharedPdfChoice(file);
     else if (file && /^image\//.test(file.type || '')) setTimeout(() => go(file), 0);
-    else picker(file ? 'Hearthbook can read photos and PDFs. That file was a different kind.' : 'The shared file didn’t arrive. Try sharing it again, or choose it here.');
+    else picker(file ? 'Hearth can read photos and PDFs. That file was a different kind.' : 'The shared file didn’t arrive. Try sharing it again, or choose it here.');
   }
   // v13: a PDF shared to Hearthbook can be a bill/receipt OR a manual.
   // A name like "…manual…" / "…guide…" (or a long PDF) puts "manual" first.
@@ -1497,10 +1522,10 @@ async function syncCard(cardHead) {
   };
   const help = el('ul', { class: 'sync-help' },
     el('li', {}, 'Keeps one logbook on more than one phone: yours and anyone you want to share it with.'),
-    el('li', {}, 'Entries go in a small “hearthbook-sync.json” file in your Hearthbook Drive folder; photos are stored next to it as separate picture files. You share that folder. No other company or server is involved.'),
+    el('li', {}, 'Entries go in a small “hearthbook-sync.json” file in your “Hearthbook” Drive folder (the folder keeps its old name); photos are stored next to it as separate picture files. You share that folder. No other company or server is involved.'),
     el('li', {}, 'Each phone keeps its own full copy, so the app still works with no signal. Changes are swapped when you open the app, a few seconds after you save, and when you tap Sync now.'),
     el('li', {}, 'If two phones change the same entry before syncing, the most recent save wins.'),
-    el('li', {}, 'The app can only open its own Hearthbook files, nothing else in your Drive.'));
+    el('li', {}, 'The app can only open its own files, nothing else in your Drive.'));
   // A message stays for 10 seconds, even if the card redraws meanwhile.
   if (syncMsg && !syncMsg.until) syncMsg.until = Date.now() + 10000;
   if (syncMsg && syncMsg.until < Date.now()) syncMsg = null;
@@ -1524,8 +1549,8 @@ async function syncCard(cardHead) {
   if (st.state === 'nofolder') {
     add(head,
       el('ul', { class: 'sync-facts' }, el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who))),
-      el('p', {}, 'Is this the first phone? Start a shared logbook. It creates a “Hearthbook” folder in your Drive and copies this phone’s entries into it. Then invite anyone you want to share it with.'),
-      el('p', {}, 'If someone has already shared a Hearthbook folder with you, tap Join. Google’s file picker opens: tap “hearthbook-sync.json” (ignore any other hearthbook files), then tap Select. You only do this once.'),
+      el('p', {}, 'Is this the first phone? Start a shared logbook. It creates a folder called “Hearthbook” in your Drive and copies this phone’s entries into it. Then invite anyone you want to share it with.'),
+      el('p', {}, 'If someone has already shared their “Hearthbook” folder with you, tap Join. Google’s file picker opens: tap “hearthbook-sync.json” (ignore any other hearthbook files), then tap Select. You only do this once.'),
       el('div', { class: 'sync-actions' },
         el('button', { type: 'button', class: 'btn', id: 'sync-create', onclick: (ev) => busyBtn(ev.currentTarget, 'Creating…', async () => {
           await sync.createShared();
@@ -1562,13 +1587,13 @@ async function syncCard(cardHead) {
       st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, sizeLabel(st.fileSize))) : null),
     // v13: a gentle heads-up as the one shared file (photos included) grows.
     st.fileSize >= SIZE_WARN ? el('p', { class: 'sync-size-warn small', id: 'sync-size-warn', role: 'note' }, icon('alert', 16),
-      `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB. Newer Hearthbook versions keep photos as separate Drive files so this stays small — tap Sync now to shrink it. It still syncs fine either way.`) : null,
+      `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB. Newer Hearth versions keep photos as separate Drive files so this stays small — tap Sync now to shrink it. It still syncs fine either way.`) : null,
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
         ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')
         : el('button', { type: 'button', class: 'btn', id: 'sync-now', disabled: st.state === 'syncing', onclick: (ev) => busyBtn(ev.currentTarget, 'Syncing…', async () => {
           const r = await sync.syncNow({ interactive: true });
-          if (r && r.busy) syncMsg = { text: 'Already syncing in another Hearthbook window. Give it a moment.' };
+          if (r && r.busy) syncMsg = { text: 'Already syncing in another Hearth window. Give it a moment.' };
         }) }, icon('backup', 20), 'Sync now'),
       st.state === 'signin' ? el('p', { class: 'small muted', id: 'sync-signin-note' }, 'Google asks for a quick check now and then. Nothing is lost: your entries are safe on this phone and will sync as soon as you tap.') : null,
       msg,
@@ -1729,7 +1754,7 @@ async function renderDetail(id) {
     ['Date', niceDate(e.date), 'calendar'],
     ['Cost', e.cost ? money(e.cost, e.currency) + (e.currency && e.currency !== 'GBP' ? ` (${e.currency})` : '') : null, 'receipt'],
     ['Supplier / who', e.supplier, 'home'],
-    ['Reading', e.meterValue !== null && e.meterValue !== undefined ? `${e.meterValue} ${e.meterUnit || ''}` : null, 'gauge'],
+    ['Reading', e.meterValue !== null && e.meterValue !== undefined ? `${fmtReading(e.meterValue)} ${e.meterUnit || ''}` : null, 'gauge'],
     ['Unit rate', tariff && tariff.rates.length ? ((r) => `${r.v} per kWh${r.from ? ` (new rate from ${shortDay(r.from)})` : ''}`)(rateText(tariff.rates)) : null, 'bolt'],
     ['Standing charge', tariff && tariff.standing.length ? rateText(tariff.standing).v + ' a day' : null, 'clock'],
     [section.dueWord === 'expires' ? 'Expires' : 'Next due', e.dueDate ? `${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})` : null, 'clock'],
@@ -1929,10 +1954,10 @@ async function renderManuals(focus = '') {
       el('div', { class: 'group-head' }, el('h2', {}, 'Your manuals'), el('a', { class: 'link', href: '#/addmanual', id: 'add-manual' }, icon('plus', 14), 'Add a manual')),
       el('a', { class: 'card more-row', href: '#/findmanual', id: 'find-manual' },
         el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('scan')),
-        el('span', { class: 'more-row-text' }, el('strong', {}, 'Find a manual from a label'), el('span', { class: 'small muted' }, 'Photograph the model sticker; Hearthbook checks what it has, or searches the web')),
+        el('span', { class: 'more-row-text' }, el('strong', {}, 'Find a manual from a label'), el('span', { class: 'small muted' }, 'Photograph the model sticker; Hearth checks what it has, or searches the web')),
         icon('chevron', 18)),
       mine.length ? el('div', { class: 'manual-list' }, mine.map(mineCard))
-        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it from your phone, or share it to Hearthbook from your email or browser.'),
+        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it from your phone, or share it to Hearth from your email or browser.'),
       el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add are kept on this phone only: they aren’t in Drive sync or backup files (PDFs are too big for the one shared file). Add them on the other phone too if needed.')),
     el('div', { class: 'manuals-offline' }, status, saveAll),
     ...groups.map((g) => el('section', { class: 'group manuals-group' },
@@ -1982,7 +2007,7 @@ async function renderManualViewer(file) {
   } else {
     const found = manuals.findFile(file);
     if (!found) {
-      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearthbook.')));
+      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearth.')));
       return;
     }
     title = found.appliance.name; label = found.file.label; notes = found.appliance.notes ? ['Handy notes: ', found.appliance.notes] : null;
@@ -2057,21 +2082,21 @@ async function renderManualLookup() {
       const a = found.appliance, m = found.manual;
       const href = a ? (a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`) : `#/manual/u:${encodeURIComponent(m.id)}`;
       fill(result, el('div', { class: 'card lookup-found', id: 'lookup-found', 'data-kind': found.kind },
-        el('p', { class: 'lookup-head' }, icon('check', 18), el('strong', {}, 'Hearthbook already has this manual')),
+        el('p', { class: 'lookup-head' }, icon('check', 18), el('strong', {}, 'Hearth already has this manual')),
         el('p', {}, a ? `${a.name} · ${a.model}` : m.name),
         el('a', { class: 'btn', href, id: 'lookup-open' }, icon('book', 20), 'Open the manual')));
       return;
     }
     const q = [brand, model, 'manual pdf'].filter(Boolean).join(' ');
     fill(result, el('div', { class: 'card lookup-none', id: 'lookup-none' },
-      el('p', { class: 'lookup-head' }, icon('search', 18), el('strong', {}, 'Not in Hearthbook yet')),
+      el('p', { class: 'lookup-head' }, icon('search', 18), el('strong', {}, 'Not in Hearth yet')),
       model ? null : el('p', { class: 'small warn-text' }, 'Tip: add the model number for a better match.'),
       el('a', { class: 'btn', href: lookup.searchUrl(brand, model), target: '_blank', rel: 'noopener noreferrer', id: 'lookup-web' }, icon('search', 20), `Search the web for “${q}”`),
       el('ol', { class: 'lookup-steps small' },
         el('li', {}, 'Pick the maker’s PDF (their own website is best) and download it.'),
-        el('li', {}, 'Come back here and tap “Add it to Hearthbook”.'),
+        el('li', {}, 'Come back here and tap “Add it to Hearth”.'),
         el('li', {}, 'Choose the PDF, check the name, and tap Save. Nothing is saved before that.')),
-      el('button', { type: 'button', class: 'btn secondary', id: 'lookup-add', onclick: () => { pendingLookup = { brand, model }; location.hash = '#/addmanual/lookup'; } }, icon('plus', 20), 'Add it to Hearthbook')));
+      el('button', { type: 'button', class: 'btn secondary', id: 'lookup-add', onclick: () => { pendingLookup = { brand, model }; location.hash = '#/addmanual/lookup'; } }, icon('plus', 20), 'Add it to Hearth')));
   };
   const drawChips = (list) => fill(chips, list.length > 1 ? [el('span', { class: 'small muted' }, 'Other codes on the label: '),
     ...list.slice(1).map((c) => el('button', { type: 'button', class: 'year-chip', 'data-code': c, onclick: () => { modelInput.value = c; show(); } }, c))] : []);
@@ -2163,7 +2188,7 @@ async function renderManualForm(id, arg) {
       : el('div', { class: 'field' }, el('span', { class: 'label' }, 'PDF'), fileBox, fileInput,
           fromLookup ? el('span', { class: 'hint', id: 'manual-from-lookup' }, 'Choose the PDF you just downloaded (usually in Downloads), check the name, then tap Save manual. Nothing is saved until then.') : null),
     el('label', { class: 'field' }, el('span', { class: 'label' }, 'Name *'), nameInput),
-    el('label', { class: 'field' }, el('span', { class: 'label' }, 'Notes (optional)'), notesInput, el('span', { class: 'hint' }, 'Ask Hearthbook finds manuals by their name and notes.')),
+    el('label', { class: 'field' }, el('span', { class: 'label' }, 'Notes (optional)'), notesInput, el('span', { class: 'hint' }, 'Ask Hearth finds manuals by their name and notes.')),
     el('div', { class: 'field' }, el('span', { class: 'label' }, 'Rooms (optional)'), roomToggles(allRooms, selRooms, null, 'manual-room-toggles')),
     taggable.length ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'For which entries? (optional)'), filter, linkList,
       el('span', { class: 'hint' }, 'A linked entry shows a Manual button.')) : null,
@@ -2384,7 +2409,7 @@ async function renderYearReview(year) {
   const hrefFor = (id) => (id === 'insurance' ? '#/list/insurance' : `#/list/${id}/${year}`);
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   fill(app,
-    screenHead('Year in review', { back: { href: '#/export', label: 'More' }, sub: 'What the house cost, from what’s in Hearthbook' }),
+    screenHead('Year in review', { back: { href: '#/export', label: 'More' }, sub: 'What the house cost, from what’s in Hearth' }),
     el('nav', { class: 'year-picker', 'aria-label': 'Year' }, years.map((y) => el('a', { class: 'year-chip' + (y === year ? ' active' : ''), href: `#/year/${y}`, 'aria-current': y === year ? 'page' : null, onclick: (ev) => { ev.preventDefault(); location.replace(`#/year/${y}`); } }, String(y)))),
     el('section', { class: 'card review-hero', id: 'review-total' },
       el('p', { class: 'eyebrow' }, r.partial ? `${year} so far (to ${niceDate(r.until)})` : `${year}`),
@@ -2413,7 +2438,7 @@ async function renderYearReview(year) {
           r.busiestMonth ? el('p', {}, icon('calendar', 16), `Busiest month: ${MONTHS[r.busiestMonth.month - 1]} (${money(r.busiestMonth.amount)})`) : null,
           r.kwh ? el('p', {}, icon('bolt', 16), `About ${r.kwh.toLocaleString('en-GB')} kWh of electricity used (from meter readings covering ${r.kwhDays} days)`) : null)
       : null,
-    el('p', { class: 'small muted footnote' }, 'Only what’s in Hearthbook is counted, so missing bills or receipts aren’t included. Insurance is what was paid in the year (monthly payments made, a yearly premium shared over its months).',
+    el('p', { class: 'small muted footnote' }, 'Only what’s in Hearth is counted, so missing bills or receipts aren’t included. Insurance is what was paid in the year (monthly payments made, a yearly premium shared over its months).',
       r.otherCurrency ? ` ${r.otherCurrency} item${r.otherCurrency === 1 ? ' is' : 's are'} in another currency and added at face value.` : '')
   );
 }
@@ -2421,13 +2446,13 @@ async function renderYearReview(year) {
 // ---------------------------------------------------------------------
 // EXPORT screen: backup, restore, report, appearance
 // ---------------------------------------------------------------------
-// v14: More → Appearance: this phone's weather location (weather.js).
+// v14.1: More → Weather card: this phone's weather location (weather.js).
 function weatherPlaceBox() {
   const box = el('div', { class: 'place-setting', id: 'weather-place' });
   const draw = (open = false) => {
     const p = weather.getPlace();
     fill(box,
-      el('p', { class: 'small', id: 'weather-place-text' }, p ? `Weather location: ${p.name || 'your area'} (rounded to about 10 km, on this phone only)` : 'Weather location: not set, so the house shows a plain sky.'),
+      el('p', { class: 'small', id: 'weather-place-text' }, p ? `Your area: ${p.name || 'set'}` : 'Your area: not set yet, so the house shows a plain sky.'),
       open ? placePicker({ idp: 'more-place', onDone: () => draw(false), onCancel: () => draw(false), cancelText: 'Cancel' })
         : el('div', { class: 'place-row' },
             el('button', { type: 'button', class: 'btn small-btn secondary', id: 'weather-place-set', onclick: () => draw(true) }, p ? 'Change' : 'Set location'),
@@ -2548,18 +2573,23 @@ async function renderExport() {
       { class: 'card' },
       cardHead('sun', 'amber', 'Appearance'),
       el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark')),
-      el('label', { class: 'check-row', id: 'weather-row' },
-        el('input', { type: 'checkbox', id: 'weather-on', checked: weather.enabled(), onchange: (ev) => { weather.setEnabled(ev.currentTarget.checked); } }),
-        el('span', {}, el('strong', {}, 'Weather on the house picture'), el('span', { class: 'small muted' }, ' Clouds, rain, snow, stars and wind for your area, from Open-Meteo (free, no account). Only a rough area (about 10 km) is sent, never your address.'))),
-      weatherPlaceBox(),
       el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} if (prefs.homeTidy()) { renderExport().then(() => window.scrollTo(0, 0)); } else location.hash = '#/home'; } }, 'Show the quick tour again')
     ),
+    // v14.1: weather has its own card (was inside Appearance).
+    el('section', { class: 'card', id: 'weather-card' },
+      cardHead('cloud', 'indigo', 'Weather'),
+      el('p', { id: 'weather-what' }, 'Show the real weather and night sky over the house.'),
+      el('label', { class: 'check-row', id: 'weather-row' },
+        el('input', { type: 'checkbox', id: 'weather-on', checked: weather.enabled(), onchange: (ev) => { weather.setEnabled(ev.currentTarget.checked); } }),
+        el('span', {}, el('strong', {}, 'Weather on the house picture'))),
+      weatherPlaceBox(),
+      el('p', { class: 'small muted', id: 'weather-privacy' }, 'Your area is set on this phone only. Your address is never sent.')),
     el('section', { class: 'card', id: 'reminders-card' }, cardHead('clock', 'rose', 'Reminders'),
       remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => renderExport() })),
     addTo(customiseCard(cardHead, applyNavPrefs),
       el('label', { class: 'check-row', id: 'home-tidy-row' },
         el('input', { type: 'checkbox', id: 'home-tidy', checked: tidy, onchange: (ev) => { prefs.setHomeTidy(ev.currentTarget.checked); renderExport(); } }),
-        el('span', {}, el('strong', {}, 'Tidy home screen'), el('span', { class: 'small muted' }, ' Spending, readings and charts fold into one “This month” card; Recent and the tour are here under More. Untick to show everything on the home screen like before.')))),
+        el('span', {}, el('strong', {}, 'Tidy home screen'), el('span', { class: 'small muted' }, ' Spending, readings and charts fold into one “Money & energy” card; Recent and the tour are here under More. Untick to show everything on the home screen like before.')))),
     el(
       'p',
       { class: 'small muted footnote' },

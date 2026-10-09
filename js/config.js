@@ -9,9 +9,13 @@
 //
 // NOTHING here affects your saved data: the database name and the backup
 // format live in db.js and backup.js and must never change.
+// v14.1: the app is shown as "Hearth". Things that must NOT be renamed
+// still say hearthbook: the Drive folders ("Hearthbook", "Hearthbook photos"),
+// hearthbook-sync.json, the service-worker cache prefix (hearthbook-v…),
+// localStorage keys (hearthbook.*), APP_SLUG and the repo/URL.
 
-export const APP_NAME = 'Hearthbook';
-export const APP_SHORT_NAME = 'Hearthbook';
+export const APP_NAME = 'Hearth';
+export const APP_SHORT_NAME = 'Hearth';
 export const APP_TAGLINE = 'Your home, on record.';
 
 // Used in backup file names, e.g. "hearthbook-backup-2026-10-02.json".

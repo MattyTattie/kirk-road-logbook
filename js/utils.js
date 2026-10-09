@@ -72,8 +72,10 @@ export function niceDate(isoDate) {
   const [y, m, d] = isoDate.split('-').map(Number);
   const date = new Date(y, m - 1, d);
   if (isNaN(date)) return isoDate;
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  // v14.1: written out, because some phones say "Sept" (and others "Sep").
+  return `${date.getDate()} ${MON_SHORT[date.getMonth()]} ${date.getFullYear()}`;
 }
+export const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // Today's date as "YYYY-MM-DD" in the phone's local time (what date inputs use).
 export function todayISO() {

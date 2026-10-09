@@ -104,9 +104,9 @@ export function send(p) {
 export function statusText() {
   const s = seen(), sent = lastSent();
   if (!isOn()) return null;
-  if (s && s.v >= 13 && !s.perm) return 'Notifications are switched off for the Hearthbook app. Allow them in Android Settings → Apps → Hearthbook → Notifications.';
-  if (active() && sent && s.h === sent.h) return `✓ Phone reminders are on: the app checks every morning at about 08:30, even when Hearthbook is closed (${sent.count} date${sent.count === 1 ? '' : 's'}).`;
-  if (sent) return `Dates handed to the app ${new Date(sent.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}. This shows ✓ next time you open Hearthbook.`;
+  if (s && s.v >= 13 && !s.perm) return 'Notifications are switched off for the app. Allow them in Android Settings → Apps → Hearthbook (the app’s name on Android for now) → Notifications.';
+  if (active() && sent && s.h === sent.h) return `✓ Phone reminders are on: the app checks every morning at about 08:30, even when Hearth is closed (${sent.count} date${sent.count === 1 ? '' : 's'}).`;
+  if (sent) return `Dates handed to the app ${new Date(sent.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}. This shows ✓ next time you open Hearth.`;
   return 'Phone reminders will start after the next tap.';
 }
 

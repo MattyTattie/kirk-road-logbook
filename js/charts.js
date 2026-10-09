@@ -22,6 +22,7 @@ export function axisLabel(bar, slot) {
   return short && slot >= SHORT_LABEL_MIN_SLOT && short.length <= 4 ? short : String((bar && bar.label) ?? '');
 }
 
+let chartCount = 0; // unique ids for the hatch pattern (several charts per page)
 export function barChart(bars, { height = 150, format = (v) => String(v), onSelect, selected = -1, unitLabel = '', describe } = {}) {
   const W = 340;
   const H = height;
@@ -42,9 +43,13 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
   }
   if (max <= 0) max = 1;
 
+  const hatch = `hatch-${++chartCount}`;
   let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg" role="img" aria-label="${esc(
-    bars.map((b) => `${b.title || b.label}: ${format(b.value || 0)}`).join('; ')
+    bars.map((b) => `${b.title || b.label}${b.partialNote ? ` (${b.partialNote})` : ''}: ${format(b.value || 0)}`).join('; ')
   )}">`;
+  // v14.1: a bar with `partial: true` (month only partly covered) is pale and
+  // hatched, with its `partialNote` ("so far") written above it.
+  if (bars.some((b) => b.partial)) svg += `<defs><pattern id="${hatch}" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="5" class="chart-hatch"/></pattern></defs>`;
   // gridlines
   for (const f of [0.5, 1]) {
     const y = top + plotH * (1 - f);
@@ -58,7 +63,7 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
     const h = v <= 0 ? 0 : Math.max(3, Math.min(1, v / max) * plotH);
     const x = slot * i + (slot - barW) / 2;
     const y = top + plotH - h;
-    const cls = 'chart-bar' + (i === selected ? ' is-selected' : '') + (b.muted ? ' is-muted' : '');
+    const cls = 'chart-bar' + (i === selected ? ' is-selected' : '') + (b.muted ? ' is-muted' : '') + (b.partial ? ' is-partial' : '');
     // a wide invisible hit area makes small bars easy to tap
     // Each column is a keyboard-focusable "button" when the chart is interactive.
     const a11y = onSelect ? ` tabindex="${i === selected || (selected < 0 && i === bars.length - 1) ? 0 : -1}" role="button" aria-pressed="${i === selected}" aria-label="${esc(describe ? describe(b, v) : `${b.title || b.label}: ${format(v)}`)}"` : '';
@@ -69,6 +74,12 @@ export function barChart(bars, { height = 150, format = (v) => String(v), onSele
       svg += `<rect x="${x - cw * 0.55}" y="${top + plotH - ch}" width="${cw}" height="${ch}" rx="${Math.min(3, cw / 2)}" class="chart-compare"/>`;
     }
     if (h > 0) svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="${Math.min(5, barW / 2)}" class="${cls}"/>`;
+    if (b.partial) {
+      if (h > 0) svg += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" rx="${Math.min(5, barW / 2)}" fill="url(#${hatch})" class="chart-hatch-fill" pointer-events="none"/>`;
+      // above whichever is taller: this bar or last year's bar behind it
+      const ch = hasCompare && b.compare > 0 ? Math.max(3, Math.min(1, b.compare / max) * plotH) : 0;
+      if (b.partialNote) svg += `<text x="${slot * i + slot / 2}" y="${Math.max(top - 6, top + plotH - Math.max(h, ch) - 4)}" text-anchor="middle" class="chart-sofar">${esc(b.partialNote)}</text>`;
+    }
     if (over) {
       const zy = top + plotH * 0.35;
       svg += `<path d="M${x - 2} ${zy + 3} l${barW / 3 + 1} -5 l${barW / 3} 5 l${barW / 3 + 1} -5" class="chart-break"/>`;

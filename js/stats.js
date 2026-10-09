@@ -33,15 +33,42 @@ export function yearsWithData(entries, now = new Date()) {
   return [...ys].sort();
 }
 
+// v14.1: the month a period between two readings mostly covers = the month
+// of its middle day. 3 Sep → 3 Oct is "Sep" (middle day 18 Sep).
+export function midMonthKey(fromIso, toIso) {
+  const a = dayNum(fromIso), b = dayNum(toIso);
+  const d = new Date(Math.floor((a + b) / 2) * 86400000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+// The month an energy bill is "for": the middle of the period that ends at
+// its reading; with no earlier reading, a bill dated on the 1st–5th is for
+// the month before (EDF bills on the 3rd). Other entries: their own month.
+export function coverMonths(entries) {
+  const map = new Map();
+  for (const iv of usageIntervals(entries)) if (iv.to.id) map.set(iv.to.id, midMonthKey(iv.from.date, iv.to.date));
+  for (const e of entries) {
+    if (e.type !== 'meter' || !e.date || map.has(e.id) || !(Number(e.cost) > 0)) continue;
+    const d = new Date(e.date.slice(0, 10) + 'T12:00:00Z');
+    if (d.getUTCDate() <= 5) d.setUTCMonth(d.getUTCMonth() - 1, 1);
+    map.set(e.id, `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+  }
+  return map;
+}
+// "YYYY-MM" an entry's cost counts under on the charts (cover = coverMonths()).
+export const spendMonthKey = (e, cover) => (cover && cover.get(e.id)) || (e.date || '').slice(0, 7);
+
 // Spend per calendar month of one year, Jan → Dec.
-export function yearSpend(entries, year) {
+// v14.1: pass { cover: coverMonths(entries) } to put energy bills under the
+// month they cover (charts); without it, every cost counts on its own date.
+export function yearSpend(entries, year, { cover = null } = {}) {
   const out = MONTHS.map((m, i) => {
     const key = `${year}-${String(i + 1).padStart(2, '0')}`;
     return { key, label: m.slice(0, 1), short: m, title: monthName(key), value: 0 };
   });
   for (const e of entries) {
-    if (!isSpend(e) || !(e.date || '').startsWith(String(year))) continue;
-    const m = out[Number(e.date.slice(5, 7)) - 1];
+    const k = spendMonthKey(e, cover);
+    if (!isSpend(e) || !k.startsWith(String(year))) continue;
+    const m = out[Number(k.slice(5, 7)) - 1];
     if (m) m.value = Math.round((m.value + (Number(e.cost) || 0)) * 100) / 100;
   }
   return out;
@@ -70,7 +97,7 @@ export function monthlyUsage(entries, year) {
 }
 
 // Spend per month for the last `count` months, oldest first.
-export function monthlySpend(entries, count = 12, now = new Date()) {
+export function monthlySpend(entries, count = 12, now = new Date(), { cover = null } = {}) {
   const out = [];
   for (let i = count - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -80,7 +107,7 @@ export function monthlySpend(entries, count = 12, now = new Date()) {
   const byKey = Object.fromEntries(out.map((m) => [m.key, m]));
   for (const e of entries) {
     if (!isSpend(e)) continue;
-    const m = byKey[(e.date || '').slice(0, 7)];
+    const m = byKey[spendMonthKey(e, cover)];
     if (m) m.value = Math.round((m.value + (Number(e.cost) || 0)) * 100) / 100;
   }
   return out;

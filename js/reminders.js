@@ -39,7 +39,7 @@ export function dueReminders(entries, now = new Date(), log = {}) {
     out.push({
       key, id: e.id, days, threshold,
       title: `${e.title || 'Entry'} ${WORD[e.type]} ${inDays(days)}`,
-      body: `${WORD[e.type] === 'is due' ? 'Due' : WORD[e.type][0].toUpperCase() + WORD[e.type].slice(1)} on ${ukDate(e.dueDate.slice(0, 10))}. Tap to open it in Hearthbook.`,
+      body: `${WORD[e.type] === 'is due' ? 'Due' : WORD[e.type][0].toUpperCase() + WORD[e.type].slice(1)} on ${ukDate(e.dueDate.slice(0, 10))}. Tap to open it in Hearth.`,
       url: `./index.html#/view/${encodeURIComponent(e.id)}`,
     });
   }

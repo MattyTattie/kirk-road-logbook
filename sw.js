@@ -43,9 +43,10 @@
 //         one sync at a time, "Moving photos to Drive: 12 of 38" progress.
 // v13.9 = no stray word "null" on entry pages, rooms, tagging or year in review.
 // v14.0 = tidy home (This month card), house follows the weather, Aug/Sep chart labels, KB size, manual lookup from a label.
+// v14.1 = shown as "Hearth" (cache prefix stays hearthbook-), "Money & energy" card, Weather card on More, electricity months by midpoint, latest-period daily use, "so far" bars, VAT wording (0% 1 Oct 2026 – 31 Mar 2027).
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v14.0';
+const CACHE_NAME = 'hearthbook-v14.1';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -121,6 +122,7 @@ const APP_SHELL = [
   './js/weather.js',
   './js/manuallookup.js',
   './js/homelogic.js',
+  './js/vat.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',

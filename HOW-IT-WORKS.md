@@ -1,4 +1,8 @@
-# Hearthbook — how it works
+# Hearth — how it works
+
+(The app was called **Hearthbook** until v14.1. Only the name on screen
+changed: the Drive folders, `hearthbook-sync.json`, the cache names, the
+backup format and the web address still say hearthbook / kirk-road-logbook.)
 
 *(Formerly "Kirk Road Logbook". Only the look and name changed: your data,
 the database and the backup file format are exactly the same, so old
@@ -50,8 +54,8 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/icons.js` | The line icons, as plain SVG path strings. |
 | `js/prefs.js` | **Settings for this phone only** (in `localStorage`, never in backups or sync): which sections are hidden and their order, reminders on/off and which reminders were already shown, and whether the quick tour was seen. |
 | `js/house.js` | The **house picture** on the home screen: an SVG drawing whose sky, window glow and roof flag follow your data. |
-| `js/homeui.js` | Home-screen parts: the house card, *Ask Hearthbook*, the quick tour, the editable section tiles, and the Settings cards for sections and reminders. |
-| `js/search.js` | **Ask Hearthbook**: searching every entry on the phone, with small typos allowed and simple questions ("when does the car insurance renew?"). Plain JavaScript, tested with Node. |
+| `js/homeui.js` | Home-screen parts: the house card, *Ask Hearth*, the quick tour, the editable section tiles, and the Settings cards for sections and reminders. |
+| `js/search.js` | **Ask Hearth**: searching every entry on the phone, with small typos allowed and simple questions ("when does the car insurance renew?"). Plain JavaScript, tested with Node. |
 | `js/reminders.js` | Reminder notifications for renewals, warranties and jobs due within 30 days. |
 | `js/motion.js` | Small animations: totals counting up, screen transitions, light vibration on taps. All switched off when the phone asks for reduced motion. |
 | `js/theme.js` | Light / Dark / Auto appearance (remembered in `localStorage`). |
@@ -134,9 +138,15 @@ On the **Electricity** screen, tap a bar in *Daily use between readings* (or
 Tab to it and press Enter/Space; the arrow keys, Home and End move along the
 bars). The bar is highlighted and a card opens with that period's dates,
 kWh used, average kWh a day, the bill, the **unit rate** and **standing
-charge** from the bill (with what the standing charge cost for the period,
-before VAT), the **all-in cost per kWh** (bill ÷ kWh, so it includes the
-standing charge and VAT), and the change from the period before (kWh and £).
+charge** from the bill (as billed, VAT included where it was charged, with
+what the standing charge cost for the period), the **all-in cost per kWh**
+(bill ÷ kWh, so it includes the standing charge and any VAT), a **VAT** line
+(v14.1, `js/vat.js`: "Rates include 5% VAT." before 1 Oct 2026, "No VAT (0%
+until 31 Mar 2027)." from 1 Oct 2026 to 31 Mar 2027, and a plain sentence
+for a period that crosses either date), and the change from the period
+before (kWh and £). The bars are named after the month each period mostly
+covers (its middle day), so the 3 Sep – 3 Oct bill is "Sep". The top
+"Daily use" is the latest period's kWh a day.
 
 Where the rates come from: the meter form's *Tariff from the bill* fields
 (filled in by the scanner, or typed: `21.074`, `Day 30.1, Night 15.2`, or
@@ -581,14 +591,14 @@ only for your test users. The API key only allows the picker.)
 
 ### On the phones
 
-**Matthew (first):** Hearthbook → **More** → *Share with Google Drive* →
+**Matthew (first):** Hearth → **More** → *Share with Google Drive* →
 **Connect Google account** → choose your account → Google says the app is in
 testing → **Continue** → allow the Drive permission → **Start a new shared
 logbook**. Then type Becca's Gmail under *Share the folder with* → **Share**.
 (Or share the Hearthbook folder from the Drive app as **Editor**.)
 
 **Becca:** open the email from Google once (so the folder shows in her
-"Shared with me"). Then Hearthbook → **Backup** → **Connect Google account**
+"Shared with me"). Then Hearth → **Backup** → **Connect Google account**
 → her account → **Continue** → allow → **Join a logbook shared with me**.
 Google's file picker opens, listing the Hearthbook files: tap
 **hearthbook-sync.json** (ignore any `hearthbook-photos-…` files) →
@@ -642,7 +652,7 @@ Tap the flag to jump to *Coming up*, the windows for Electricity bills, or
 the door for the Logbook. Animations stop when the phone asks for reduced
 motion.
 
-**Ask Hearthbook.** This is the search box on the home screen, under Search
+**Ask Hearth.** This is the search box on the home screen, under Search
 in the app shortcuts (`#/search`), and in the Logbook. It searches titles,
 shops and suppliers, notes (including the details a scan keeps), policy
 numbers and cover. It allows small typos and words you haven't finished
@@ -660,7 +670,7 @@ of those, never by itself. When the app is opened or switched back to, it
 looks for renewals, warranty expiries and job dates within 30 days. It
 shows one notification per item at 30 days and one at 7 days. Tapping a
 notification opens that entry. Phones don't let a web app run in the
-background, so reminders only come when you open Hearthbook.
+background, so reminders only come when you open Hearth.
 
 **Customise sections.** Long-press a tile on the home screen (or tap
 *Edit*) to change them: the tiles wiggle, **−** hides a section, you drag
@@ -673,7 +683,7 @@ This setting is per phone.
 
 **Shortcuts and sharing.** Long-press the app icon for *Scan receipt*,
 *Add electricity bill* and *Search*. Once the app is installed, you can also
-share a photo or PDF from the gallery or an email to **Hearthbook**. The
+share a photo or PDF from the gallery or an email to **Hearth**. The
 service worker keeps the file for a moment (cache `hearthbook-share`) and
 opens the scanner with it (`#/scan/shared`).
 
@@ -685,7 +695,7 @@ can skip and replay from Settings.
 
 ## 11. v11 home layout
 
-From top to bottom: greeting, Ask Hearthbook, the house picture (now
+From top to bottom: greeting, Ask Hearth, the house picture (now
 shorter), the five section tiles, *Coming up*, the backup reminder (if any),
 a smaller *Spent in …* card, the stat cards, the Spending chart, and Recent.
 The spending total is now a plain card, so one big receipt no longer
@@ -733,10 +743,10 @@ tab is now "More" (Manuals, backup and settings). 18 PDFs grouped by appliance,
 each with "Handy notes". They're NOT downloaded at install: the first time
 Manuals opens, the service worker saves them all (~40 MB) into their own cache
 (`hearthbook-manuals-v1`), so after that they open offline. PDFs open *inside*
-Hearthbook (pages drawn by the bundled pdf.js), because the installed Android
+Hearth (pages drawn by the bundled pdf.js), because the installed Android
 app can't show a PDF itself; "Save a copy / open in another app" is below each.
 A warranty whose title/notes/supplier contains a model number (e.g. BPX535061B,
-DIS15020) gets a "Manual" button. Ask Hearthbook finds manuals too
+DIS15020) gets a "Manual" button. Ask Hearth finds manuals too
 ("dishwasher filter", "hive manual").
 
 **Publishing.** Run `./check-private.sh /workspace/logbook-publish` before
@@ -746,7 +756,7 @@ phone number (code, docs and the PDFs' text) or a keystore file.
 ## 13. What's new in v13 (web)
 
 - **Sharper manuals.** After you pinch to zoom, the pages on screen are redrawn at the new size, so small print stays crisp. **Open in another app** hands the PDF to your phone's own PDF viewer.
-- **Your own manuals.** More → Manuals → *Add a manual*, or share a PDF into Hearthbook and choose *Keep it as a manual*. Give it a name, notes and rooms, and link it to entries. These are kept **on this phone only**: they are not in the shared sync file or in backups.
+- **Your own manuals.** More → Manuals → *Add a manual*, or share a PDF into Hearth and choose *Keep it as a manual*. Give it a name, notes and rooms, and link it to entries. These are kept **on this phone only**: they are not in the shared sync file or in backups.
 - **Rooms.** More → Rooms. You can tag jobs, receipts, warranties and manuals to a room, tag several at once, and filter any list by room. Deleting a room only removes the tag. Room tags on entries sync. The room list itself is per phone.
 - **Year in review.** Tap *Year in review ›* on the spending card, or open it from More. It shows what the house cost in a year (bills, insurance pro rata, receipts, jobs), the biggest items, and a comparison with the year before.
 - **Sync fixes.** Restoring a backup while sync is on now sticks. Deletes made during a sync stay deleted. Uploads to Drive can resume after a dropped connection. More shows the size of the shared file.
@@ -778,7 +788,7 @@ phone number (code, docs and the PDFs' text) or a keystore file.
 
 - **Home screen** (`renderHome` in app.js): house, tiles, Coming up, the
   backup warning (only when overdue, `backupDue` in `js/homelogic.js`), then
-  one "This month" card. Its button (`#this-month-toggle`) shows/hides
+  one "Money & energy" card (called "This month" in v14.0). Its button (`#this-month-toggle`) shows/hides
   `#this-month-body`, which holds the same spending card, stat cards and
   Spending chart as before (same ids). Open/closed is kept in localStorage
   (`hearthbook.monthOpen`). Recent and the tour are on More. The old layout
@@ -792,13 +802,13 @@ phone number (code, docs and the PDFs' text) or a keystore file.
   `scan.readFile` (OCR on the phone) → `readLabel` in `js/manuallookup.js`
   → `findExisting` (built-in manuals by model codes, your own by name/notes)
   → open it, or `searchUrl` (a Google search in a new tab) and "Add it to
-  Hearthbook" → `#/addmanual/lookup` (the normal form, pre-filled; saving
+  Hearth" → `#/addmanual/lookup` (the normal form, pre-filled; saving
   still needs the PDF and the Save tap).
 - **Weather house** (`js/weather.js` + `houseSVG` in `js/house.js`): sunrise
   and sunset are calculated on the phone (`sunTimes`, `sunPhase`) for the
   phone's own weather place, and the moon's phase too (`moonPhase`). There is
   **no location in the code**: each phone sets its own through the one-time
-  "Show your local weather?" question on the house card or More → Appearance
+  "Show your local weather?" question on the house card or the Weather card on More
   (`placePicker` in `js/homeui.js`): "Use my location" (browser geolocation)
   or a typed town looked up with Open-Meteo's free geocoding
   (`findTown`). It's rounded to one decimal (about 10 km) and kept only in
@@ -811,6 +821,35 @@ phone number (code, docs and the PDFs' text) or a keystore file.
   windy }, moon })` adds clouds/rain/snow/fog/storm and windy smoke; the
   weather layer has `pointer-events="none"` so the door/window/flag links
   keep working. CSS for it is under "v14 weather" in styles.css (and stops
-  under prefers-reduced-motion). Switch: More → Appearance.
+  under prefers-reduced-motion). Switch: the Weather card on More (v14.1; it was in Appearance).
 - Tests: `node tests/v14_units.mjs`; `LOGBOOK_BASE=http://localhost:8766/
   python3 tests/test_v14.py` (also writes the screenshots to V14_SHOTS).
+
+## v14.1 (Oct 2026)
+
+- **Name on screen: "Hearth"** (`APP_NAME` / `APP_SHORT_NAME` in
+  `js/config.js`, manifest `name` / `short_name`, `<title>`s). Not renamed,
+  on purpose: the database (`kirk-road-logbook`), backup format, Drive
+  folders ("Hearthbook", "Hearthbook photos"), `hearthbook-sync.json`,
+  `APP_SLUG`, localStorage keys, the cache prefix (`hearthbook-v14.1`) and
+  the repo / web address. The installed Android app keeps its old name
+  until it is rebuilt.
+- **"Money & energy"** is the folding home card (was "This month"); ids
+  are still `#this-month…`.
+- **Weather card on More** (`#weather-card`): the switch, "Your area" with
+  Set location / Change / Remove, and a privacy line.
+- **Charts and months**: `midMonthKey` / `coverMonths` in `js/stats.js`.
+  Electricity "Last 12 months" bars and the home Spending chart put an
+  energy bill under the month its period mostly covers ("Energy bills show
+  under the month they cover."). The "spent in October" summary and the
+  yearly totals still count money on the day it was paid.
+- **Part months**: in a calendar-year electricity view, a month the
+  readings only partly cover is pale and hatched; the latest one says "so
+  far" (legend "Oct so far (2 days)"). Year-on-year % compares only months
+  fully covered in both years.
+- **VAT**: `js/vat.js` (GB domestic electricity 0% from 1 Oct 2026 to 31
+  Mar 2027, otherwise 5%). Wording only: bill amounts are never changed.
+- Dates are written with a fixed month list ("3 Sep 2026", never "Sept").
+- Tests: `node tests/v14_1_units.mjs`; `python3 tests/test_v14_1.py`
+  (screenshots to V141_SHOTS, default /workspace/v14-1-shots).
+

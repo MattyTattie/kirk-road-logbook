@@ -68,7 +68,7 @@ export function placePicker({ idp = 'place', onDone = () => {}, onCancel = null,
     el('div', { class: 'place-row' }, locate, onCancel ? el('button', { type: 'button', class: 'btn link-btn', id: `${idp}-cancel`, onclick: onCancel }, cancelText) : null),
     el('div', { class: 'place-row' }, input, el('button', { type: 'button', class: 'btn small-btn secondary', id: `${idp}-search`, onclick: search }, icon('search', 16), 'Find')),
     msg, results,
-    el('p', { class: 'small muted place-note' }, 'Rounded to about 10 km and kept on this phone only (not shared or in backups).'));
+    el('p', { class: 'small muted place-note' }, 'Kept on this phone only. Your address is never sent.'));
 }
 
 export function houseCard(everything) {
@@ -162,7 +162,7 @@ function answerCard(answer) {
 }
 
 export function askBox({ getEntries, entryCard, autofocus = false, onAsking = () => {}, examples = false, initial = '' }) {
-  const input = el('input', { type: 'search', id: 'ask', class: 'search ask-input', placeholder: 'Ask Hearthbook…', 'aria-label': 'Ask Hearthbook: search everything', autocomplete: 'off', enterkeyhint: 'search', value: initial });
+  const input = el('input', { type: 'search', id: 'ask', class: 'search ask-input', placeholder: 'Ask Hearth…', 'aria-label': 'Ask Hearth: search everything', autocomplete: 'off', enterkeyhint: 'search', value: initial });
   const results = el('div', { class: 'ask-results', id: 'ask-results', 'aria-live': 'polite' });
   const hints = examples ? el('div', { class: 'ask-examples', id: 'ask-examples' }, EXAMPLES.map((t) => el('button', { type: 'button', class: 'year-chip', onclick: () => { input.value = t; run(); input.focus(); } }, t))) : null;
   let t = null;
@@ -219,8 +219,8 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
 // ---------------------------------------------------------------------
 const TOUR = [
   { glyph: 'home', tone: 'brand', title: 'Your home’s logbook', text: 'Receipts, warranties, jobs, electricity bills and insurance in one tidy place. Kept on this phone (and in your own Google Drive if you turn on sharing).' },
-  { glyph: 'scan', tone: 'teal', title: 'Snap it, we’ll fill it in', text: 'Tap + then Scan. You can also share a photo or PDF to Hearthbook straight from your gallery or email.' },
-  { glyph: 'sparkle', tone: 'violet', title: 'Ask Hearthbook', text: 'Search everything, or ask “when does the car insurance renew?” and get the date.' },
+  { glyph: 'scan', tone: 'teal', title: 'Snap it, we’ll fill it in', text: 'Tap + then Scan. You can also share a photo or PDF to Hearth straight from your gallery or email.' },
+  { glyph: 'sparkle', tone: 'violet', title: 'Ask Hearth', text: 'Search everything, or ask “when does the car insurance renew?” and get the date.' },
   { glyph: 'pencil', tone: 'amber', title: 'Make it yours', text: 'Press and hold a section tile to hide or reorder sections. Turn on reminders, find appliance manuals and back up under More.' },
 ];
 export function tourCard() {
@@ -277,7 +277,7 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     const current = y === now.getFullYear();
     title.textContent = current ? `${y} so far` : `In ${y}`;
     sub.hidden = !(current && rolling) || editing; // while editing, the drag hint takes its place
-    sub.textContent = sub.hidden ? '' : `Calendar year, 1 Jan – ${now.getDate()} ${now.toLocaleDateString('en-GB', { month: 'short' })}`;
+    sub.textContent = sub.hidden ? '' : `Calendar year, 1 Jan – ${now.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][now.getMonth()]}`;
     box.dataset.year = String(y);
     const shown = prefs.orderedSections();
     fill(grid, ...shown.map((s) => {
@@ -421,7 +421,7 @@ export function remindersBlock({ compact = false, getEntries, rerender = () => {
   if (native.inApp()) return appRemindersBlock({ compact, getEntries, rerender });
   const p = reminders.permission();
   const on = prefs.remindersOn() && p === 'granted';
-  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Hearthbook checks when you open it (a web page can’t run in the background), and reminds you 30 days and 7 days before an insurance renewal, warranty expiry or job due date, and on the day. Tap a reminder to open that entry. In the Hearthbook Android app, reminders arrive even when it’s closed.');
+  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Hearth checks when you open it (a web page can’t run in the background), and reminds you 30 days and 7 days before an insurance renewal, warranty expiry or job due date, and on the day. Tap a reminder to open that entry. In the Hearth Android app, reminders arrive even when it’s closed.');
   if (compact) {
     if (p === 'unsupported' || p === 'denied' || on) return null;
     return el('div', { class: 'remind-nudge', id: 'coming-up-remind' },
@@ -430,7 +430,7 @@ export function remindersBlock({ compact = false, getEntries, rerender = () => {
   }
   const status = el('p', { id: 'reminders-status', class: 'reminders-status' + (on ? ' ok' : '') },
     p === 'unsupported' ? 'This browser can’t show notifications.'
-      : p === 'denied' ? 'Notifications are blocked for Hearthbook. To allow them: Chrome → ⋮ → Settings → Site settings → Notifications.'
+      : p === 'denied' ? 'Notifications are blocked for Hearth. To allow them: Chrome → ⋮ → Settings → Site settings → Notifications.'
       : on ? '✓ Reminders are on for this phone.' : 'Reminders are off.');
   const btns = [];
   if (p !== 'unsupported' && p !== 'denied') {
@@ -459,12 +459,12 @@ function appRemindersBlock({ compact, getEntries, rerender }) {
   if (compact) {
     if (on) return null;
     return el('div', { class: 'remind-nudge', id: 'coming-up-remind' },
-      icon('clock', 18), el('span', { class: 'remind-text' }, 'Get a reminder on this phone before these are due, even when Hearthbook is closed?'),
+      icon('clock', 18), el('span', { class: 'remind-text' }, 'Get a reminder on this phone before these are due, even when Hearth is closed?'),
       el('button', { type: 'button', class: 'btn small-btn secondary', id: 'coming-up-remind-btn', onclick: turnOn }, 'Remind me'));
   }
   const text = native.statusText();
   const status = el('p', { id: 'reminders-status', class: 'reminders-status' + (native.active() ? ' ok' : '') }, on ? text : 'Phone reminders are off.');
-  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Every morning at about 08:30 the Hearthbook app checks your renewals, warranty expiries and job due dates and reminds you 30 days and 7 days before, and on the day, even when Hearthbook is closed. Tap a reminder to open that entry. The dates are handed to the app on this phone only; nothing goes online.');
+  const note = el('p', { class: 'small muted', id: 'reminders-note' }, 'Every morning at about 08:30 the Hearth app checks your renewals, warranty expiries and job due dates and reminds you 30 days and 7 days before, and on the day, even when Hearth is closed. Tap a reminder to open that entry. The dates are handed to the app on this phone only; nothing goes online.');
   const btns = on
     ? [el('button', { type: 'button', class: 'btn secondary', id: 'reminders-resend', onclick: turnOn }, 'Update phone reminders now'),
        el('button', { type: 'button', class: 'btn link-btn', id: 'reminders-off', onclick: () => {

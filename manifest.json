@@ -1,6 +1,6 @@
 {
-  "name": "Hearthbook",
-  "short_name": "Hearthbook",
+  "name": "Hearth",
+  "short_name": "Hearth",
   "description": "A private home logbook: receipts, warranties, jobs, electricity bills and insurance. Kept on your phone, and in your own Google Drive only if you turn on sharing.",
   "id": "./",
   "start_url": "./index.html#/home",
@@ -64,7 +64,7 @@
     {
       "name": "Search",
       "short_name": "Search",
-      "description": "Ask Hearthbook",
+      "description": "Ask Hearth",
       "url": "./index.html#/search",
       "icons": [
         {

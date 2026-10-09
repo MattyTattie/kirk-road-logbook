@@ -390,7 +390,7 @@ export function shareFolder(folderId, email) {
 // ---------- Google Picker ----------
 // The person joining picks the shared Hearthbook files once; that is what
 // gives this app (and only this app) access to them under drive.file.
-export async function pickFiles({ query = 'hearthbook-sync', title = 'Select the Hearthbook file', multiselect = true } = {}) {
+export async function pickFiles({ query = 'hearthbook-sync', title = 'Select the hearthbook-sync.json file', multiselect = true } = {}) {
   const token = await getToken();
   await loadScript('https://apis.google.com/js/api.js');
   await new Promise((resolve, reject) => window.gapi.load('picker', { callback: resolve, onerror: reject }));

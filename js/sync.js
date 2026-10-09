@@ -52,7 +52,7 @@ import * as db from './db.js';
 import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
-export const APP_VERSION = '14.0'; // shown in Sync details; keep in step with sw.js CACHE_NAME
+export const APP_VERSION = '14.1'; // shown in Sync details; keep in step with sw.js CACHE_NAME
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
@@ -227,7 +227,7 @@ async function findExisting() {
 // Step 2a: "Start a new shared logbook" — creates the folder + the file.
 export async function createShared() {
   const c = await getConfig();
-  setStatus({ state: 'syncing', message: 'Creating the Hearthbook folder…' });
+  setStatus({ state: 'syncing', message: 'Creating the shared Drive folder…' });
   try {
     const folder = await drive.createFolder(FOLDER_NAME);
     const index = await drive.createJSON(INDEX_NAME, folder.id, emptyIndex());
