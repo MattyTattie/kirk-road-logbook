@@ -68,7 +68,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `manifest.json` | The **web app manifest**: name, icons, colours, start page. This is what makes Chrome offer "Install app". |
 | `sw.js` | The **service worker**: keeps a copy of the app's files so it opens offline. |
 | `icons/` | App icon: `icon.svg` (master + favicon) and PNGs (192 px, 512 px, and a "maskable" one Android can crop into a circle). All made by `make_icons.py` from the SVG. |
-| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `test_foreign_receipt.py` + `lpa-airport-receipt.jpg` (a holiday receipt in euros), `test_v10.py` (house picture, Ask, tour, customising sections, reminders, share target, motion), `search.mjs` and `reminders_house.mjs` (search, reminder and house-picture rules), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
+| `tests/` | `test_app.py` (end-to-end test), `test_upgrade.py` (old app's data → new app), `scan_accuracy.mjs` (how well the scanner reads real bills), `test_sync.py` + `fake_drive.py` (two phones syncing through a pretend Google Drive), `sync_plan.mjs` (the merge rules), `test_insurance.py` (Insurance, unit rates, year pickers, the EDF gap-fill backup, older app versions), `tariff_parse.mjs` (reading rate lines), `test_foreign_receipt.py` + `lpa-airport-receipt.jpg` (a holiday receipt in euros), `v14_2_units.mjs` + `samples/scs-sofa-order-redacted.txt` (a real order form with the customer details made up), `test_v10.py` (house picture, Ask, tour, customising sections, reminders, share target, motion), `search.mjs` and `reminders_house.mjs` (search, reminder and house-picture rules), `screenshots.py`, `screenshots_cards.py` and `make_comparison.py` (phone screenshots), plus made-up sample documents `demo-receipt.png`, `demo-bill.pdf` and `demo-bill-e7.pdf` (a day/night bill with a price change; `make_e7_bill.py` makes it). See section 7. |
 
 ## 3. The three magic ingredients
 
@@ -237,6 +237,15 @@ How it reads the document, all on the phone:
 
 UK documents are read exactly as before. The currency and airport rules
 only apply when the receipt isn't in pounds.
+
+**Order forms without a £ sign (v14.2).** Some shops (an ScS sofa order, for
+example) print "1,450.00" with no £ and never say "Total". The total is then
+the figure under an **Amount Incl. VAT** column heading (the same column on
+the next line, not the "Excl. VAT" one), or, failing that, the amount printed
+most often (at least 3 times). A seller line like "A Share & Sons Ltd T/A ScS"
+gives **ScS** as the supplier and "Sold by A Share & Sons Ltd" in the notes.
+An email containing the customer's surname (from the "Miss/Mr … Name" lines)
+is never used as the shop's contact.
 
 **Limits.** OCR can misread blurry photos, so always check the amounts. The
 first page of an EDF bill doesn't show the meter readings (they're on

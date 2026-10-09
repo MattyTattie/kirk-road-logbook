@@ -205,6 +205,13 @@ function fallbackSupplier(allLines) {
 }
 // The legal seller printed near the top: "Wren Kitchens Ltd", "Lampenwelt GmbH".
 function companyName(allLines) {
+  // v14.2: "A Share & Sons Ltd T/A ScS" -> the shop is ScS (the name you know
+  // it by); the legal company goes in the notes (see legalCompany).
+  for (const l of allLines.slice(0, 25)) {
+    // (drop a heading from the next column first: "T/A ScS Salesperson:")
+    const ta = l.replace(/\s+[A-Za-z]+:.*$/, '').match(/\b(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC)\.?\s+(?:T\/A|t\/a|trading\s+as)\s+([A-Z][A-Za-z0-9&'’.\-]*(?:\s[A-Z][A-Za-z0-9&'’.\-]*){0,3})/);
+    if (ta) return tidyName(ta[1]);
+  }
   for (const l of allLines.slice(0, 25)) {
     const m = l.match(/([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC))\b/) ||
       // European companies: "… S.L.", "… SA", "… GmbH", "… SRL", "… B.V."
@@ -216,6 +223,15 @@ function companyName(allLines) {
   return '';
 }
 
+// v14.2: the legal company behind a trading name ("A Share & Sons Ltd" T/A ScS).
+function legalCompany(allLines) {
+  for (const l of allLines.slice(0, 25)) {
+    const m = l.match(/([A-Z][A-Za-z&'’.\- ]{2,60}?\s(?:Ltd|LTD|Limited|LIMITED|LLP|plc|PLC))\.?\s+(?:T\/A|t\/a|trading\s+as)\b/);
+    if (m) return tidyName(m[1]);
+  }
+  return '';
+}
+
 // ---------- Contact email (v13.5) ----------
 // The seller's email, e.g. "E-mail: info@lights.co.uk", for the notes.
 // Never a personal address (that's usually yours, printed as the customer),
@@ -223,9 +239,13 @@ function companyName(allLines) {
 const PERSONAL_MAIL = /@(?:g(?:oogle)?mail|hotmail|outlook|live|yahoo|icloud|me|aol|btinternet|sky|virginmedia|talktalk|protonmail)\./i;
 export function findContactEmail(text, supplier = '') {
   const found = [];
+  // v14.2: the customer's own (work) address printed in "Sell to" / "Deliver
+  // to", e.g. "Miss Jane Doe … Email: jane.doe@example-nhs.org".
+  const surnames = [...String(text || '').matchAll(/\b(?:Mr|Mrs|Ms|Miss|Dr)\.?\s+[A-Z][a-z]+\s+([A-Z][a-z]{2,})\b/g)].map((m) => m[1].toLowerCase());
   for (const m of String(text || '').matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g)) {
     const mail = m[0].replace(/\.$/, '');
     if (PERSONAL_MAIL.test(mail) || /^(?:no-?reply|do-?not-?reply|donotreply|mailer-daemon)@/i.test(mail)) continue;
+    if (surnames.some((n) => mail.split('@')[0].toLowerCase().includes(n))) continue;
     const before = text.slice(Math.max(0, m.index - 40), m.index);
     let score = 0;
     if (/contact|customer|service|support|help|e-?mail|kontakt|questions?/i.test(before)) score += 2;
@@ -376,7 +396,7 @@ function pickTotal(allLines, opts = {}) {
   }
   const EXCLUDE = /sub\s?-?total|total\s*(?:vat|tax|goods|net|ex\b|excl|before|savings?|discount|of other credits|shipping)|vat\s*total|net\s*total|price before|save:|you saved|shipping charges/i;
   const tiers = [
-    /\b(grand total|order total|total paid|amount paid|total price|total invoice|invoice total|total payable|total due|total to pay|gross total|total amount|total \(?inc(?:l|luding)?\.? vat\)?|amount due|balance due|balance to pay)\b/i,
+    /\b(grand total|order total|total paid|amount paid|total price|total invoice|invoice total|total payable|total due|total to pay|gross total|total amount|total \(?inc(?:l|luding)?\.? vat\)?|amount \(?inc(?:l|luding)?\.? vat\)?|amount due|balance due|balance to pay)\b/i,
     /\btotal\b/i,
     /\b(balance|amount)\b/i,
   ];
@@ -387,7 +407,15 @@ function pickTotal(allLines, opts = {}) {
       if (!m || EXCLUDE.test(l.slice(Math.max(0, m.index - 12), m.index + m[0].length + 12))) return;
       if (/last bill|previous balance|opening balance|balance on your last/i.test(l)) return;
       let amts = findAmounts(l.slice(m.index), opts);
-      if (!amts.length && re === tiers[0] && allLines[i + 1]) amts = findAmounts(allLines[i + 1], opts);
+      if (!amts.length && re === tiers[0] && allLines[i + 1]) {
+        // v14.2: a table heading ("Amount Excl. VAT  VAT Amount  Amount Incl. VAT")
+        // with the figures on the next line: take the figure in the same column.
+        amts = findAmounts(allLines[i + 1], opts);
+        if (amts.length > 1 && m.index > 0) {
+          const pos = (m.index + m[0].length / 2) / l.length, next = allLines[i + 1];
+          amts = [...amts].sort((a, b) => Math.abs(a.index / next.length - pos) - Math.abs(b.index / next.length - pos));
+        }
+      }
       if (amts.length) cands.push(amts[0].value);
     });
     const pos = cands.filter((v) => v > 0);
@@ -395,7 +423,13 @@ function pickTotal(allLines, opts = {}) {
   }
   // Last resort: the biggest £ amount on the page.
   const all = allLines.flatMap((l) => findAmounts(l, opts).filter((a) => a.pound && a.value > 0).map((a) => a.value));
-  return all.length ? Math.max(...all) : null;
+  if (all.length) return Math.max(...all);
+  // v14.2: no £ signs at all (ScS prints "1,450.00"): the amount printed most
+  // often, if it's there at least 3 times (item, total, incl. VAT, …); ties -> the biggest.
+  const seen = new Map();
+  for (const l of allLines) for (const a of findAmounts(l, opts)) if (a.value > 0) seen.set(a.value, (seen.get(a.value) || 0) + 1);
+  const rep = [...seen].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1] || b[0] - a[0]);
+  return rep.length ? rep[0][0] : null;
 }
 
 function pickReference(text) {
@@ -676,7 +710,7 @@ export function parseDocument(text, { today = new Date() } = {}) {
   // GmbH" behind lights.co.uk; only for shops we know, because the first
   // "… Ltd" on a page is often the CUSTOMER's business), and their contact
   // email, both for the notes.
-  const company = kind === 'receipt' && sup && sup.company && sup.company.re.test(clean) ? sup.company.name : '';
+  const company = kind === 'receipt' && sup && sup.company && sup.company.re.test(clean) ? sup.company.name : (kind === 'receipt' && !sup ? legalCompany(allLines) : '');
   const companyGuess = kind === 'receipt' && !sup && supplier && supplier === companyName(allLines);
   const contactEmail = kind === 'receipt' ? findContactEmail(clean, supplier) : '';
   const vehicleTax = kind === 'receipt' ? parseVehicleTax(allLines, clean) : null;
