@@ -138,12 +138,14 @@ On the **Electricity** screen, tap a bar in *Daily use between readings* (or
 Tab to it and press Enter/Space; the arrow keys, Home and End move along the
 bars). The bar is highlighted and a card opens with that period's dates,
 kWh used, average kWh a day, the bill, the **unit rate** and **standing
-charge** from the bill (as billed, VAT included where it was charged, with
+charge** from the bill (as billed, which for EDF is BEFORE VAT, with
 what the standing charge cost for the period), the **all-in cost per kWh**
-(bill ÷ kWh, so it includes the standing charge and any VAT), a **VAT** line
-(v14.1, `js/vat.js`: "Rates include 5% VAT." before 1 Oct 2026, "No VAT (0%
-until 31 Mar 2027)." from 1 Oct 2026 to 31 Mar 2027, and a plain sentence
-for a period that crosses either date), and the change from the period
+(v14.3: unit rate + standing charge ÷ kWh, plus 5% VAT for the days it
+applied; for a day/night or mid-period price change, bill ÷ kWh instead), a
+**VAT** line (`js/vat.js`, v14.3 wording: "Rates plus 5% VAT." before 1 Oct
+2026, "No VAT (0% until 31 Mar 2027)." from 1 Oct 2026 to 31 Mar 2027, "5%
+VAT added up to 30 Sep, then no VAT from 1 Oct 2026." for a period that
+crosses 1 Oct), and the change from the period
 before (kWh and £). The bars are named after the month each period mostly
 covers (its middle day), so the 3 Sep – 3 Oct bill is "Sep". The top
 "Daily use" is the latest period's kWh a day.
@@ -857,7 +859,8 @@ phone number (code, docs and the PDFs' text) or a keystore file.
   far" (legend "Oct so far (2 days)"). Year-on-year % compares only months
   fully covered in both years.
 - **VAT**: `js/vat.js` (GB domestic electricity 0% from 1 Oct 2026 to 31
-  Mar 2027, otherwise 5%). Wording only: bill amounts are never changed.
+  Mar 2027, otherwise 5%, added on top of the before-VAT rates; the rates
+  don't change on 1 Oct). Stored bill amounts are never changed (v14.3).
 - Dates are written with a fixed month list ("3 Sep 2026", never "Sept").
 - Tests: `node tests/v14_1_units.mjs`; `python3 tests/test_v14_1.py`
   (screenshots to V141_SHOTS, default /workspace/v14-1-shots).

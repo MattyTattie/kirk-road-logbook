@@ -36,7 +36,7 @@ import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
 import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey } from './stats.js';
-import { vatFor, allInNote } from './vat.js';
+import { vatFor, allInNote, allInPence } from './vat.js';
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
 import * as sync from './sync.js';
@@ -891,7 +891,7 @@ function rateText(list) {
   if (list.some((r) => r.label) || list.length === 1) return { v: list.map(one).join(' · '), sub: '' };
   return { v: list.map(one).join(' / '), sub: 'tariff changed in this period' };
 }
-function tariffStats(t, days, unit) { // standing charge and unit rates are as billed (VAT, if any, included)
+function tariffStats(t, days, unit) { // standing charge and unit rates as billed: BEFORE VAT (v14.3)
   if (!t) return [];
   const out = [];
   if (t.rates.length) {
@@ -918,13 +918,16 @@ function periodDetail(interval, prev, everything) {
   const photo = bill && bill.photos && bill.photos[0] ? bill.photos[0].blob : null;
   const tariff = bill ? tariffOf(bill) : null;
   const vat = vatFor(interval.from.date, interval.to.date);
+  // v14.3: all-in = (unit rate + standing ÷ kWh) + VAT where it applied (rates are before VAT);
+  // a split or day/night tariff falls back to the bill total ÷ kWh (VAT as charged).
+  const allIn = tariff ? allInPence(tariff, interval.used, interval.days, interval.from.date, interval.to.date) : null;
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
       stat('Used', fmtNum(interval.used), unit, 'pd-used'),
       stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
       cost !== null ? stat('Bill', money(cost), null, 'pd-cost') : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
       ...tariffStats(tariff, interval.days, unit),
-      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(perUnit * 100, 1)}p`, tariff ? allInNote(vat) : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
+      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(allIn !== null ? allIn : perUnit * 100, 1)}p`, tariff ? allInNote(vat) : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
     ),
     el('div', { class: 'period-change', id: 'pd-change' },
       el('span', {}, 'vs previous:'),
