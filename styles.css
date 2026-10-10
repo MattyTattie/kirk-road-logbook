@@ -298,7 +298,9 @@ body.no-nav .bottom-nav { display: none; }
 
 /* Meter summary */
 .meter-card { padding-bottom: 12px; }
-.meter-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.meter-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 12px; margin-bottom: 12px; } /* v14.4: 2 × 2, follows the tab */
+.meter-stats-note { margin: -4px 0 12px; color: var(--text-2); font-size: 12.5px; line-height: 1.4; }
+.meter-stats-note strong { color: var(--text); font-weight: 650; }
 .meter-stats > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .meter-stats .stat-value { font-size: 19px; }
 .meter-stats .stat-title { font-size: 12.5px; }

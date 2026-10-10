@@ -147,8 +147,8 @@ applied; for a day/night or mid-period price change, bill ÷ kWh instead), a
 VAT added up to 30 Sep, then no VAT from 1 Oct 2026." for a period that
 crosses 1 Oct), and the change from the period
 before (kWh and £). The bars are named after the month each period mostly
-covers (its middle day), so the 3 Sep – 3 Oct bill is "Sep". The top
-"Daily use" is the latest period's kWh a day.
+covers (its middle day), so the 3 Sep – 3 Oct bill is "Sep". The latest
+period's kWh a day is the line under the summary boxes (v14.4).
 
 Where the rates come from: the meter form's *Tariff from the bill* fields
 (filled in by the scanner, or typed: `21.074`, `Day 30.1, Night 15.2`, or
@@ -865,3 +865,22 @@ phone number (code, docs and the PDFs' text) or a keystore file.
 - Tests: `node tests/v14_1_units.mjs`; `python3 tests/test_v14_1.py`
   (screenshots to V141_SHOTS, default /workspace/v14-1-shots).
 
+## v14.4 (10 Oct 2026): Electricity summary follows the tab
+
+The four boxes at the top of **Electricity** change with the tab under them
+(`meterSummary(entries, year)` in `js/stats.js`, drawn by `meterStatsCells`
+in `js/app.js`; boxes `#ms-used`, `#ms-avg`, `#ms-bills`, `#ms-reading`,
+line `#daily-use-note`). kWh use the same per-day spread as the bars, so
+"Used in 2025" is the 2025 bars added up.
+
+- **Last 12 months**: "Used, last 12 months" (since the first reading of the
+  12 bars), "Daily average", "Bills, last 12 months" (the bills for the
+  periods the bars show) and "Latest reading". Line: "Latest period 3 Sep –
+  3 Oct 2026: 9.9 kWh/day".
+- **A year**: "Used in 2025" ("from 1 Sep" if the readings start part way
+  through; "to 2 Oct, so far" for this year), "Daily average 2025" (over the
+  days the readings cover), "Bills 2025" (bills under the month they cover,
+  like the charts) and "Reading 31 Dec 2025" — worked out from the readings
+  either side and labelled "worked out" — or "Reading so far" for this year.
+- Tests: `node tests/v14_4_units.mjs`; `python3 tests/test_v14_4.py`
+  (screenshots to V144_SHOTS, default /workspace/v14-4-shots).

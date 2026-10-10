@@ -215,3 +215,65 @@ export function sectionYear(entries, sectionId, year, now = new Date()) {
   const inYear = items.filter((e) => (e.date || '').startsWith(String(year)));
   return { count: inYear.length, total: totalCost(inYear) };
 }
+
+// ---------- v14.4: the Electricity summary box, per tab ----------
+// year = 0 → "Last 12 months" = the same last 12 periods between readings as
+// the bars; a calendar year → the same per-day spread as the monthly bars
+// (monthlyUsage), so the totals match the chart. Bills count under the month
+// they cover (coverMonths), like the charts.
+//  { used, days, perDay, from, to, firstCovered, lastCovered, missingDays,
+//    partialStart, soFar, billsTotal, billsCount, latest, lastPeriod,
+//    reading: { value, date, kind: 'latest' | 'year-end' | 'so-far' | 'last-in-year', est: [fromIso, toIso] } }
+const isoOf = (dn) => new Date(dn * 86400000).toISOString().slice(0, 10);
+export function meterSummary(entries, year = 0, now = new Date()) {
+  const r = readings(entries);
+  const latest = r[r.length - 1] || null;
+  if (!latest) return null;
+  const all = usageIntervals(entries);
+  const lp = all[all.length - 1] || null;
+  const cover = coverMonths(entries);
+  const out = {
+    year, unit: latest.meterUnit || '',
+    latest: { value: Number(latest.meterValue), date: latest.date },
+    lastPeriod: lp ? { perDay: lp.perDay, from: lp.from.date, to: lp.to.date } : null,
+  };
+  const billList = bills(entries);
+  if (!year) {
+    const iv = all.slice(-12);
+    const used = iv.reduce((t, x) => t + x.used, 0), days = iv.reduce((t, x) => t + x.days, 0);
+    const keys = new Set(iv.map((x) => midMonthKey(x.from.date, x.to.date)));
+    const bl = billList.filter((b) => keys.has(spendMonthKey(b, cover)));
+    return { ...out, used, days, perDay: days ? used / days : null, from: iv.length ? iv[0].from.date : null, to: iv.length ? iv[iv.length - 1].to.date : null,
+      billsTotal: totalCost(bl), billsCount: bl.length, reading: { value: out.latest.value, date: latest.date, kind: 'latest' } };
+  }
+  const months = monthlyUsage(entries, year);
+  const used = Math.round(months.reduce((t, m) => t + m.value, 0) * 10) / 10;
+  const days = months.reduce((t, m) => t + m.days, 0);
+  const y0 = dayNum(`${year}-01-01`), y1 = dayNum(`${year + 1}-01-01`);
+  let first = null, last = null;
+  for (const x of all) {
+    const a = Math.max(dayNum(x.from.date), y0), b = Math.min(dayNum(x.to.date), y1);
+    if (b <= a) continue;
+    if (first === null || a < first) first = a;
+    if (last === null || b > last) last = b;
+  }
+  const bl = billList.filter((b) => spendMonthKey(b, cover).startsWith(String(year)));
+  // The reading at the end of the year (midnight going into 1 Jan), worked out
+  // on the same even spread as the bars; this year → the latest reading so far.
+  let reading = null;
+  const exact = r.find((x) => x.date && x.date.slice(0, 10) === `${year + 1}-01-01`);
+  const span = all.find((x) => dayNum(x.from.date) < y1 && dayNum(x.to.date) > y1);
+  if (exact) reading = { value: Number(exact.meterValue), date: `${year}-12-31`, kind: 'year-end' };
+  else if (span) reading = { value: Number(span.from.meterValue) + span.perDay * (y1 - dayNum(span.from.date)), date: `${year}-12-31`, kind: 'year-end', est: [span.from.date, span.to.date] };
+  else {
+    const inYear = r.filter((x) => (x.date || '').startsWith(String(year)));
+    const lr = inYear[inYear.length - 1];
+    if (lr) reading = { value: Number(lr.meterValue), date: lr.date, kind: year === now.getFullYear() && lr === latest ? 'so-far' : 'last-in-year' };
+  }
+  return { ...out, used, days, perDay: days ? used / days : null,
+    firstCovered: first === null ? null : isoOf(first), lastCovered: last === null ? null : isoOf(last - 1),
+    partialStart: first !== null && first > y0,
+    soFar: year === now.getFullYear(),
+    missingDays: first === null ? 0 : (last - first) - days,
+    billsTotal: totalCost(bl), billsCount: bl.length, reading };
+}

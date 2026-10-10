@@ -35,7 +35,7 @@ import { el, fill, addTo, addFirst, money, totalCost, niceDate, todayISO, daysUn
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
-import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey } from './stats.js';
+import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey, meterSummary } from './stats.js';
 import { vatFor, allInNote, allInPence } from './vat.js';
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
@@ -716,15 +716,13 @@ function meterInsights(everything) {
   const all = usageIntervals(everything);
   const intervals = all.slice(-12);
   const offset = all.length - intervals.length; // so the first shown period still has a "previous"
-  const b = bills(everything);
   const latest = r[r.length - 1];
   if (!latest) return null;
-  // v14.1: "Daily use" = the latest period between readings (matches its bar).
-  const last = all[all.length - 1] || null;
-  const avg = last ? last.perDay : null;
-  const year = new Date().getFullYear();
-  const billsYear = totalCost(b.filter((x) => (x.date || '').startsWith(String(year))));
   const unit = latest.meterUnit || '';
+  // v14.4: the summary box follows the tab (Last 12 months / a year).
+  const stats = el('div', { class: 'meter-stats', id: 'meter-stats' });
+  const statsNote = el('p', { class: 'meter-stats-note', id: 'daily-use-note' });
+  const drawStats = (yr) => fill(stats, meterStatsCells(meterSummary(everything, yr), unit, statsNote));
 
   // Tap (or Enter/Space on) a bar to open the detail card; swipe or use the arrows to move.
   const slot = el('div', { class: 'period-slot' });
@@ -751,6 +749,7 @@ function meterInsights(everything) {
   function draw() {
     card = null;
     const yr = state.meterYear;
+    drawStats(yr);
     if (yr) {
       // Calendar months of one year, with the same months last year faded behind.
       const now = monthlyUsage(everything, yr), then = monthlyUsage(everything, yr - 1);
@@ -807,13 +806,55 @@ function meterInsights(everything) {
   return el(
     'section',
     { class: 'card meter-card', id: 'meter-insights', 'aria-label': 'Meter summary' },
-    el('div', { class: 'meter-stats' },
-      el('div', {}, el('span', { class: 'stat-label' }, 'Latest'), el('span', { class: 'stat-value' }, Number(latest.meterValue).toLocaleString('en-GB')), el('span', { class: 'stat-title' }, `${unit} · ${niceDate(latest.date)}`)),
-      el('div', {}, el('span', { class: 'stat-label' }, 'Daily use'), el('span', { class: 'stat-value' }, avg !== null ? avg.toFixed(1) : '–'), el('span', { class: 'stat-title', id: 'daily-use-note', title: last ? `${niceDate(last.from.date)} to ${niceDate(last.to.date)}` : '' }, last ? `${unit}/day, latest period` : `${unit}/day`)),
-      el('div', {}, el('span', { class: 'stat-label' }, `Bills ${year}`), el('span', { class: 'stat-value' }, money(Math.round(billsYear)).replace(/\.\d\d$/, '')), el('span', { class: 'stat-title' }, `${b.filter((x) => (x.date || '').startsWith(String(year))).length} bills`))
-    ),
+    stats, statsNote,
     box
   );
+}
+
+// v14.4: the four boxes at the top of the Electricity page for one tab, plus
+// the line under them. Labels name the period ("Used in 2025", "Bills 2025",
+// "Reading 31 Dec 2025"); numbers use the same spread as the bars.
+const shortDate = (iso) => niceDate(iso).replace(/ \d{4}$/, '');
+const sameYear = (a, b) => a && b && a.slice(0, 4) === b.slice(0, 4);
+const span = (a, b) => (sameYear(a, b) ? `${shortDate(a)} – ${niceDate(b)}` : `${niceDate(a)} – ${niceDate(b)}`);
+const kwhFmt = (v) => Math.round(v).toLocaleString('en-GB');
+const readingFmt = (v) => Number(v).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+function meterStatsCells(s, unit, note) {
+  if (!s) return [];
+  const cell = (id, label, value, sub, title = '') => el('div', { id, title }, el('span', { class: 'stat-label' }, label), el('span', { class: 'stat-value' }, value), el('span', { class: 'stat-title' }, sub));
+  const pounds = (v) => money(Math.round(v)).replace(/\.\d\d$/, '');
+  const billSub = `${s.billsCount} bill${s.billsCount === 1 ? '' : 's'}`;
+  const avg = s.perDay !== null && s.perDay !== undefined ? s.perDay.toFixed(1) : '–';
+  if (!s.year) {
+    const lp = s.lastPeriod;
+    note.replaceChildren(...(lp ? [`Latest period ${span(lp.from, lp.to)}: `, el('strong', {}, `${lp.perDay.toFixed(1)} ${unit}/day`)] : []));
+    note.hidden = !lp;
+    return [
+      cell('ms-used', 'Used, last 12 months', s.days ? kwhFmt(s.used) : '–', s.from ? `${unit} · since ${niceDate(s.from)}` : unit),
+      cell('ms-avg', 'Daily average', avg, `${unit}/day, last 12 months`),
+      cell('ms-bills', 'Bills, last 12 months', pounds(s.billsTotal), billSub),
+      cell('ms-reading', 'Latest reading', readingFmt(s.reading.value), `${unit} · ${niceDate(s.reading.date)}`),
+    ];
+  }
+  const y = s.year;
+  // "from 1 Sep" when the readings start part way through the year; "so far" this year.
+  const cover = !s.days ? 'no readings' : [s.partialStart ? `from ${shortDate(s.firstCovered)}` : '', s.soFar ? `to ${shortDate(s.lastCovered)}, so far` : ''].filter(Boolean).join(' ');
+  const rd = s.reading;
+  let rLabel = 'Reading', rSub = unit, rTitle = '';
+  if (rd && rd.kind === 'year-end') { rLabel = `Reading 31 Dec ${y}`; if (rd.est) { rSub = `${unit} · worked out`; rTitle = `Worked out from the ${niceDate(rd.est[0])} and ${niceDate(rd.est[1])} readings`; } }
+  else if (rd && rd.kind === 'so-far') { rLabel = 'Reading so far'; rSub = `${unit} · ${niceDate(rd.date)}`; }
+  else if (rd) { rLabel = `Last reading ${y}`; rSub = `${unit} · ${niceDate(rd.date)}`; }
+  const bits = [];
+  if (rd && rd.est) bits.push(`Reading at 31 Dec worked out from the ${shortDate(rd.est[0])} and ${niceDate(rd.est[1])} readings.`);
+  if (s.missingDays > 0) bits.push(`No readings for ${s.missingDays} day${s.missingDays === 1 ? '' : 's'} in between.`);
+  note.replaceChildren(bits.join(' '));
+  note.hidden = !bits.length;
+  return [
+    cell('ms-used', `Used in ${y}`, s.days ? kwhFmt(s.used) : '–', `${unit}${cover ? ' ' + cover : ''}`),
+    cell('ms-avg', `Daily average ${y}`, avg, `${unit}/day`),
+    cell('ms-bills', `Bills ${y}`, pounds(s.billsTotal), billSub),
+    cell('ms-reading', rLabel, rd ? readingFmt(rd.value) : '–', rSub, rTitle),
+  ];
 }
 
 // One calendar month of energy use, compared with the same month last year.
