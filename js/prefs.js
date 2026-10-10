@@ -85,3 +85,6 @@ export const setMonthOpen = (on) => writeRaw('hearthbook.monthOpen', on ? 'yes' 
 // v14.5: Electricity page "After EDF credits" switch (this phone only).
 export const afterCreditsOn = () => readRaw('hearthbook.afterCredits') === 'on';
 export const setAfterCredits = (on) => writeRaw('hearthbook.afterCredits', on ? 'on' : 'off');
+// v14.7: Mortgage "Without overpayments" switch (this phone only).
+export const withoutOverpayOn = () => readRaw('hearthbook.withoutOverpay') === 'on';
+export const setWithoutOverpay = (on) => writeRaw('hearthbook.withoutOverpay', on ? 'on' : 'off');

@@ -20,7 +20,8 @@
 //   showMeter – true if the form should show the meter value + unit fields
 //   soonDays  – (optional) how many days ahead counts as "soon" for this
 //               section, instead of SOON_DAYS below
-//   kind      – (optional) 'insurance' turns on the policy fields
+//   kind      – (optional) 'insurance' turns on the policy fields,
+//               'mortgage' the mortgage fields and overview (v14.7)
 //
 // Older copies of the app don't know newer sections (e.g. Insurance). They
 // still open, back up and sync those entries using the fallback in
@@ -86,6 +87,24 @@ export const SECTIONS = [
     dueLabel: 'Renewal date',
     dueWord: 'renews',
     soonDays: 30,
+    showMeter: false,
+  },
+  {
+    // v14.7: one "set-up" entry (amount, term, first deal) and one entry per
+    // annual statement. Figures live in entry.mortgage (see mortgage.js);
+    // the deal end is stored in dueDate so reminders and older versions see
+    // it. No cost: a mortgage isn't counted as spending.
+    id: 'mortgage',
+    glyph: 'key',
+    tone: 'sky',
+    label: 'Mortgage',
+    single: 'Mortgage statement',
+    icon: '🔑',
+    kind: 'mortgage',
+    showDue: true,
+    dueLabel: 'Deal ends',
+    dueWord: 'deal ends',
+    soonDays: 183, // shown in Coming up from 6 months before the deal ends
     showMeter: false,
   },
 ];

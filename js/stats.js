@@ -5,6 +5,7 @@
 // they're easy to reason about and never touch the database.
 
 import { daysUntil, totalCost } from './utils.js';
+import { withoutSuperseded } from './mortgage.js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -19,7 +20,7 @@ const hasNumber = (v) => v !== null && v !== undefined && v !== '' && isFinite(N
 // Insurance premiums are a running cost, not a one-off purchase (and a
 // policy's date is its start date, maybe years ago), so they're left out of
 // the spending totals and shown as a yearly cost on the Insurance list.
-export const isSpend = (e) => e.type !== 'insurance';
+export const isSpend = (e) => e.type !== 'insurance' && e.type !== 'mortgage'; // v14.7: a mortgage isn't spending
 
 // Total spent in a calendar year (every entry with a cost, bills included).
 export function spendInYear(entries, year) {
@@ -114,13 +115,14 @@ export function monthlySpend(entries, count = 12, now = new Date(), { cover = nu
 }
 
 // Things with a due/expiry date, soonest first. Past ones are left out.
+// v14.7: an older mortgage statement's deal end doesn't count (the latest does).
 export function upcoming(entries) {
-  return entries
+  return withoutSuperseded(entries)
     .filter((e) => e.dueDate && daysUntil(e.dueDate) >= 0)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 export function overdue(entries) {
-  return entries.filter((e) => e.dueDate && daysUntil(e.dueDate) < 0);
+  return withoutSuperseded(entries).filter((e) => e.dueDate && daysUntil(e.dueDate) < 0);
 }
 
 // Meter entries that have a reading, oldest first.

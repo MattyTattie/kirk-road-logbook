@@ -54,6 +54,8 @@ import { yearReview, reviewYears } from './review.js';
 import { backupDue, sizeLabel } from './homelogic.js';
 import * as lookup from './manuallookup.js';
 import * as weather from './weather.js';
+import * as mort from './mortgage.js';
+import * as mortUI from './mortgageui.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -503,6 +505,8 @@ async function renderHome() {
   // --- Coming up & recent ---
   const soonList = upcoming(everything).slice(0, 3);
   for (const e of renewSoon) if (!soonList.includes(e)) soonList.push(e);
+  // v14.7: a mortgage deal ending within 6 months is always in Coming up.
+  for (const e of upcoming(everything)) if (e.type === 'mortgage' && daysUntil(e.dueDate) <= soonDaysFor(e) && !soonList.includes(e)) soonList.push(e);
   const recent = everything.slice(0, 4);
 
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
@@ -578,6 +582,13 @@ function sectionTile(s, everything, year) {
   const thisYear = year === new Date().getFullYear();
   const pounds = money(Math.round(total)).replace(/\.\d\d$/, ''); // whole pounds, rounded
   const ins = s.kind === 'insurance';
+  // v14.7: the mortgage tile shows what's owed (latest statement), not the year
+  if (s.kind === 'mortgage') {
+    const t = mortUI.tileMeta(everything);
+    return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone, 'data-section': s.id, 'data-year': String(year) },
+      sectionBadge(s), el('span', { class: 'tile-label' }, s.label), el('span', { class: 'tile-meta', id: 'mortgage-tile-meta' }, t ? t.meta : 'Nothing yet'),
+      t ? el('span', { class: 'tile-note' }, t.note) : null);
+  }
   const meta = !count ? `None in ${year}`
     : ins ? `${count} polic${count === 1 ? 'y' : 'ies'} · ${pounds}`
     : total ? `${count} · ${pounds}` : `${count} logged`;
@@ -635,6 +646,8 @@ async function renderList(type, year = 0) {
 
   // --- Meter insights on the meter readings screen ---
   if (type === 'meter') screen.push(meterInsights(everything));
+  // --- v14.7: Mortgage overview above its statements ---
+  if (type === 'mortgage' && !year) screen.push(mortUI.overview(everything));
 
   // --- Search box and total ---
   const search = el('input', {
@@ -684,6 +697,18 @@ async function renderList(type, year = 0) {
       fill(list, ...(byRenewal.length ? byRenewal.map(entryCard)
         : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
             el('p', {}, q ? 'Nothing matches your search.' : 'No insurance policies yet. Tap + to add home, car or life cover and get a reminder before each renewal.'))]));
+      return;
+    }
+
+    // v14.7: Mortgage: newest statement first, the set-up last; no money total.
+    if (section && section.kind === 'mortgage') {
+      const order = (e) => (e.mortgage && e.mortgage.kind === 'setup' ? '0000' : String((e.mortgage && e.mortgage.year) || (e.date || '').slice(0, 4)));
+      const sorted = [...shown].sort((a, b) => order(b).localeCompare(order(a)) || (b.date || '').localeCompare(a.date || ''));
+      const nSt = shown.filter((e) => !(e.mortgage && e.mortgage.kind === 'setup')).length;
+      fill(summary, el('span', {}, `${nSt} statement${nSt === 1 ? '' : 's'}`), shown.length > nSt ? el('span', { class: 'total' }, 'and the set-up') : null);
+      fill(list, ...(sorted.length ? sorted.map(entryCard)
+        : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
+            el('p', {}, q ? 'Nothing matches your search.' : 'No statements yet. Scan your annual mortgage statement, or tap + to add one.'))]));
       return;
     }
 
@@ -1141,8 +1166,12 @@ function entryCard(e) {
       : el('div', { class: 'thumb placeholder', 'data-tone': section.tone }, icon(section.glyph, 24));
 
   const isIns = section.kind === 'insurance';
+  // v14.7: a mortgage statement: balance and rate; a past deal end isn't flagged
+  const isMort = section.kind === 'mortgage';
+  if (isMort && days !== null && days < 0) dueClass = '';
   const details = isIns
     ? [e.insType ? insuranceTypeLabel(e.insType) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
+    : isMort ? mortUI.cardLine(e)
     : [e.type === 'meter' && Number(e.cost) > 0 ? `paid ${niceDate(e.date)}` : niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
   // v14.6: with "After EDF credits" on, a bill with credits shows what was paid after them.
   const netRow = e.type === 'meter' && prefs.afterCreditsOn() && creditsOf(e).length;
@@ -1159,7 +1188,7 @@ function entryCard(e) {
       e.meterValue !== null && e.meterValue !== undefined && e.meterValue !== ''
         ? el('div', { class: 'entry-meter' }, `${fmtReading(e.meterValue)} ${e.meterUnit || ''}`)
         : null,
-      e.dueDate ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
+      e.dueDate && !(isMort && days < 0) ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
     ),
     e.cost ? el('div', { class: 'entry-cost' }, netRow ? money(netCost(e)) : money(e.cost, e.currency), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : netRow ? el('small', { class: 'entry-cost-note' }, 'after credits') : null) : null
   );
@@ -1177,7 +1206,7 @@ function renderSearch(initial = '') {
 // ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
-const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car and life policies' };
+const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car and life policies', mortgage: 'Annual statements, your deal and balance' };
 function renderChooser() {
   fill(app,
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
@@ -1278,6 +1307,21 @@ async function renderScan(arg) {
       const read = await scan.readFile(file, progress);
       if (cancelled) return;
       progress(1, 'Picking out the details…');
+      // v14.7: an annual mortgage statement (PDF): every statement page is
+      // read and kept as a picture; the figures fill in the Mortgage form.
+      if (isPdf && read.source === 'pdf-text' && mort.isMortgageStatement(read.text)) {
+        const pages = await scan.readStatementPages(file, { onProgress: (f, msg) => progress(0.2 + f * 0.7, msg) });
+        const x = mort.parseMortgageStatement(pages.text);
+        if (cancelled) return;
+        if (x && x.year) {
+          const photos = [];
+          for (const c of pages.canvases) photos.push({ id: db.newId(), blob: await compressImage(await canvasToBlob(c)) });
+          const fields = { title: `${x.lender || 'Mortgage'}${x.lender ? ' mortgage' : ''} statement ${x.year}`, date: `${x.year}-12-31`, supplier: x.lender || '', dueDate: x.dealEnd || '', mortgage: mort.statementFromParsed(x), cost: null };
+          pendingScan = { type: 'mortgage', parsed: { kind: 'mortgage' }, photos, source: read.source, fields, sorted: null, years: 0 };
+          location.hash = '#/new/mortgage';
+          return;
+        }
+      }
       const parsed = parse.parseDocument(read.text);
       // Keep a copy of the picture with the entry, like a normal photo.
       const source = isPdf ? await canvasToBlob(read.canvas) : file;
@@ -1357,6 +1401,15 @@ function scanFields(p, type) {
 // The "check these details" banner at the top of a scanned form.
 function scanHint(scan, onSwitch) {
   const p = scan.parsed;
+  if (scan.type === 'mortgage') { // v14.7
+    const m = scan.fields.mortgage || {};
+    const missing = [['balance', 'balance'], ['rate', 'interest rate'], ['payment', 'monthly payment']].filter(([k]) => !hasVal(m[k])).map(([, t]) => t);
+    if (!scan.fields.dueDate) missing.push('deal end');
+    return el('div', { class: 'scan-hint', id: 'scan-hint', role: 'status' }, icon('sparkle', 20),
+      el('div', {}, el('strong', {}, 'Check these details'),
+        el('p', { id: 'scan-mortgage-note' }, `Read from your ${m.year || ''} mortgage statement — tinted fields were read automatically, and its ${scan.photos.length} page${scan.photos.length === 1 ? ' is' : 's are'} kept with it. ` +
+          (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.'))));
+  }
   const choices = ['receipt', 'warranty', 'job'].filter((t) => t === scan.type || !prefs.isHidden(t));
   const why = { receipt: 'it looks like a receipt or invoice', warranty: 'it mentions a warranty or guarantee', job: 'it mentions labour, fitting or a service' }[scan.type];
   const fileUnder = scan.type !== 'meter' && onSwitch
@@ -1392,6 +1445,79 @@ async function ocrReady() {
 // FORM: add or edit an entry
 // v14.5: "Credits on the bill" in the bill form: one row per credit (type +
 // amount); a credit's date and note (from the scanner or a restore) are kept.
+// ---------------------------------------------------------------------
+// v14.7: Mortgage form: an annual statement, or the set-up (amount, term,
+// first deal). The figures go in entry.mortgage (mortgage.js).
+// ---------------------------------------------------------------------
+function mortgageKindField(entry) {
+  const kind = (entry.mortgage && entry.mortgage.kind) || 'statement';
+  return el('div', { class: 'field' }, el('span', { class: 'label', id: 'm-kind-label' }, 'What is it?'),
+    el('div', { class: 'seg seg-full', role: 'radiogroup', 'aria-labelledby': 'm-kind-label' },
+      [['statement', 'Annual statement'], ['setup', 'Mortgage set-up']].map(([id, label]) => el('label', { class: 'seg-btn radio-seg' },
+        el('input', { type: 'radio', name: 'mKind', value: id, checked: kind === id,
+          onchange: (ev) => ev.target.form.querySelectorAll('[data-mkind]').forEach((g) => { g.hidden = g.dataset.mkind !== ev.target.value; }) }), label))));
+}
+function mortgageFields(entry) {
+  const m = entry.mortgage || {};
+  const kind = m.kind || 'statement';
+  const f = (label, name, value, extra = {}, hint) => el('label', { class: 'field' }, el('span', { class: 'label' }, label),
+    el('input', { name, value: value ?? '', autocomplete: 'off', inputmode: extra.type ? null : 'decimal', ...extra }), hint ? el('span', { class: 'hint' }, hint) : null);
+  const rateType = (name, v) => el('label', { class: 'field' }, el('span', { class: 'label' }, 'Fixed or variable'),
+    el('select', { name }, [['fixed', 'Fixed'], ['variable', 'Variable'], ['tracker', 'Tracker']].map(([id, t]) => el('option', { value: id, selected: (v || 'fixed') === id }, t))));
+  const st = kind === 'statement' ? m : {};
+  const su = kind === 'setup' ? m : {};
+  return el('div', { class: 'mortgage-fields', id: 'mortgage-fields' },
+    el('div', { 'data-mkind': 'statement', hidden: kind !== 'statement', id: 'm-statement-fields' },
+      el('div', { class: 'row' }, f('Statement year *', 'mYear', st.year || (entry.date || todayISO()).slice(0, 4), { inputmode: 'numeric' }), f('Balance at the end £ *', 'mBalance', st.balance)),
+      el('div', { class: 'row' }, f('Interest rate %', 'mRate', st.rate), rateType('mRateType', st.rateType)),
+      f('Monthly payment £', 'mPayment', st.payment),
+      el('div', { class: 'row' }, f('ERC £', 'mErc', st.erc, {}, 'Early repayment charge'), f('ERCs end', 'mErcUntil', st.ercUntil, { type: 'date' })),
+      el('div', { class: 'row' }, f('Overpaid in the year £', 'mOverpaid', st.overpaid), f('Interest in the year £', 'mInterest', st.interest)),
+      el('details', { class: 'tariff-fields', open: hasVal(st.opening) || undefined },
+        el('summary', {}, 'More from the statement (optional)'),
+        el('div', { class: 'row' }, f('Opening balance £', 'mOpening', st.opening), f('Monthly overpayment now £', 'mLastOverpay', st.lastOverpay)),
+        f('Term left', 'mTermLeft', st.termLeft, { inputmode: 'text', placeholder: 'e.g. 21 yrs 3 months' }))),
+    el('div', { 'data-mkind': 'setup', hidden: kind !== 'setup', id: 'm-setup-fields' },
+      el('div', { class: 'row' }, f('Amount borrowed £ *', 'sAmount', su.amount), f('Term in years *', 'sTermYears', su.termMonths ? Math.round(su.termMonths / 12 * 100) / 100 : '')),
+      el('div', { class: 'row' }, f('Interest rate % *', 'sRate', su.rate), rateType('sRateType', su.rateType)),
+      el('div', { class: 'row' }, f('Monthly payment £', 'sPayment', su.payment), f('First payment', 'sFirst', su.firstPayment, { type: 'date' })),
+      el('div', { class: 'row' }, f('First payment’s interest £', 'sFirstInterest', su.firstInterest, {}, 'Optional, from the first statement.'), f('Rate after a deal %', 'sSvr', su.svr, {}, 'Your lender’s follow-on or standard variable rate.'))));
+}
+const hasVal = (v) => v !== null && v !== undefined && v !== '';
+function mortgageFromForm(form) {
+  const v = (n) => (form.elements[n] ? String(form.elements[n].value).trim() : '');
+  const num = (n, label, { required = false } = {}) => {
+    const raw = v(n).replace(/[£,%\s]/g, '');
+    if (!raw) return required ? { error: `Please enter the ${label}.` } : { value: null };
+    const x = Number(raw);
+    return isFinite(x) && x >= 0 ? { value: x } : { error: `The ${label} should be a number.` };
+  };
+  const pick = (spec) => { const out = {}; for (const [k, n, label, opt] of spec) { const r = num(n, label, opt); if (r.error) return { error: r.error }; out[k] = r.value; } return { out }; };
+  const old = form.__entry && form.__entry.mortgage ? form.__entry.mortgage : {};
+  const kind = (form.querySelector('[name=mKind]:checked') || {}).value || 'statement';
+  if (kind === 'setup') {
+    const r = pick([['amount', 'sAmount', 'amount borrowed', { required: true }], ['termYears', 'sTermYears', 'term', { required: true }], ['rate', 'sRate', 'interest rate', { required: true }],
+      ['payment', 'sPayment', 'monthly payment'], ['firstInterest', 'sFirstInterest', 'first payment’s interest'], ['svr', 'sSvr', 'rate after a deal']]);
+    if (r.error) return r;
+    const { termYears, ...x } = r.out;
+    const termMonths = Math.round(termYears * 12);
+    if (!(termMonths > 0 && termMonths <= 600)) return { error: 'The term should be in years, like 25.' };
+    return { mortgage: { ...(old.kind === 'setup' ? old : {}), kind: 'setup', ...x, termMonths, payment: x.payment ?? mort.payment(x.amount, x.rate, termMonths), firstPayment: v('sFirst') || null, rateType: v('sRateType') || 'fixed' } };
+  }
+  const year = Number(v('mYear'));
+  if (!(year >= 1990 && year <= 2100)) return { error: 'Please enter the statement year, like 2025.' };
+  const r = pick([['balance', 'mBalance', 'balance', { required: true }], ['rate', 'mRate', 'interest rate'], ['payment', 'mPayment', 'monthly payment'], ['erc', 'mErc', 'early repayment charge'],
+    ['overpaid', 'mOverpaid', 'amount overpaid'], ['interest', 'mInterest', 'interest'], ['opening', 'mOpening', 'opening balance'], ['lastOverpay', 'mLastOverpay', 'monthly overpayment']]);
+  if (r.error) return r;
+  const m = { ...(old.kind === 'statement' ? old : {}), kind: 'statement', year, ...r.out, rateType: v('mRateType') || 'fixed', ercUntil: v('mErcUntil') || null, termLeft: v('mTermLeft') || null };
+  // a scanned statement's current deal follows an edited rate / payment
+  if (Array.isArray(m.deals)) {
+    const cur = [...m.deals].reverse().find((d) => d.payment);
+    if (cur) { if (m.rate !== null) cur.rate = m.rate; if (m.payment !== null) cur.payment = m.payment; cur.rateType = m.rateType; cur.end = v('dueDate') || cur.end || null; }
+  }
+  return { mortgage: m };
+}
+
 function creditFields(list, scanned) {
   const rows = el('div', { class: 'credit-rows', id: 'credit-rows' });
   const addRow = (c = {}) => {
@@ -1428,6 +1554,7 @@ async function renderForm(type, id) {
   if (scan) Object.assign(entry, scan.fields, { photos: scan.photos });
   const section = getSection(entry.type);
   const ins = section.kind === 'insurance';
+  const mortF = section.kind === 'mortgage'; // v14.7
   // A working copy of the photo list; only saved when you press Save.
   let photos = [...(entry.photos || [])];
 
@@ -1436,6 +1563,7 @@ async function renderForm(type, id) {
     el('label', { class: 'field' }, el('span', { class: 'label' }, label), input, hint ? el('span', { class: 'hint' }, hint) : null);
 
   const form = el('form', { class: 'form', id: 'entry-form', novalidate: true });
+  form.__entry = entry; // v14.7: mortgageFromForm keeps the fields it doesn't show (deals)
 
   // v13.5: drop the nulls first — Element.append(null) prints the word "null"
   // (it showed above Title/Date on every non-insurance form). v13.9: addTo() does that.
@@ -1460,7 +1588,9 @@ async function renderForm(type, id) {
             INSURANCE_TYPES.map((t) => el('label', { class: 'seg-btn radio-seg' },
               el('input', { type: 'radio', name: 'insType', value: t.id, checked: (entry.insType || 'home') === t.id }), t.label))))
       : null,
-    field(ins ? 'Name (optional)' : 'Title *', el('input', { name: 'title', required: !ins, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : null),
+    mortF ? mortgageKindField(entry) : null,
+    field(ins || mortF ? 'Name (optional)' : 'Title *', el('input', { name: 'title', required: !ins && !mortF, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : mortF ? 'e.g. Santander mortgage statement 2025' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : mortF ? 'Left blank, it’s made from the lender and year.' : null),
+    mortF ? field('Lender *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Santander' })) : null,
     ins ? field('Insurer *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Aviva' })) : null,
     ins ? field('Policy number', el('input', { name: 'policyNumber', value: entry.policyNumber || '', autocomplete: 'off' })) : null,
     ins
@@ -1470,8 +1600,8 @@ async function renderForm(type, id) {
             el('option', { value: 'annual', selected: entry.costFreq !== 'monthly' }, 'Yearly'),
             el('option', { value: 'monthly', selected: entry.costFreq === 'monthly' }, 'Monthly'))))
       : null,
-    field(ins ? 'Start date *' : 'Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() })),
-    ins
+    field(ins ? 'Start date *' : 'Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() }), mortF ? 'Statement: its date (usually 31 December). Set-up: the day the mortgage started.' : null),
+    ins || mortF
       ? null
       : el('div', { class: 'row cost-row' },
           field(
@@ -1482,7 +1612,7 @@ async function renderForm(type, id) {
           ),
           field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
             CURRENCIES.map(([code, sym]) => el('option', { value: code, selected: (entry.currency || 'GBP') === code }, `${sym} ${code}`))))),
-    ins ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' })));
+    ins || mortF ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' })));
 
   // Suggest suppliers you've used before (a "datalist" gives autocomplete).
   const allEntries = await db.getAllEntries();
@@ -1512,8 +1642,9 @@ async function renderForm(type, id) {
     );
   }
   if (section.showDue) {
-    addTo(form, field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : null));
+    addTo(form, field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : mortF ? 'The end of the current deal. Reminders 6, 3 and 1 month before.' : null));
   }
+  if (mortF) addTo(form, mortgageFields(entry));
   if (ins) addTo(form, field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
   // v13: which room it belongs to (optional; jobs, receipts, warranties).
   const roomable = rooms.ROOM_TYPES.includes(entry.type);
@@ -1557,6 +1688,10 @@ async function renderForm(type, id) {
         if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
           busy.textContent = 'Reading PDF…';
           const scan = await import('./scan.js');
+          if (mortF) { // v14.7: every page of a statement ("Page 1 of 5"), up to 8
+            for (const c of (await scan.readStatementPages(file)).canvases) photos.push({ id: db.newId(), blob: await compressImage(await canvasToBlob(c)) });
+            continue;
+          }
           source = await canvasToBlob((await scan.renderPdfFirstPage(file)).canvas);
         }
         busy.textContent = 'Shrinking photo…';
@@ -1573,12 +1708,12 @@ async function renderForm(type, id) {
   galleryInput.addEventListener('change', () => { addFiles([...galleryInput.files]); galleryInput.value = ''; });
 
   addTo(form,
-    el('div', { class: 'field' }, el('span', { class: 'label' }, ins ? 'Photos & documents' : 'Photos'), photoGrid, busy,
+    el('div', { class: 'field' }, el('span', { class: 'label' }, ins ? 'Photos & documents' : mortF ? 'Statement pages' : 'Photos'), photoGrid, busy,
       el(
         'div',
         { class: 'row' },
         el('button', { type: 'button', class: 'btn secondary', onclick: () => cameraInput.click() }, icon('camera', 20), 'Take photo'),
-        el('button', { type: 'button', class: 'btn secondary', onclick: () => galleryInput.click() }, icon('image', 20), ins ? 'Gallery / PDF' : 'Gallery')
+        el('button', { type: 'button', class: 'btn secondary', onclick: () => galleryInput.click() }, icon('image', 20), ins || mortF ? 'Gallery / PDF' : 'Gallery')
       ),
       cameraInput,
       galleryInput
@@ -1604,6 +1739,15 @@ async function renderForm(type, id) {
     const showError = (msg) => { errorBox.textContent = msg; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); };
 
     let title = v('title');
+    // v14.7: the mortgage figures (mortgageFromForm below)
+    let mortgage = null;
+    if (mortF) {
+      if (!v('supplier')) return showError('Please enter the lender.');
+      const r = mortgageFromForm(form);
+      if (r.error) return showError(r.error);
+      mortgage = r.mortgage;
+      if (!title) title = mortgage.kind === 'setup' ? `${v('supplier')} mortgage` : `${v('supplier')} mortgage statement ${mortgage.year}`;
+    }
     if (ins) {
       if (!v('supplier')) return showError('Please enter the insurer.');
       if (!title) title = `${insuranceTypeLabel(form.elements.insType.value)} insurance – ${v('supplier')}`;
@@ -1644,7 +1788,7 @@ async function renderForm(type, id) {
     }
     const extra = ins
       ? { insType: form.elements.insType.value, policyNumber: v('policyNumber'), costFreq: form.elements.costFreq.value, covered: v('covered') }
-      : {};
+      : mortF ? { mortgage } : {};
 
     const now = new Date().toISOString();
     const saved = {
@@ -1668,7 +1812,8 @@ async function renderForm(type, id) {
     if (roomable) { if (v('room')) saved.room = rooms.cleanName(v('room')); else delete saved.room; }
     if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
     if (credits) { if (credits.length) saved.credits = credits; else delete saved.credits; } // v14.5
-    if (!saved.currency || saved.currency === 'GBP' || ins) delete saved.currency; // pounds = no field (as before)
+    if (mortF) { saved.cost = null; if (saved.mortgage.kind === 'statement' || saved.mortgage.kind === 'setup') saved.mortgage.dealEnd = saved.dueDate || null; }
+    if (!saved.currency || saved.currency === 'GBP' || ins || mortF) delete saved.currency; // pounds = no field (as before)
     await db.saveEntry(saved);
     sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
     toast('Saved');
@@ -1680,6 +1825,7 @@ async function renderForm(type, id) {
   if (scan) {
     // Tint the fields the scanner filled in, so it's clear what to check.
     const filled = Object.keys(scan.fields);
+    if (scan.fields.mortgage) filled.push(...['mYear', 'mBalance', 'mRate', 'mPayment', 'mErc', 'mErcUntil', 'mOverpaid', 'mInterest', 'mOpening', 'mLastOverpay', 'mTermLeft']);
     if (scan.fields.tariff) filled.push(...(scan.fields.tariff.rates.length ? ['unitRates'] : []), ...(scan.fields.tariff.standing.length ? ['standingCharge'] : []));
     for (const name of filled) {
       const input = form.elements[name];
@@ -1939,6 +2085,8 @@ async function renderDetail(id) {
   else if (days !== null && days <= soonDaysFor(e)) dueClass = 'soon';
 
   const ins = section.kind === 'insurance';
+  const isMort = section.kind === 'mortgage' && mort.isMortgage(e); // v14.7
+  if (isMort && days !== null && days < 0) dueClass = '';
   const premium = e.cost ? (e.costFreq === 'monthly' ? `${money(e.cost)} a month (${money(annualCost(e))} a year)` : `${money(e.cost)} a year`) : null;
   const tariff = e.type === 'meter' ? tariffOf(e) : null;
   const rows = ins ? [
@@ -1949,6 +2097,10 @@ async function renderDetail(id) {
     ['Started', niceDate(e.date), 'calendar'],
     ['Renews', e.dueDate ? `${niceDate(e.dueDate)} (${dueText('renews', days)})` : null, 'clock'],
     ['Covered', e.covered, 'lock'],
+  ].filter(([, value]) => value) : isMort ? [
+    ['Lender', e.supplier, 'home'],
+    ...mortUI.detailRows(e),
+    ['Deal ends', e.dueDate ? `${niceDate(e.dueDate)}${days >= 0 ? ` (${dueText('deal ends', days)})` : ''}` : null, 'clock'],
   ].filter(([, value]) => value) : [
     ['Section', section.single, 'list'],
     ['Date', niceDate(e.date), 'calendar'],
@@ -1984,7 +2136,7 @@ async function renderDetail(id) {
     el(
       'header',
       { class: 'detail-hero', 'data-tone': section.tone },
-      el('div', { class: 'detail-kicker' }, el('a', { class: 'kicker-link', href: `#/list/${e.type}`, 'aria-label': `All ${section.label.toLowerCase()}` }, sectionBadge(section, 'sm'), el('span', {}, section.single)), e.dueDate ? el('span', { class: 'pill ' + (dueClass || 'calm') }, dueText(section.dueWord || 'due', days)) : null),
+      el('div', { class: 'detail-kicker' }, el('a', { class: 'kicker-link', href: `#/list/${e.type}`, 'aria-label': `All ${section.label.toLowerCase()}` }, sectionBadge(section, 'sm'), el('span', {}, section.single)), e.dueDate && !(isMort && days < 0) ? el('span', { class: 'pill ' + (dueClass || 'calm') }, dueText(section.dueWord || 'due', days)) : null),
       el('h1', { id: 'detail-title' }, e.title),
       e.cost ? el('p', { class: 'detail-amount' }, money(e.cost, e.currency), ins ? el('small', {}, e.costFreq === 'monthly' ? ' a month' : ' a year') : null) : null,
       el('p', { class: 'detail-meta' }, (ins ? [e.supplier, e.policyNumber ? `Policy ${e.policyNumber}` : ''] : [niceDate(e.date), e.supplier]).filter(Boolean).join(' · '))
@@ -1994,14 +2146,15 @@ async function renderDetail(id) {
     e.notes ? el('section', { class: 'notes-card' }, el('h2', { class: 'card-title' }, 'Notes'), el('p', { class: 'notes' }, e.notes)) : null,
     photos.length
       ? el('section', { class: 'photos-card' },
-          el('h2', { class: 'card-title' }, `${ins ? 'Documents' : 'Photos'} · ${photos.length}`),
+          el('h2', { class: 'card-title' }, `${ins ? 'Documents' : isMort ? 'Statement pages' : 'Photos'} · ${photos.length}`),
           el(
             'div',
             { class: 'photos-large' + (photos.length > 1 ? ' multi' : '') },
-            photos.map((p, i) => {
-              const url = photoURL(p.blob);
-              return el('img', { src: url, alt: `Photo ${i + 1} of ${e.title}`, onclick: () => showFullPhoto(url) });
-            })
+            (() => {
+              const urls = photos.map((p) => photoURL(p.blob));
+              // v14.7: statement pages open together, to scroll through
+              return urls.map((url, i) => el('img', { src: url, alt: `${isMort ? 'Page' : 'Photo'} ${i + 1} of ${e.title}`, onclick: () => (isMort && urls.length > 1 ? showPages(urls, i, e.title) : showFullPhoto(url)) }));
+            })()
           ))
       : null,
     el(
@@ -2027,6 +2180,19 @@ async function renderDetail(id) {
       )
     )
   );
+}
+
+// v14.7: several pages (a mortgage statement) full screen, one under the
+// other, starting at the one tapped. The cross (or Back) closes it.
+function showPages(urls, start, title) {
+  const close = () => { overlay.remove(); removeEventListener('hashchange', close); };
+  const pages = urls.map((u, i) => el('img', { src: u, alt: `Page ${i + 1} of ${urls.length}`, 'data-page': String(i + 1) }));
+  const overlay = el('div', { class: 'overlay overlay-pages', role: 'dialog', 'aria-label': `${title}: ${urls.length} pages`, id: 'pages-viewer' },
+    el('div', { class: 'pages-scroll' }, pages.map((img, i) => el('figure', {}, img, el('figcaption', {}, `Page ${i + 1} of ${urls.length}`)))),
+    el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close', onclick: close }, icon('x', 22)));
+  addEventListener('hashchange', close);
+  addTo(document.body, overlay);
+  requestAnimationFrame(() => pages[start] && pages[start].scrollIntoView({ block: 'start' }));
 }
 
 // Tap a photo to see it full screen; tap again to close.

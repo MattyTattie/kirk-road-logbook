@@ -21,12 +21,14 @@
 // Only inside the installed app (not in a normal Chrome tab), and only
 // after you've turned phone reminders on.
 
+import { withoutSuperseded } from './mortgage.js';
+
 const PKG = 'io.github.mattytattie.hearthbook';
 const K_APP = 'hearthbook.app';         // "yes" once we've seen we're inside the Android app
 const K_ON = 'hearthbook.native.on';    // "on" after you turned phone reminders on
 const K_SENT = 'hearthbook.native.sent'; // { h, at } last list handed over
 const K_SEEN = 'hearthbook.native.seen'; // { h, perm, v, at } what the app said it holds
-const WORD = { insurance: 'renews', warranty: 'expires', job: 'is due' };
+const WORD = { insurance: 'renews', warranty: 'expires', job: 'is due', mortgage: 'deal ends' };
 
 const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const set = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -72,9 +74,10 @@ const dayNum = (iso) => { const [y, m, d] = iso.split('-').map(Number); return D
 /** The compact list for the app: dated renewals / expiries / jobs from today up to ~13 months ahead. */
 export function payload(entries, now = new Date(), notified = {}) {
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000;
-  const items = entries
+  // v14.7: a mortgage is named "Santander mortgage" (the app adds "deal ends in 30 days")
+  const items = withoutSuperseded(entries)
     .filter((e) => WORD[e.type] && /^\d{4}-\d\d-\d\d/.test(e.dueDate || ''))
-    .map((e) => ({ i: String(e.id).slice(0, 80), t: String(e.title || 'Entry').slice(0, 60), d: e.dueDate.slice(0, 10), w: WORD[e.type] }))
+    .map((e) => ({ i: String(e.id).slice(0, 80), t: String(e.type === 'mortgage' ? `${e.supplier || ''} mortgage`.trim() : e.title || 'Entry').slice(0, 60), d: e.dueDate.slice(0, 10), w: WORD[e.type] }))
     .filter((x) => { const n = dayNum(x.d) - today; return n >= 0 && n <= 400; })
     .sort((a, b) => a.d.localeCompare(b.d) || a.i.localeCompare(b.i))
     .slice(0, 80);
