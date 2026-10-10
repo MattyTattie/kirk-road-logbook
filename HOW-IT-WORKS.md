@@ -891,3 +891,11 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - Electricity page: when any bill has credits, an "After EDF credits" switch appears under the year tabs. Each phone remembers its own setting. Off shows what was charged. On shows the Bills total, the period and month cards and the home spending bars after credits, plus "Saved £X in <period> (…)".
 - Credits count with the bill they are on (by the month the bill covers). Nothing is estimated from free hours.
 - The bill form has "Credits on the bill (optional)" to add, edit or remove credits; scanning an EDF bill fills them in.
+
+## v14.6 (10 Oct 2026): every total says what it counts
+- Two ways to count bills: **by date paid** (Home total, Electricity tile, Logbook, Year in review, report) and **for the months used** (the spending chart and the Electricity page, where a bill paid on 3 Oct counts for September). Each total now says which, and whether it is as charged or after EDF credits. Insurance is only in Year in review (pro rata) and the Insurance list.
+- The "After EDF credits" switch now also drives the home Last bill card and the Logbook list amounts; with it off, everything is as charged.
+- A month on the Electricity page shows all of its bills (a short 2-day bill and the monthly one, for example), each with Open bill.
+- A part month is never compared with a whole one ("Too early to compare").
+- The meter section is called "Electricity bill" (one) / "Electricity bills" (section). Its id stays `meter`. A meter entry with no cost is just a reading.
+

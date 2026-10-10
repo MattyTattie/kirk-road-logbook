@@ -353,6 +353,8 @@ async function renderHome() {
     // v13: "Year in review" is a small link on the summary line, so the card stays compact.
     el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} · ${money(lastYear)} in ${year - 1} · `,
       el('a', { class: 'hero-review', href: `#/year/${year}`, id: 'year-review-link' }, 'Year in review ›')),
+    // v14.6: say what the total counts (Year in review adds insurance; the charts use months used).
+    el('p', { class: 'hero-sub hero-basis', id: 'spend-basis' }, 'Bills by date paid, as charged · insurance not included'),
     el('div', { class: 'hero-split' }, heroChips())
   );
 
@@ -389,7 +391,7 @@ async function renderHome() {
     el('span', { class: 'stat-label' }, icon('gauge', 16), 'Latest reading'),
     latest
       ? [
-          el('span', { class: 'stat-value' }, Number(latest.meterValue).toLocaleString('en-GB'), el('small', {}, ` ${latest.meterUnit || ''}`)),
+          el('span', { class: 'stat-value' }, fmtReading(latest.meterValue), el('small', {}, ` ${latest.meterUnit || ''}`)),
           el('span', { class: 'stat-title' }, niceDate(latest.date)),
           lastInterval && lastInterval.to === latest
             ? el('span', { class: 'pill calm' }, `≈ ${lastInterval.perDay.toFixed(1)} ${lastInterval.unit}/day`)
@@ -402,21 +404,28 @@ async function renderHome() {
   const b = bills(everything);
   const lastBill = b[b.length - 1];
   const prevBill = b[b.length - 2];
+  // v14.6: the Last bill card follows the "After EDF credits" switch, names the
+  // month the bill is for (as the charts do) and compares with the bill before.
+  const netHome = netOnFor(everything);
+  const billCover = coverMonths(everything);
+  const lastCost = lastBill ? shownCost(lastBill, netHome) : 0;
+  const lastFor = lastBill ? spendMonthKey(lastBill, billCover) : '';
   let billCard = null;
   if (lastBill) {
-    const diff = prevBill ? lastBill.cost - prevBill.cost : null;
+    const diff = prevBill ? lastCost - shownCost(prevBill, netHome) : null;
+    const prevFor = prevBill ? spendMonthKey(prevBill, billCover) : '';
     billCard = el(
       'a',
       { class: 'stat-card wide', id: 'last-bill', href: `#/view/${lastBill.id}` },
       el('div', { class: 'wide-main' },
-        el('span', { class: 'stat-label' }, icon('bolt', 16), 'Last bill'),
-        el('span', { class: 'stat-value' }, money(lastBill.cost)),
-        el('span', { class: 'stat-title' }, `${lastBill.supplier || getSection('meter').single} · ${niceDate(lastBill.date)}`),
+        el('span', { class: 'stat-label' }, icon('bolt', 16), netHome && creditsOf(lastBill).length ? 'Last bill, after credits' : 'Last bill'),
+        el('span', { class: 'stat-value', id: 'last-bill-value' }, money(lastCost)),
+        el('span', { class: 'stat-title', id: 'last-bill-for' }, `${lastBill.supplier || 'Bill'} · for ${longMonth(lastFor)} · paid ${niceDate(lastBill.date)}`),
         diff !== null
-          ? el('span', { class: 'pill ' + (diff > 0 ? 'up' : 'down') }, `${diff > 0 ? '▲' : '▼'} ${money(Math.abs(diff))} vs previous`)
+          ? el('span', { class: 'pill ' + (diff > 0 ? 'up' : diff < 0 ? 'down' : ''), id: 'last-bill-change' }, Math.abs(diff) < 0.005 ? `Same as the ${longMonth(prevFor)} bill` : `${diff > 0 ? '▲' : '▼'} ${money(Math.abs(diff))} vs ${longMonth(prevFor)} bill`)
           : null
       ),
-      sparkline(b.slice(-12).map((x) => x.cost), { width: 112, height: 48 })
+      sparkline(b.slice(-12).map((x) => shownCost(x, netHome)), { width: 112, height: 48 })
     );
   }
 
@@ -485,7 +494,7 @@ async function renderHome() {
       yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
-      cover.size ? el('p', { class: 'chart-hint', id: 'chart-cover-note' }, `Energy bills show under the month they cover${netOn ? ', after EDF credits' : ''}.`) : null,
+      cover.size ? el('p', { class: 'chart-hint', id: 'chart-cover-note' }, `Energy bills count for the months used (the month each bill covers)${netOn ? ', after EDF credits' : ''}. Insurance isn’t included.`) : null,
       card); // fill() skips the null (replaceChildren would print it as "null")
     drawTiles(); // the tiles follow the year picker
   }
@@ -503,7 +512,7 @@ async function renderHome() {
 
   const comingUp = soonList.length
     ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
-        el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up'), renewSoon.length ? el('a', { href: '#/list/insurance', class: 'link' }, 'Insurance') : el('a', { href: '#/list/warranty', class: 'link' }, 'Warranties')),
+        el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up'), comingUpLink(soonList)),
         el('div', { class: 'list' }, soonList.map(entryCard)),
         remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
     : null;
@@ -526,9 +535,12 @@ async function renderHome() {
   // meter / bill cards and the chart fold into one "Money & energy" card that
   // opens on a tap and remembers (this phone) whether you left it open.
   // Recent and the tour moved to More. Nothing removed.
+  // v14.6: same basis as the chart inside (bills for the months used, after
+  // credits when the switch is on), and the last bill names the month it's for.
   const now = new Date();
-  const monthSpent = monthlySpend(everything, 1, now)[0].value;
-  const summary = [`${money(monthSpent)} spent in ${now.toLocaleDateString('en-GB', { month: 'long' })}`, lastBill ? `last bill ${money(lastBill.cost)}` : null].filter(Boolean).join(' · ');
+  const monthSpent = monthlySpend(netHome ? afterCredits(everything) : everything, 1, now, { cover: billCover })[0].value;
+  const summaryText = [monthSpent > 0 ? `${money(monthSpent)} spent in ${MONTH_LONG[now.getMonth()]} so far` : null, lastBill ? `last bill ${money(lastCost)} for ${longMonth(lastFor)}` : null].filter(Boolean).join(' · ');
+  const summary = summaryText ? summaryText[0].toUpperCase() + summaryText.slice(1) : 'Nothing spent yet';
   const open = prefs.monthOpen();
   const body = el('div', { class: 'month-fold-body', id: 'this-month-body', hidden: !open }, hero, statGrid, chartCard);
   const toggle = el('button', { type: 'button', class: 'month-fold-head', id: 'this-month-toggle', 'aria-expanded': String(open), 'aria-controls': 'this-month-body',
@@ -550,6 +562,13 @@ async function renderHome() {
   if (heroValue && open) countUp(heroValue, thisYear, (v) => money(v));
 }
 
+// v14.6: the "Coming up" link names what the list holds: one section, or All.
+function comingUpLink(list) {
+  const types = [...new Set(list.map((e) => e.type))];
+  if (types.length === 1) { const s = getSection(types[0]); return el('a', { href: `#/list/${s.id}`, class: 'link', id: 'coming-up-link' }, s.label); }
+  return el('a', { href: '#/list/all', class: 'link', id: 'coming-up-link' }, 'See all');
+}
+
 // One section tile on the home screen: how many and how much in one year.
 // Insurance shows what the policies cost that year, pro rata (monthly
 // premiums actually paid; a yearly premium spread over its months of cover),
@@ -566,7 +585,8 @@ function sectionTile(s, everything, year) {
     sectionBadge(s),
     el('span', { class: 'tile-label' }, s.label),
     el('span', { class: 'tile-meta' }, meta),
-    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata`) : null);
+    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata`)
+      : s.id === 'meter' && total ? el('span', { class: 'tile-note', id: 'meter-tile-basis' }, 'by date paid, as charged') : null);
 }
 
 // ---------------------------------------------------------------------
@@ -667,9 +687,14 @@ async function renderList(type, year = 0) {
       return;
     }
 
+    // v14.6: say what the total counts: insurance is never in it (it's a yearly
+    // running cost, see Insurance), and bills follow the credits switch.
+    const netList = netOnFor(shown);
+    const hasIns = shown.some((e) => e.type === 'insurance');
     fill(summary,
       el('span', {}, `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`),
-      el('span', { class: 'total' }, 'Total ', el('strong', { id: 'total' }, money(totalCost(shown.filter(isSpend)))))
+      el('span', { class: 'total' }, netList ? 'Total after credits ' : 'Total ', el('strong', { id: 'total' }, money(sumShown(shown.filter(isSpend), netList))),
+        hasIns ? el('small', { id: 'total-basis' }, ' excl. insurance') : null)
     );
 
     if (shown.length === 0) {
@@ -695,7 +720,7 @@ async function renderList(type, year = 0) {
       ...groups.flatMap((g) => [
         el('div', { class: 'month-head' },
           el('span', {}, g.key === 'undated' ? 'No date' : monthName(g.key)),
-          el('span', {}, money(totalCost(g.items.filter(isSpend))))),
+          el('span', {}, money(sumShown(g.items.filter(isSpend), netList)))),
         ...g.items.map(entryCard),
       ])
     );
@@ -732,6 +757,11 @@ function meterInsights(everything) {
   const creditNote = el('p', { class: 'meter-stats-note credit-note', id: 'credit-note', hidden: true });
   const drawStats = (yr) => {
     const s = meterSummary(everything, yr);
+    if (s && yr) { // v14.6: bills for months with no readings at all
+      const mu = monthlyUsage(everything, yr), cv = coverMonths(everything);
+      s.uncovered = bills(everything).filter((b) => { const k = spendMonthKey(b, cv); return k.startsWith(`${yr}-`) && mu[Number(k.slice(5, 7)) - 1].days === 0; });
+      s.uncoveredMonths = [...new Set(s.uncovered.map((b) => MON3[Number(spendMonthKey(b, cv).slice(5, 7)) - 1]))];
+    }
     fill(stats, meterStatsCells(s, unit, statsNote, hasCredits && prefs.afterCreditsOn()));
     savedLine(creditNote, s, hasCredits && prefs.afterCreditsOn());
   };
@@ -840,7 +870,8 @@ function meterStatsCells(s, unit, note, net = false) {
   if (!s) return [];
   const cell = (id, label, value, sub, title = '') => el('div', { id, title }, el('span', { class: 'stat-label' }, label), el('span', { class: 'stat-value' }, value), el('span', { class: 'stat-title' }, sub));
   const pounds = (v) => money(Math.round(v)).replace(/\.\d\d$/, '');
-  const billSub = `${s.billsCount} bill${s.billsCount === 1 ? '' : 's'}${net ? ', after credits' : ''}`;
+  net = net && Boolean(s.credits && s.credits.total > 0); // v14.6: only when this period has credits
+  const billSub = `${s.billsCount} bill${s.billsCount === 1 ? '' : 's'} for months used${net ? ', after credits' : ''}`;
   const billsFig = net ? s.billsNet : s.billsTotal;
   const avg = s.perDay !== null && s.perDay !== undefined ? s.perDay.toFixed(1) : '–';
   if (!s.year) {
@@ -865,6 +896,8 @@ function meterStatsCells(s, unit, note, net = false) {
   const bits = [];
   if (rd && rd.est) bits.push(`Reading at 31 Dec worked out from the ${shortDate(rd.est[0])} and ${niceDate(rd.est[1])} readings.`);
   if (s.missingDays > 0) bits.push(`No readings for ${s.missingDays} day${s.missingDays === 1 ? '' : 's'} in between.`);
+  // v14.6: bills for months the readings don't cover are in Bills but not in Used.
+  if (s.uncovered && s.uncovered.length) bits.push(`Bills include ${s.uncovered.length === 1 ? '1 bill' : s.uncovered.length + ' bills'} for ${s.uncovered.length === 1 ? 'a month' : 'months'} with no readings (${s.uncoveredMonths.join(', ')}), so ${s.uncovered.length === 1 ? 'it isn’t' : 'they aren’t'} in Used.`);
   note.replaceChildren(bits.join(' '));
   note.hidden = !bits.length;
   return [
@@ -887,8 +920,8 @@ function savedLine(p, s, on) {
   p.replaceChildren('Saved ', el('strong', {}, money(c.total)), ` in ${period} (${parts.join(', ')})`);
 }
 // "Sunday Saver −£12.34 (11 Aug 2026)" lines for a period / month card.
-function creditLines(bill) {
-  const list = creditsOf(bill);
+function creditLines(billOrBills) {
+  const list = [].concat(billOrBills).flatMap((b) => creditsOf(b));
   if (!list.length) return null;
   return el('ul', { class: 'period-credits', id: 'pd-credits', 'aria-label': 'Credits on this bill' },
     list.map((c) => el('li', {}, el('span', {}, creditLabel(c.type) === 'Other' ? (c.note || 'Other credit') : creditLabel(c.type), c.date ? el('small', {}, ` ${niceDate(c.date)}`) : null), el('span', {}, `−${money(c.amount)}`))));
@@ -900,25 +933,50 @@ function billStat(bill, id = 'pd-cost') {
   return stat('Bill', money(bill.cost), n ? `before ${money(creditTotal(bill))} credits` : null, id);
 }
 
+// v14.6: a month with more than one bill (e.g. a 2-day bill and a monthly one).
+function billsStat(list, id = 'pd-cost') {
+  const total = totalCost(list);
+  if (prefs.afterCreditsOn() && list.some((b) => creditsOf(b).length)) return stat('Paid after credits', money(sumShown(list, true)), `of ${money(total)}, ${list.length} bills`, id);
+  return stat('Bills', money(total), `${list.length} bills`, id);
+}
+// "EDF bill Aug 2026 – £85.80 / paid 3 Sep 2026  [Open bill]" rows under a month card.
+function billRows(list) {
+  return list.map((bill, i) => {
+    const photo = bill.photos && bill.photos[0] ? bill.photos[0].blob : null;
+    const n = i ? `-${i + 1}` : '';
+    return el('div', { class: 'period-bill', id: `pd-bill${n}` },
+      photo ? el('img', { src: photoURL(photo), alt: 'Bill photo', class: 'pd-bill-thumb' }) : el('span', { class: 'pb-icon' }, icon('file', 20)),
+      el('div', { class: 'pb-text' }, el('strong', {}, bill.title || 'Bill'), `paid ${niceDate(bill.date)}`),
+      el('a', { class: 'btn small', href: `#/view/${bill.id}`, id: `pd-open-bill${n}` }, 'Open bill'));
+  });
+}
+const fullMonthDays = (key) => new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)), 0).getDate();
+
 // One calendar month of energy use, compared with the same month last year.
+// v14.6: every bill for the month (listed and added up, each with Open bill);
+// a part month isn't compared with a whole one.
 function meterMonthDetail(m, prev, unit, everything) {
   const cover = coverMonths(everything);
-  const bill = everything.find((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date && spendMonthKey(e, cover) === m.key);
-  const d = m.days && prev.days ? m.value - prev.value : null;
+  const monthBills = everything.filter((e) => e.type === 'meter' && Number(e.cost) > 0 && e.date && spendMonthKey(e, cover) === m.key).sort((a, b) => a.date.localeCompare(b.date));
+  const partNow = m.days > 0 && m.days < fullMonthDays(m.key);
+  const partThen = prev.days > 0 && prev.days < fullMonthDays(prev.key);
+  const d = m.days && prev.days && !partNow && !partThen ? m.value - prev.value : null;
+  const noCompare = !m.days || !prev.days ? 'Not enough readings' : m.partialNote === 'so far' ? 'Too early to compare' : 'Not a full month in both years';
   const pct = d !== null && prev.value > 0 ? ` (${d >= 0 ? '+' : '−'}${Math.round(Math.abs(d / prev.value) * 100)}%)` : '';
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
       m.days ? stat('Used', fmtNum(m.value, 0), unit, 'pd-used') : el('div', { class: 'period-stat', id: 'pd-used' }, el('span', { class: 'stat-label' }, 'Used'), el('span', { class: 'v muted-v' }, 'No readings')),
       m.days ? stat('Average', fmtNum(m.value / m.days), `${unit}/day`, 'pd-perday') : null,
       prev.days ? stat(prev.title, fmtNum(prev.value, 0), unit, 'pd-lastyear') : el('div', { class: 'period-stat', id: 'pd-lastyear' }, el('span', { class: 'stat-label' }, prev.title), el('span', { class: 'v muted-v' }, 'No readings')),
-      bill ? billStat(bill) : null
+      monthBills.length === 1 ? billStat(monthBills[0]) : monthBills.length ? billsStat(monthBills) : null
     ),
     el('div', { class: 'period-change', id: 'pd-change' }, el('span', {}, `vs ${prev.title}:`),
-      d !== null ? changePill(d, (v) => `${fmtNum(v, 0)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'Not enough readings')),
-    m.days && m.days < new Date(Number(m.key.slice(0, 4)), Number(m.key.slice(5)), 0).getDate()
+      d !== null ? changePill(d, (v) => `${fmtNum(v, 0)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, noCompare)),
+    partNow
       ? el('p', { class: 'chart-hint', id: 'pd-partial' }, `${m.partialNote === 'so far' ? 'So far: r' : 'R'}eadings cover ${m.days} of this month’s days.`) : null,
-    bill ? creditLines(bill) : null,
-    bill ? vatLine(vatFor(`${m.key}-01`, nextMonthStart(m.key))) : null
+    monthBills.length ? creditLines(monthBills) : null,
+    monthBills.length ? vatLine(vatFor(`${m.key}-01`, nextMonthStart(m.key))) : null,
+    ...billRows(monthBills)
   );
   return { title: m.title, sub: m.days ? `${fmtNum(m.value, 0)} ${unit}${m.partialNote === 'so far' ? ' so far' : ''}` : 'No readings', body };
 }
@@ -938,8 +996,17 @@ function billFor(interval, everything) {
 }
 
 // v14.1: "35,880.9" everywhere (the list used to say "35880.9").
-const fmtReading = (v) => (v !== '' && isFinite(Number(v)) ? Number(v).toLocaleString('en-GB', { maximumFractionDigits: 3 }) : String(v));
+// v14.6: always one decimal place ("12,208.6"), whatever was typed or scanned.
+const fmtReading = (v) => (v !== '' && v !== null && isFinite(Number(v)) ? Number(v).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : String(v));
 const fmtNum = (n, dp = 1) => Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+// v14.6: the "After EDF credits" switch is on AND some of these entries have credits.
+const netOnFor = (entries) => prefs.afterCreditsOn() && entries.some((e) => e.type === 'meter' && creditsOf(e).length);
+// What an entry counts as in a total: after its credits when the switch applies.
+const shownCost = (e, net) => (net && e.type === 'meter' && creditsOf(e).length ? netCost(e) : Number(e.cost) || 0);
+const sumShown = (list, net) => list.reduce((t, e) => t + Math.round(shownCost(e, net) * 100), 0) / 100;
+const MONTH_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const longMonth = (key) => MONTH_LONG[Number(key.slice(5, 7)) - 1];
+const monthKeyOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
 function changePill(delta, fmt, id) {
   if (delta === null || !isFinite(delta)) return el('span', { class: 'pill', id }, '–');
@@ -1013,7 +1080,7 @@ function periodDetail(interval, prev, everything) {
       stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
       cost !== null ? billStat(bill) : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
       ...tariffStats(tariff, interval.days, unit),
-      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(allIn !== null ? allIn : perUnit * 100, 1)}p`, tariff ? allInNote(vat) : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
+      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(allIn !== null ? allIn : perUnit * 100, 1)}p`, [tariff ? allInNote(vat) : '', net && creditsOf(bill).length ? 'before credits' : ''].filter(Boolean).join(', ') || null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
     ),
     el('div', { class: 'period-change', id: 'pd-change' },
       el('span', {}, 'vs previous:'),
@@ -1025,7 +1092,7 @@ function periodDetail(interval, prev, everything) {
     bill
       ? el('div', { class: 'period-bill', id: 'pd-bill' },
           photo ? el('img', { src: photoURL(photo), alt: 'Bill photo', id: 'pd-bill-thumb' }) : el('span', { class: 'pb-icon' }, icon('file', 20)),
-          el('div', { class: 'pb-text' }, el('strong', {}, bill.title || 'Bill'), `${niceDate(bill.date)}${perUnit !== null ? ' · incl. standing charge' : ''}`),
+          el('div', { class: 'pb-text' }, el('strong', {}, bill.title || 'Bill'), `paid ${niceDate(bill.date)}${perUnit !== null ? ' · incl. standing charge' : ''}`),
           el('a', { class: 'btn small', href: `#/view/${bill.id}`, id: 'pd-open-bill' }, 'Open bill'))
       : el('div', { class: 'period-bill none', id: 'pd-bill' }, el('div', { class: 'pb-text' }, 'No bill logged for this period.'),
           el('a', { class: 'btn small ghost', href: '#/new/meter' }, 'Add bill'))
@@ -1044,12 +1111,13 @@ function yearPicker(id, years, current, onPick, defaultLabel, { newestFirst = fa
 function monthDetail(month, prevMonth, source, yearOnYear = false, cover = null) {
   const items = source.filter((e) => e.type !== 'insurance' && spendMonthKey(e, cover) === month.key && Number(e.cost) > 0).sort((a, b) => Number(b.cost) - Number(a.cost));
   const delta = prevMonth ? month.value - prevMonth.value : null;
+  const current = month.key === monthKeyOf(new Date()); // v14.6: this month isn't over yet
   const body = el('div', { class: 'period-body' },
     el('div', { class: 'period-stats' },
       stat('Spent', money(month.value), null, 'md-total'),
       stat('Entries', String(items.length), items.length === 1 ? 'with a cost' : 'with costs', 'md-count')
     ),
-    el('div', { class: 'period-change', id: 'md-change' }, el('span', {}, `vs ${prevMonth ? (yearOnYear ? prevMonth.title : prevMonth.title.split(' ')[0]) : 'previous'}:`), changePill(delta, (v) => money(v), 'md-change-cost')),
+    el('div', { class: 'period-change', id: 'md-change' }, el('span', {}, `vs ${prevMonth ? (yearOnYear ? prevMonth.title : prevMonth.title.split(' ')[0]) : 'previous'}:`), current ? el('span', { class: 'pill', id: 'md-change-cost' }, 'Too early to compare') : changePill(delta, (v) => money(v), 'md-change-cost')),
     items.length
       ? el('ul', { class: 'period-items', id: 'md-items', 'aria-label': 'Biggest costs' },
           items.slice(0, 3).map((e) => el('li', {}, el('a', { href: `#/view/${e.id}` }, el('span', {}, e.title || 'Untitled'), el('span', {}, money(e.cost, e.currency))))),
@@ -1075,7 +1143,9 @@ function entryCard(e) {
   const isIns = section.kind === 'insurance';
   const details = isIns
     ? [e.insType ? insuranceTypeLabel(e.insType) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
-    : [niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
+    : [e.type === 'meter' && Number(e.cost) > 0 ? `paid ${niceDate(e.date)}` : niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
+  // v14.6: with "After EDF credits" on, a bill with credits shows what was paid after them.
+  const netRow = e.type === 'meter' && prefs.afterCreditsOn() && creditsOf(e).length;
 
   return el(
     'a',
@@ -1091,7 +1161,7 @@ function entryCard(e) {
         : null,
       e.dueDate ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
     ),
-    e.cost ? el('div', { class: 'entry-cost' }, money(e.cost, e.currency), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : null) : null
+    e.cost ? el('div', { class: 'entry-cost' }, netRow ? money(netCost(e)) : money(e.cost, e.currency), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : netRow ? el('small', { class: 'entry-cost-note' }, 'after credits') : null) : null
   );
 }
 
@@ -1107,7 +1177,7 @@ function renderSearch(initial = '') {
 // ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
-const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'Electricity bills and meter readings', insurance: 'Home, car and life policies' };
+const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car and life policies' };
 function renderChooser() {
   fill(app,
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
@@ -2548,21 +2618,22 @@ async function renderYearReview(year) {
       el('p', { class: 'review-value', id: 'review-value' }, money(r.total)),
       el('p', { class: 'small', id: 'review-compare' }, r.prevTotal !== null
         ? [change(r.change, `${year - 1}${r.partial ? ' (same dates)' : ''}`), ` · ${money(r.prevTotal)} in ${year - 1}${r.partial ? ' by then' : ''}`]
-        : `Nothing logged in ${year - 1} to compare with.`)),
+        : `Nothing logged in ${year - 1} to compare with.`),
+      el('p', { class: 'small muted', id: 'review-basis' }, 'Includes insurance (pro rata). Energy bills by date paid, as charged.')),
     r.categories.length
       ? el('section', { class: 'card', id: 'review-categories' },
           el('h2', { class: 'card-title' }, 'Where it went'),
           el('div', { class: 'review-cats' }, r.categories.map((c) => el('a', { class: 'review-cat', href: hrefFor(c.id), 'data-cat': c.id },
             el('div', { class: 'review-cat-row' }, el('strong', {}, c.label), el('span', { class: 'review-amt' }, money(c.total))),
             el('div', { class: 'review-bar' }, el('i', { style: `width:${Math.round((c.total / max) * 100)}%` })),
-            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : `${c.count} item${c.count === 1 ? '' : 's'}`, c.prev !== null ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1)))))))
+            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : c.id === 'meter' ? `${c.count} bill${c.count === 1 ? '' : 's'}, by date paid` : `${c.count} item${c.count === 1 ? '' : 's'}`, c.prev !== null ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1)))))))
       : el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon('chart', 36)), el('p', {}, `Nothing with a cost in ${year} yet.`)),
     r.biggest.length
       ? el('section', { class: 'group', id: 'review-biggest' }, el('div', { class: 'group-head' }, el('h2', {}, 'Biggest items')),
           el('div', { class: 'list' }, r.biggest.map((b) => el('a', { class: 'entry', href: `#/view/${b.entry.id}`, 'data-id': b.entry.id },
             el('div', { class: 'thumb placeholder', 'data-tone': getSection(b.entry.type).tone }, icon(getSection(b.entry.type).glyph, 24)),
             el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, b.entry.title),
-              el('div', { class: 'entry-sub' }, b.insurance ? `${getSection('insurance').single} · paid in ${year}, pro rata` : [getSection(b.entry.type).single, niceDate(b.entry.date)].join(' · '))),
+              el('div', { class: 'entry-sub' }, b.insurance ? `${getSection('insurance').single} · paid in ${year}, pro rata` : [getSection(b.entry.type).single, b.entry.type === 'meter' ? `paid ${niceDate(b.entry.date)}` : niceDate(b.entry.date)].join(' · '))),
             el('div', { class: 'entry-cost' }, money(b.amount))))))
       : null,
     r.busiestMonth || r.kwh

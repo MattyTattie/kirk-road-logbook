@@ -42,7 +42,7 @@ async function build() {
   else {
     // Insurance premiums are a yearly running cost, shown under their own heading.
     const policies = entries.filter((e) => e.type === 'insurance');
-    parts.push(el('div', { class: 'grand', id: 'grand-total' }, `Total of all costs: ${money(totalCost(entries.filter((e) => e.type !== 'insurance')))}`,
+    parts.push(el('div', { class: 'grand', id: 'grand-total' }, `Total of all costs: ${money(totalCost(entries.filter((e) => e.type !== 'insurance')))} (excl. insurance; bills as charged, by date paid)`,
       policies.length ? ` · insurance ${money(totalCost(policies.map((e) => ({ cost: annualCost(e) }))))} a year` : ''));
   }
 
@@ -60,7 +60,7 @@ function itemRow(e, section) {
   const ins = section.kind === 'insurance';
   const line = ins
     ? [e.insType ? `${insuranceTypeLabel(e.insType)} insurance` : '', e.supplier, e.policyNumber ? `policy ${e.policyNumber}` : '', e.covered ? `covers ${e.covered}` : '', e.date ? `since ${niceDate(e.date)}` : ''].filter(Boolean).join(' · ')
-    : [niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
+    : [e.type === 'meter' && Number(e.cost) > 0 ? `paid ${niceDate(e.date)}` : niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
   return el(
     'div',
     { class: 'item' },
@@ -69,7 +69,7 @@ function itemRow(e, section) {
       { class: 'main' },
       el('div', { class: 'title' }, e.title),
       line ? el('div', { class: 'line' }, line) : null,
-      e.meterValue !== null && e.meterValue !== undefined ? el('div', { class: 'line' }, `Reading: ${e.meterValue} ${e.meterUnit || ''}`) : null,
+      e.meterValue !== null && e.meterValue !== undefined ? el('div', { class: 'line' }, `Reading: ${isFinite(Number(e.meterValue)) && e.meterValue !== '' ? Number(e.meterValue).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : e.meterValue} ${e.meterUnit || ''}`) : null,
       e.dueDate ? el('div', { class: 'line ' + cls }, `${section.dueWord === 'expires' ? 'Expires' : section.dueWord === 'renews' ? 'Renews' : 'Next due'} ${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})`) : null,
       e.notes ? el('div', { class: 'notes' }, e.notes) : null,
       e.photos && e.photos.length

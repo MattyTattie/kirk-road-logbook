@@ -66,7 +66,7 @@ export const SECTIONS = [
     glyph: 'bolt',
     tone: 'amber',
     label: 'Electricity bills', // was 'Meter readings' (id stays 'meter')
-    single: 'Meter reading',
+    single: 'Electricity bill', // v14.6 (was 'Meter reading')
     icon: '⚡',
     showDue: false,
     showMeter: true,
