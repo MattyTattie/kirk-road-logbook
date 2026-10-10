@@ -81,3 +81,7 @@ export const homeTidy = () => readRaw('hearthbook.homeLayout', 'tidy') !== 'full
 export const setHomeTidy = (on) => writeRaw('hearthbook.homeLayout', on ? 'tidy' : 'full');
 export const monthOpen = () => readRaw('hearthbook.monthOpen') === 'yes';
 export const setMonthOpen = (on) => writeRaw('hearthbook.monthOpen', on ? 'yes' : 'no');
+
+// v14.5: Electricity page "After EDF credits" switch (this phone only).
+export const afterCreditsOn = () => readRaw('hearthbook.afterCredits') === 'on';
+export const setAfterCredits = (on) => writeRaw('hearthbook.afterCredits', on ? 'on' : 'off');

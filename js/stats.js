@@ -244,7 +244,7 @@ export function meterSummary(entries, year = 0, now = new Date()) {
     const keys = new Set(iv.map((x) => midMonthKey(x.from.date, x.to.date)));
     const bl = billList.filter((b) => keys.has(spendMonthKey(b, cover)));
     return { ...out, used, days, perDay: days ? used / days : null, from: iv.length ? iv[0].from.date : null, to: iv.length ? iv[iv.length - 1].to.date : null,
-      billsTotal: totalCost(bl), billsCount: bl.length, reading: { value: out.latest.value, date: latest.date, kind: 'latest' } };
+      billsTotal: totalCost(bl), billsCount: bl.length, ...billCredits(bl), reading: { value: out.latest.value, date: latest.date, kind: 'latest' } };
   }
   const months = monthlyUsage(entries, year);
   const used = Math.round(months.reduce((t, m) => t + m.value, 0) * 10) / 10;
@@ -275,5 +275,42 @@ export function meterSummary(entries, year = 0, now = new Date()) {
     partialStart: first !== null && first > y0,
     soFar: year === now.getFullYear(),
     missingDays: first === null ? 0 : (last - first) - days,
-    billsTotal: totalCost(bl), billsCount: bl.length, reading };
+    billsTotal: totalCost(bl), billsCount: bl.length, ...billCredits(bl), reading };
+}
+
+// ---------- v14.5: EDF credits printed on a bill ----------
+// A bill (meter entry) may carry  credits: [{ type: 'sunday'|'weekend'|'other',
+// amount, date, note }]  — optional, so older entries/backups just have none.
+// Each credit belongs to the bill it is printed on. "After credits" = cost −
+// credits (never below £0). Nothing is estimated from free hours.
+export const CREDIT_TYPES = [
+  { id: 'sunday', label: 'Sunday Saver' },
+  { id: 'weekend', label: 'Weekend Saver' },
+  { id: 'other', label: 'Other' },
+];
+export const creditLabel = (type) => (CREDIT_TYPES.find((t) => t.id === type) || CREDIT_TYPES[2]).label;
+const pence = (v) => Math.round(Number(v) * 100);
+export function creditsOf(e) {
+  if (!e || !Array.isArray(e.credits)) return [];
+  return e.credits
+    .filter((c) => c && isFinite(Number(c.amount)) && Number(c.amount) > 0)
+    .map((c) => ({ type: CREDIT_TYPES.some((t) => t.id === c.type) ? c.type : 'other', amount: pence(c.amount) / 100, date: typeof c.date === 'string' ? c.date : '', note: typeof c.note === 'string' ? c.note : '' }));
+}
+export const creditTotal = (e) => creditsOf(e).reduce((t, c) => t + pence(c.amount), 0) / 100;
+export function netCost(e) {
+  const cost = Number(e && e.cost) || 0;
+  return Math.max(0, pence(cost) - pence(creditTotal(e))) / 100;
+}
+// The same entries with cost replaced by the amount after credits (for charts).
+export const afterCredits = (entries) => entries.map((e) => (e.type === 'meter' && creditsOf(e).length ? { ...e, cost: netCost(e) } : e));
+// Totals for a list of bills: { billsNet, credits: { total, sunday, weekend, other } }
+export function billCredits(list) {
+  const credits = { total: 0, sunday: 0, weekend: 0, other: 0 };
+  let net = 0;
+  for (const b of list) {
+    net += pence(netCost(b));
+    for (const c of creditsOf(b)) { credits[c.type] += pence(c.amount); credits.total += pence(c.amount); }
+  }
+  for (const k of Object.keys(credits)) credits[k] /= 100;
+  return { billsNet: net / 100, credits };
 }

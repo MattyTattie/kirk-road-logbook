@@ -16,6 +16,9 @@
 //              // unit rates (pence/kWh) and standing charges (pence/day),
 //              // energy bills only; several when the tariff changed or for
 //              // day/night (Economy 7) meters
+//     credits: [{ type: 'sunday'|'weekend'|'other', amount, date, note }]
+//              // v14.5: EDF credits printed on the bill (Sunday Saver,
+//              // Weekend Saver / Flextras, Christmas Day), energy bills only
 //     currency: 'GBP' | 'EUR' | 'USD'  // what the amounts are in (holiday receipts)
 //     items: [{ name, qty, price }]    // receipt lines, when they can be read
 //     contactEmail                     // the seller's contact email (v13.5), also put in notes
@@ -692,6 +695,38 @@ function billMonth(start, end) {
   return `${MON_SHORT[mid.getUTCMonth()]} ${mid.getUTCFullYear()}`;
 }
 
+// ---------- v14.5: EDF credits on a bill ----------
+// "15 Jul 2026   Sunday Saver   -£12.34" (charges page) and "Sunday Saver
+// 15 July 2026 £12.34" (summary, often with the next column's text after it)
+// are the same credit: one entry per amount + date. Only credits we know are
+// energy rewards; referral rewards, payments and refunds are left out.
+const CREDIT_KINDS = [
+  { re: /\bsunday\s*saver\b/i, type: 'sunday', note: 'Sunday Saver' },
+  { re: /\bweekend\s*saver\b/i, type: 'weekend', note: 'Weekend Saver' },
+  { re: /\bflextras?\b/i, type: 'weekend', note: 'Flextras' },
+  { re: /\bchristmas[\s_]*(?:day)?[\s_]*credit\b|\bchristmas[\s_]+day\b/i, type: 'other', note: 'Christmas Day credit' },
+];
+export function parseCredits(allLines, defaultYear) {
+  const out = [];
+  for (const line of allLines) {
+    const kind = CREDIT_KINDS.find((k) => k.re.test(line));
+    if (!kind) continue;
+    // Flextras on its own (a sign-up line, an advert) isn't a credit: it needs an amount.
+    const at = line.search(kind.re);
+    const amounts = findAmounts(line.slice(at)).filter((x) => x.pound || x.value < 0);
+    if (!amounts.length) continue;
+    const amount = Math.abs(amounts[0].value);
+    if (!(amount > 0) || amount > 500) continue;
+    const d = findDates(line, defaultYear)[0];
+    const date = d ? d.iso : '';
+    const same = out.find((c) => Math.abs(c.amount - amount) < 0.005 && (!c.date || !date || c.date === date));
+    if (same) { if (!same.date && date) same.date = date; continue; }
+    const type = kind.type === 'weekend' && kind.note === 'Flextras' && !/weekend/i.test(line) ? 'other' : kind.type;
+    out.push({ type, amount, date, note: type === 'other' && kind.note === 'Flextras' ? 'Flextras credit' : kind.note });
+  }
+  return out;
+}
+
 // ---------- Main entry point ----------
 export function parseDocument(text, { today = new Date() } = {}) {
   const clean = (text || '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-');
@@ -724,6 +759,8 @@ export function parseDocument(text, { today = new Date() } = {}) {
     result.meter = meter;
     result.total = total;
     result.tariff = parseTariff(allLines, defaultYear);
+    const credits = parseCredits(allLines, defaultYear);
+    if (credits.length) result.credits = credits;
     // Convention in this logbook: a bill is dated on its closing reading
     // (which is the day after the period ends).
     result.date = meter.closingDate || (meter.periodEnd ? addDays(meter.periodEnd, 1) : pickDate(allLines, defaultYear));
@@ -736,6 +773,7 @@ export function parseDocument(text, { today = new Date() } = {}) {
     const tr = result.tariff;
     if (tr.rates.length) bits.push(`Unit rate ${tr.rates.map((r) => `${r.label ? r.label + ' ' : ''}${r.p}p/kWh${r.from && tr.rates.length > 1 ? ' from ' + ukDate(r.from) : ''}`).join(', ')}`);
     if (tr.standing.length) bits.push(`Standing charge ${tr.standing.map((r) => `${r.p}p/day${r.from && tr.standing.length > 1 ? ' from ' + ukDate(r.from) : ''}`).join(', ')}`);
+    if (credits.length) bits.push(`Credits ${credits.map((c) => `${c.note} -£${c.amount.toFixed(2)}${c.date ? ' (' + ukDate(c.date) + ')' : ''}`).join(', ')}`);
     if (reference) bits.push(`Bill ref ${reference}`);
     result.notes = bits.join('. ') + (bits.length ? '.' : '');
   } else {

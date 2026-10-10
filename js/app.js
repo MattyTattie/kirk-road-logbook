@@ -35,7 +35,7 @@ import { el, fill, addTo, addFirst, money, totalCost, niceDate, todayISO, daysUn
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
-import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey, meterSummary } from './stats.js';
+import { sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey, meterSummary, creditsOf, creditTotal, netCost, afterCredits, creditLabel, CREDIT_TYPES } from './stats.js';
 import { vatFor, allInNote, allInPence } from './vat.js';
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
@@ -432,7 +432,10 @@ async function renderHome() {
   const years = yearsWithData(everything).slice(-3); // e.g. 2024, 2025, 2026
   if (state.chartYear && !years.includes(state.chartYear)) state.chartYear = 0;
   function drawChart() {
-    const source = state.chartMode === 'bills' ? everything.filter((e) => e.type === 'meter') : everything;
+    // v14.5: the Electricity page's "After EDF credits" switch also applies to these bars.
+    const netOn = prefs.afterCreditsOn() && everything.some((e) => e.type === 'meter' && creditsOf(e).length);
+    const base = netOn ? afterCredits(everything) : everything;
+    const source = state.chartMode === 'bills' ? base.filter((e) => e.type === 'meter') : base;
     const yr = state.chartYear;
     // v14.1: energy bills count under the month they cover (3 Sep–3 Oct → Sep),
     // the same month the Electricity page shows them under.
@@ -482,7 +485,7 @@ async function renderHome() {
       yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
-      cover.size ? el('p', { class: 'chart-hint', id: 'chart-cover-note' }, 'Energy bills show under the month they cover.') : null,
+      cover.size ? el('p', { class: 'chart-hint', id: 'chart-cover-note' }, `Energy bills show under the month they cover${netOn ? ', after EDF credits' : ''}.`) : null,
       card); // fill() skips the null (replaceChildren would print it as "null")
     drawTiles(); // the tiles follow the year picker
   }
@@ -722,7 +725,20 @@ function meterInsights(everything) {
   // v14.4: the summary box follows the tab (Last 12 months / a year).
   const stats = el('div', { class: 'meter-stats', id: 'meter-stats' });
   const statsNote = el('p', { class: 'meter-stats-note', id: 'daily-use-note' });
-  const drawStats = (yr) => fill(stats, meterStatsCells(meterSummary(everything, yr), unit, statsNote));
+  // v14.5: "After EDF credits" (this phone only): the Bills box, the period /
+  // month cards and the home spending bars show what was paid after the
+  // credits printed on the bills. Only shown once a bill has credits.
+  const hasCredits = everything.some((e) => e.type === 'meter' && creditsOf(e).length);
+  const creditNote = el('p', { class: 'meter-stats-note credit-note', id: 'credit-note', hidden: true });
+  const drawStats = (yr) => {
+    const s = meterSummary(everything, yr);
+    fill(stats, meterStatsCells(s, unit, statsNote, hasCredits && prefs.afterCreditsOn()));
+    savedLine(creditNote, s, hasCredits && prefs.afterCreditsOn());
+  };
+  const creditSwitch = () => hasCredits ? el('label', { class: 'credit-switch', id: 'credit-switch-row' },
+    el('input', { type: 'checkbox', role: 'switch', id: 'after-credits', checked: prefs.afterCreditsOn(),
+      onchange: (ev) => { prefs.setAfterCredits(ev.currentTarget.checked); draw(); } }),
+    el('span', {}, 'After EDF credits')) : null;
 
   // Tap (or Enter/Space on) a bar to open the detail card; swipe or use the arrows to move.
   const slot = el('div', { class: 'period-slot' });
@@ -781,6 +797,7 @@ function meterInsights(everything) {
       const d = sumNow - sumThen;
       fill(box,
         yearPicker('meter-years', years, yr, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }),
+        creditSwitch(),
         el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `${unit} used per month in ${yr}`,
           upTo.length ? el('span', { class: 'yoy ' + (d > 0 ? 'up' : 'down'), id: 'meter-yoy' }, ` · ${d > 0 ? '▲' : '▼'} ${Math.abs(Math.round(sumThen ? (d / sumThen) * 100 : 0))}% vs ${yr - 1} (${upTo.length === 1 ? upTo[0].short + ' only' : `${upTo.length} full months`})`) : el('span', { class: 'yoy', id: 'meter-yoy' }, ` · no full months in ${yr - 1} to compare`)),
         chart,
@@ -798,7 +815,7 @@ function meterInsights(everything) {
       intervals.map((i) => ({ key: midMonthKey(i.from.date, i.to.date), label: MON3[Number(midMonthKey(i.from.date, i.to.date).slice(5)) - 1].slice(0, 1), short: MON3[Number(midMonthKey(i.from.date, i.to.date).slice(5)) - 1], title: `${niceDate(i.from.date)} to ${niceDate(i.to.date)}`, value: Math.round(i.perDay * 10) / 10 })),
       { height: 120, selected: -1, format: (v) => v.toFixed(1), describe: (bar, v) => `${bar.title}: ${v.toFixed(1)} ${unit} a day`, onSelect: pick }
     ) : null;
-    fill(box, chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null,
+    fill(box, chart ? [years.length > 1 ? yearPicker('meter-years', years, 0, (y) => { state.meterYear = y; draw(); }, 'Last 12 months', { newestFirst: true }) : null, creditSwitch(),
       el('p', { class: 'card-sub chart-caption', id: 'meter-caption' }, `Daily use between readings (${unit}/day)`), chart,
       el('p', { class: 'chart-legend', id: 'meter-legend' }, 'Each bar is named after the month it mostly covers.'), hint, slot] : null);
   }
@@ -806,7 +823,7 @@ function meterInsights(everything) {
   return el(
     'section',
     { class: 'card meter-card', id: 'meter-insights', 'aria-label': 'Meter summary' },
-    stats, statsNote,
+    stats, statsNote, creditNote,
     box
   );
 }
@@ -819,11 +836,12 @@ const sameYear = (a, b) => a && b && a.slice(0, 4) === b.slice(0, 4);
 const span = (a, b) => (sameYear(a, b) ? `${shortDate(a)} – ${niceDate(b)}` : `${niceDate(a)} – ${niceDate(b)}`);
 const kwhFmt = (v) => Math.round(v).toLocaleString('en-GB');
 const readingFmt = (v) => Number(v).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-function meterStatsCells(s, unit, note) {
+function meterStatsCells(s, unit, note, net = false) {
   if (!s) return [];
   const cell = (id, label, value, sub, title = '') => el('div', { id, title }, el('span', { class: 'stat-label' }, label), el('span', { class: 'stat-value' }, value), el('span', { class: 'stat-title' }, sub));
   const pounds = (v) => money(Math.round(v)).replace(/\.\d\d$/, '');
-  const billSub = `${s.billsCount} bill${s.billsCount === 1 ? '' : 's'}`;
+  const billSub = `${s.billsCount} bill${s.billsCount === 1 ? '' : 's'}${net ? ', after credits' : ''}`;
+  const billsFig = net ? s.billsNet : s.billsTotal;
   const avg = s.perDay !== null && s.perDay !== undefined ? s.perDay.toFixed(1) : '–';
   if (!s.year) {
     const lp = s.lastPeriod;
@@ -832,7 +850,7 @@ function meterStatsCells(s, unit, note) {
     return [
       cell('ms-used', 'Used, last 12 months', s.days ? kwhFmt(s.used) : '–', s.from ? `${unit} · since ${niceDate(s.from)}` : unit),
       cell('ms-avg', 'Daily average', avg, `${unit}/day, last 12 months`),
-      cell('ms-bills', 'Bills, last 12 months', pounds(s.billsTotal), billSub),
+      cell('ms-bills', 'Bills, last 12 months', pounds(billsFig), billSub),
       cell('ms-reading', 'Latest reading', readingFmt(s.reading.value), `${unit} · ${niceDate(s.reading.date)}`),
     ];
   }
@@ -852,9 +870,34 @@ function meterStatsCells(s, unit, note) {
   return [
     cell('ms-used', `Used in ${y}`, s.days ? kwhFmt(s.used) : '–', `${unit}${cover ? ' ' + cover : ''}`),
     cell('ms-avg', `Daily average ${y}`, avg, `${unit}/day`),
-    cell('ms-bills', `Bills ${y}`, pounds(s.billsTotal), billSub),
+    cell('ms-bills', `Bills ${y}`, pounds(billsFig), billSub),
     cell('ms-reading', rLabel, rd ? readingFmt(rd.value) : '–', rSub, rTitle),
   ];
+}
+
+// v14.5: "Saved £48.20 in 2026 (Sunday Saver £48.20)" — only the credit
+// types that are there; only credits printed on the bills.
+function savedLine(p, s, on) {
+  p.hidden = !(on && s);
+  if (p.hidden) return p.replaceChildren();
+  const c = s.credits;
+  const period = s.year ? String(s.year) : 'the last 12 months';
+  if (!c.total) return p.replaceChildren(`No EDF credits on the bills for ${period}.`);
+  const parts = CREDIT_TYPES.filter((t) => c[t.id] > 0).map((t) => `${t.id === 'other' ? 'other credits' : t.label} ${money(c[t.id])}`);
+  p.replaceChildren('Saved ', el('strong', {}, money(c.total)), ` in ${period} (${parts.join(', ')})`);
+}
+// "Sunday Saver −£12.34 (11 Aug 2026)" lines for a period / month card.
+function creditLines(bill) {
+  const list = creditsOf(bill);
+  if (!list.length) return null;
+  return el('ul', { class: 'period-credits', id: 'pd-credits', 'aria-label': 'Credits on this bill' },
+    list.map((c) => el('li', {}, el('span', {}, creditLabel(c.type) === 'Other' ? (c.note || 'Other credit') : creditLabel(c.type), c.date ? el('small', {}, ` ${niceDate(c.date)}`) : null), el('span', {}, `−${money(c.amount)}`))));
+}
+// The Bill box of a period/month card: as charged, or after credits.
+function billStat(bill, id = 'pd-cost') {
+  const n = creditsOf(bill).length;
+  if (n && prefs.afterCreditsOn()) return stat('Paid after credits', money(netCost(bill)), `of ${money(bill.cost)}`, id);
+  return stat('Bill', money(bill.cost), n ? `before ${money(creditTotal(bill))} credits` : null, id);
 }
 
 // One calendar month of energy use, compared with the same month last year.
@@ -868,12 +911,13 @@ function meterMonthDetail(m, prev, unit, everything) {
       m.days ? stat('Used', fmtNum(m.value, 0), unit, 'pd-used') : el('div', { class: 'period-stat', id: 'pd-used' }, el('span', { class: 'stat-label' }, 'Used'), el('span', { class: 'v muted-v' }, 'No readings')),
       m.days ? stat('Average', fmtNum(m.value / m.days), `${unit}/day`, 'pd-perday') : null,
       prev.days ? stat(prev.title, fmtNum(prev.value, 0), unit, 'pd-lastyear') : el('div', { class: 'period-stat', id: 'pd-lastyear' }, el('span', { class: 'stat-label' }, prev.title), el('span', { class: 'v muted-v' }, 'No readings')),
-      bill ? stat('Bill', money(bill.cost), null, 'pd-cost') : null
+      bill ? billStat(bill) : null
     ),
     el('div', { class: 'period-change', id: 'pd-change' }, el('span', {}, `vs ${prev.title}:`),
       d !== null ? changePill(d, (v) => `${fmtNum(v, 0)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'Not enough readings')),
     m.days && m.days < new Date(Number(m.key.slice(0, 4)), Number(m.key.slice(5)), 0).getDate()
       ? el('p', { class: 'chart-hint', id: 'pd-partial' }, `${m.partialNote === 'so far' ? 'So far: r' : 'R'}eadings cover ${m.days} of this month’s days.`) : null,
+    bill ? creditLines(bill) : null,
     bill ? vatLine(vatFor(`${m.key}-01`, nextMonthStart(m.key))) : null
   );
   return { title: m.title, sub: m.days ? `${fmtNum(m.value, 0)} ${unit}${m.partialNote === 'so far' ? ' so far' : ''}` : 'No readings', body };
@@ -954,7 +998,8 @@ function periodDetail(interval, prev, everything) {
   const cost = bill ? Number(bill.cost) : null;
   const perUnit = cost !== null && interval.used > 0 ? cost / interval.used : null;
   const dUsed = prev ? interval.used - prev.used : null;
-  const dCost = cost !== null && prevBill ? cost - Number(prevBill.cost) : null;
+  const net = prefs.afterCreditsOn(); // v14.5: compare what was paid after credits
+  const dCost = cost !== null && prevBill ? (net ? netCost(bill) - netCost(prevBill) : cost - Number(prevBill.cost)) : null;
   const pct = prev && prev.used > 0 ? ` (${dUsed >= 0 ? '+' : '−'}${Math.round(Math.abs(dUsed / prev.used) * 100)}%)` : '';
   const photo = bill && bill.photos && bill.photos[0] ? bill.photos[0].blob : null;
   const tariff = bill ? tariffOf(bill) : null;
@@ -966,7 +1011,7 @@ function periodDetail(interval, prev, everything) {
     el('div', { class: 'period-stats' },
       stat('Used', fmtNum(interval.used), unit, 'pd-used'),
       stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
-      cost !== null ? stat('Bill', money(cost), null, 'pd-cost') : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
+      cost !== null ? billStat(bill) : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
       ...tariffStats(tariff, interval.days, unit),
       perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(allIn !== null ? allIn : perUnit * 100, 1)}p`, tariff ? allInNote(vat) : null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
     ),
@@ -975,6 +1020,7 @@ function periodDetail(interval, prev, everything) {
       prev ? changePill(dUsed, (v) => `${fmtNum(v)} ${unit}${pct}`, 'pd-change-use') : el('span', { class: 'pill', id: 'pd-change-use' }, 'First period'),
       prev ? changePill(dCost, (v) => money(v), 'pd-change-cost') : null
     ),
+    bill ? creditLines(bill) : null,
     bill ? vatLine(vat) : null,
     bill
       ? el('div', { class: 'period-bill', id: 'pd-bill' },
@@ -1233,6 +1279,7 @@ function scanFields(p, type) {
     f.meterValue = p.meter && p.meter.closing != null ? p.meter.closing : null;
     f.meterUnit = (p.meter && p.meter.unit) || 'kWh';
     if (p.tariff && (p.tariff.rates.length || p.tariff.standing.length)) f.tariff = p.tariff;
+    if (p.credits && p.credits.length) f.credits = p.credits; // v14.5: EDF credits printed on the bill
   }
   return f;
 }
@@ -1273,6 +1320,28 @@ async function ocrReady() {
 
 // ---------------------------------------------------------------------
 // FORM: add or edit an entry
+// v14.5: "Credits on the bill" in the bill form: one row per credit (type +
+// amount); a credit's date and note (from the scanner or a restore) are kept.
+function creditFields(list, scanned) {
+  const rows = el('div', { class: 'credit-rows', id: 'credit-rows' });
+  const addRow = (c = {}) => {
+    const row = el('div', { class: 'credit-row', 'data-date': c.date || '', 'data-note': c.note || '' },
+      el('select', { name: 'creditType', 'aria-label': 'Credit type', class: scanned && c.amount ? 'prefilled' : null },
+        CREDIT_TYPES.map((t) => el('option', { value: t.id, selected: (c.type || 'sunday') === t.id }, t.label))),
+      el('input', { name: 'creditAmount', inputmode: 'decimal', 'aria-label': 'Credit amount £', placeholder: '£ 0.00', autocomplete: 'off', value: c.amount != null ? Number(c.amount).toFixed(2) : '', class: scanned && c.amount ? 'prefilled' : null }),
+      el('button', { type: 'button', class: 'icon-btn credit-remove', 'aria-label': 'Remove this credit', onclick: () => { row.remove(); if (!rows.children.length) addRow(); } }, '×'));
+    addTo(rows, row);
+    return row;
+  };
+  for (const c of list) addRow(c);
+  if (!list.length) addRow();
+  return el('details', { class: 'tariff-fields credit-fields', id: 'credit-fields', open: list.length ? true : undefined },
+    el('summary', {}, 'Credits on the bill (optional)'),
+    el('p', { class: 'hint' }, 'Sunday Saver, Weekend Saver or other credits printed on this bill. The bill amount stays as charged.'),
+    rows,
+    el('button', { type: 'button', class: 'btn small ghost', id: 'credit-add', onclick: () => addRow().querySelector('input').focus() }, '+ Add a credit'));
+}
+
 // ---------------------------------------------------------------------
 async function renderForm(type, id) {
   // Editing? Load the existing entry. Adding? Start a blank one.
@@ -1368,7 +1437,8 @@ async function renderForm(type, id) {
         el('summary', {}, 'Tariff from the bill (optional)'),
         field('Unit rate(s), pence per kWh', el('input', { name: 'unitRates', value: t ? ratesToText(t.rates) : '', autocomplete: 'off', placeholder: 'e.g. 21.074  or  Day 30.1, Night 15.2' }),
           'If the price changed in the period: “24.51 to 13 May, 21.074 from 14 May”.'),
-        field('Standing charge, pence per day', el('input', { name: 'standingCharge', value: t ? ratesToText(t.standing) : '', inputmode: 'decimal', autocomplete: 'off', placeholder: 'e.g. 57.972' })))
+        field('Standing charge, pence per day', el('input', { name: 'standingCharge', value: t ? ratesToText(t.standing) : '', inputmode: 'decimal', autocomplete: 'off', placeholder: 'e.g. 57.972' }))),
+      creditFields(creditsOf(entry), Boolean(scan))
     );
   }
   if (section.showDue) {
@@ -1487,6 +1557,21 @@ async function renderForm(type, id) {
       if (v('standingCharge') && !stand) return showError('The standing charge should be a number of pence, like 57.972');
       tariff = rates || stand ? { rates: rates ? rates.rates : [], standing: stand ? stand.rates.map(({ label, ...r }) => r) : [] } : undefined;
     }
+    // v14.5: credits printed on the bill (Sunday Saver, Weekend Saver, other).
+    let credits = null;
+    if (section.showMeter && form.querySelector('#credit-rows')) {
+      credits = [];
+      for (const row of form.querySelectorAll('.credit-row')) {
+        const raw = row.querySelector('[name=creditAmount]').value.trim();
+        if (!raw) continue;
+        const amount = parseMoney(raw.replace(/^[-−]/, ''));
+        if (amount === undefined || amount === null || !(amount > 0)) return showError('A credit should be an amount of money, like 12.50');
+        const c = { type: row.querySelector('[name=creditType]').value, amount };
+        if (row.dataset.date) c.date = row.dataset.date;
+        if (row.dataset.note) c.note = row.dataset.note;
+        credits.push(c);
+      }
+    }
     const extra = ins
       ? { insType: form.elements.insType.value, policyNumber: v('policyNumber'), costFreq: form.elements.costFreq.value, covered: v('covered') }
       : {};
@@ -1512,6 +1597,7 @@ async function renderForm(type, id) {
     };
     if (roomable) { if (v('room')) saved.room = rooms.cleanName(v('room')); else delete saved.room; }
     if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
+    if (credits) { if (credits.length) saved.credits = credits; else delete saved.credits; } // v14.5
     if (!saved.currency || saved.currency === 'GBP' || ins) delete saved.currency; // pounds = no field (as before)
     await db.saveEntry(saved);
     sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
@@ -1527,7 +1613,7 @@ async function renderForm(type, id) {
     if (scan.fields.tariff) filled.push(...(scan.fields.tariff.rates.length ? ['unitRates'] : []), ...(scan.fields.tariff.standing.length ? ['standingCharge'] : []));
     for (const name of filled) {
       const input = form.elements[name];
-      if (input && String(input.value ?? '') !== '') input.classList.add('prefilled');
+      if (input && !(input instanceof RadioNodeList) && String(input.value ?? '') !== '') input.classList.add('prefilled');
     }
   }
   fill(app, form);
@@ -1801,6 +1887,8 @@ async function renderDetail(id) {
     ['Reading', e.meterValue !== null && e.meterValue !== undefined ? `${fmtReading(e.meterValue)} ${e.meterUnit || ''}` : null, 'gauge'],
     ['Unit rate', tariff && tariff.rates.length ? ((r) => `${r.v} per kWh${r.from ? ` (new rate from ${shortDay(r.from)})` : ''}`)(rateText(tariff.rates)) : null, 'bolt'],
     ['Standing charge', tariff && tariff.standing.length ? rateText(tariff.standing).v + ' a day' : null, 'clock'],
+    // v14.5: credits printed on the bill, and what was paid after them.
+    ['Credits', e.type === 'meter' && creditsOf(e).length ? `${creditsOf(e).map((c) => `${c.type === 'other' ? (c.note || 'Other') : creditLabel(c.type)} −${money(c.amount)}${c.date ? ` (${shortDay(c.date)})` : ''}`).join(', ')} · ${money(netCost(e))} after credits` : null, 'receipt'],
     [section.dueWord === 'expires' ? 'Expires' : 'Next due', e.dueDate ? `${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})` : null, 'clock'],
     ['Room', e.room ? el('a', { href: `#/room/${encodeURIComponent(e.room)}`, id: 'detail-room', class: 'link' }, e.room) : null, 'door'],
   ].filter(([, value]) => value);

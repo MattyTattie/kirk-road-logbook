@@ -884,3 +884,10 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
   either side and labelled "worked out" — or "Reading so far" for this year.
 - Tests: `node tests/v14_4_units.mjs`; `python3 tests/test_v14_4.py`
   (screenshots to V144_SHOTS, default /workspace/v14-4-shots).
+
+
+## v14.5 (10 Oct 2026): EDF credits on bills
+- A bill can list the credits printed on it (Sunday Saver, Weekend Saver, other such as Christmas Day credit) in an optional `credits` list: type, amount, date, note. It is part of the entry, so backups and sync carry it with no format change; older versions keep the field untouched.
+- Electricity page: when any bill has credits, an "After EDF credits" switch appears under the year tabs. Each phone remembers its own setting. Off shows what was charged. On shows the Bills total, the period and month cards and the home spending bars after credits, plus "Saved £X in <period> (…)".
+- Credits count with the bill they are on (by the month the bill covers). Nothing is estimated from free hours.
+- The bill form has "Credits on the bill (optional)" to add, edit or remove credits; scanning an EDF bill fills them in.

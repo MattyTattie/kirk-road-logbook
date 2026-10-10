@@ -1082,3 +1082,25 @@ a.year-chip { text-decoration: none; display: inline-flex; align-items: center; 
 .period-vat { margin: 10px 0 0; font-size: 13px; color: var(--text-2); line-height: 1.4; }
 .period-vat strong { color: var(--text); }
 .place-row .link-btn { flex: none; width: auto; padding-left: 10px; padding-right: 10px; }
+
+/* ---- v14.5: EDF credits ---- */
+.credit-switch { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; margin: -4px 0 6px; font-size: 0.86rem; font-weight: 600; color: var(--text-2); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.credit-switch input { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 40px; height: 24px; margin: 0; border-radius: 999px; background: var(--surface-2); border: 1px solid color-mix(in srgb, var(--text) 22%, transparent); cursor: pointer; transition: background 0.2s var(--ease), border-color 0.2s; }
+.credit-switch input::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: transform 0.2s var(--ease), background 0.2s; }
+.credit-switch input:checked { background: var(--good); border-color: var(--good); }
+.credit-switch input:checked::after { transform: translateX(16px); background: var(--surface); }
+.credit-switch input:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.credit-switch input:checked + span { color: var(--text); }
+.credit-note strong { color: var(--good); }
+.period-credits { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+.period-credits li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--good) 10%, var(--surface)); color: var(--text); }
+.period-credits li span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--good); flex: none; }
+.period-credits small { color: var(--text-2); }
+.credit-rows { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.credit-row { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr) 40px; gap: 8px; align-items: center; }
+.credit-row select, .credit-row input { width: 100%; min-height: var(--tap); font: inherit; font-size: 16px; color: var(--text); padding: 10px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-sizing: border-box; }
+.credit-row select { appearance: none; -webkit-appearance: none; padding-right: 30px; background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%); background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+.credit-row .prefilled { background-color: color-mix(in srgb, var(--brand) 9%, var(--surface)); border-color: color-mix(in srgb, var(--brand) 45%, var(--line)); }
+.credit-row select:focus, .credit-row input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 18%, transparent); }
+.credit-fields .hint { margin: 0 0 4px; }
+.credit-fields #credit-add { margin: 2px 0 10px; }
