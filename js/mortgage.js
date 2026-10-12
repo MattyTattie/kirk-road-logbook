@@ -148,7 +148,7 @@ export function yearsTable(entries) {
   const tl = dealTimeline(entries);
   for (let y = firstYear; y <= lastYear; y++) {
     const s = byYear.get(y);
-    if (s) { out.push({ year: y, overpaid: Number(s.mortgage.overpaid) || 0, interest: Number(s.mortgage.interest) || 0, balance: Number(s.mortgage.balance), est: false, id: s.id }); continue; }
+    if (s) { out.push({ year: y, overpaid: Number(s.mortgage.overpaid) || 0, interest: Number(s.mortgage.interest) || 0, balance: Number(s.mortgage.balance), est: false, id: s.id, partial: Boolean(s.mortgage.partial), asOf: s.mortgage.asOf || null }); continue; }
     const prev = byYear.get(y - 1), next = byYear.get(y + 1);
     const open = prev ? Number(prev.mortgage.balance) : null, close = next && hasNum(next.mortgage.opening) ? Number(next.mortgage.opening) : null;
     if (open === null || close === null) { out.push({ year: y, overpaid: null, interest: null, balance: null, est: true }); continue; }
@@ -220,7 +220,9 @@ export function summary(entries) {
   const contractual = payoff(balance, deal.rate, deal.payment, 0, firstAfter);
   const pace = extra > 0 ? payoff(balance, deal.rate, deal.payment, extra, firstAfter) : contractual;
   const originalEnd = setup ? addMonths(setup.mortgage.firstPayment || addMonths(setup.date, 1), (Number(setup.mortgage.termMonths) || 300) - 1) : null;
+  const knownErc = lastKnownErc(entries);
   return {
+    knownErc, source: latest && latest.mortgage.partial ? (latest.mortgage.source || 'online banking') : latest ? 'latest statement' : null,
     setup, latest, asAt, balance, deal, svr, years, points, shadow,
     extra, contractual, pace, originalEnd, firstAfter,
     // the whole loan at this pace against the whole shadow loan (estimate)
@@ -320,4 +322,146 @@ export function statementFromParsed(x) {
     dealEnd: x.dealEnd, ercUntil: x.ercUntil, erc: x.erc, termLeft: x.termLeft, overpaid: x.overpaid, interest: x.interest, lastOverpay: x.lastOverpay,
     deals: x.deals.map((d) => ({ from: d.from, rate: d.rate, days: d.days, ...(d.payment ? { payment: d.payment, end: d.end, rateType: d.rateType } : {}) })),
   };
+}
+
+// ====================================================================
+// v14.8 additions
+// ====================================================================
+
+// The last entry that has an early repayment charge, and its date (online
+// banking updates don't show the ERC, so the last known one is kept).
+export function lastKnownErc(entries) {
+  const st = statementsOf(entries).filter((s) => hasNum(s.mortgage.erc));
+  const s = st[st.length - 1];
+  return s ? { erc: Number(s.mortgage.erc), date: s.mortgage.asOf || s.date } : null;
+}
+
+// Each payment date the mortgage has had, from the first payment up to the
+// latest entry's date, with the contractual payment then. The payment
+// comes from the deal in force (the statements); a deal that doesn't list
+// one keeps the one before.
+export function paymentDates(entries) {
+  const setup = setupOf(entries);
+  const st = statementsOf(entries);
+  const latest = st[st.length - 1];
+  if (!setup && !latest) return [];
+  const first = setup ? (setup.mortgage.firstPayment || addMonths(setup.date, 1)) : `${latest.mortgage.year}-01-03`;
+  const until = latest ? (latest.mortgage.asOf || latest.date || `${latest.mortgage.year}-12-31`) : null;
+  if (!until) return [];
+  const tl = dealTimeline(entries);
+  const out = [];
+  for (let k = 0; k < 1200; k++) {
+    const day = addMonths(first, k);
+    if (day > until) break;
+    let pay = setup ? Number(setup.mortgage.payment) || 0 : Number(latest.mortgage.payment) || 0;
+    for (const d of tl) { if (d.from <= day) { if (Number(d.payment) > 0) pay = Number(d.payment); } else break; }
+    out.push({ date: day, payment: pay });
+  }
+  return out;
+}
+
+// What went into the mortgage in a year: normal (contractual) payments and
+// overpayments, plus by month (pence-exact totals). Overpayments are spread
+// evenly over that year's payment months (statements give the year total).
+export function paidInYear(entries, year) {
+  const dates = paymentDates(entries).filter((d) => d.date.startsWith(String(year)));
+  const yr = yearsTable(entries).find((y) => y.year === Number(year));
+  if (!dates.length) return null;
+  const normalP = dates.reduce((t, d) => t + p(d.payment), 0);
+  const overP = yr && yr.overpaid !== null ? p(yr.overpaid) : 0;
+  const months = Array(12).fill(0);
+  const each = Math.floor(overP / dates.length);
+  dates.forEach((d, i) => { months[Number(d.date.slice(5, 7)) - 1] += p(d.payment) + each + (i === dates.length - 1 ? overP - each * dates.length : 0); });
+  return { year: Number(year), normal: L(normalP), overpaid: L(overP), total: L(normalP + overP), payments: dates.length, est: Boolean(yr && yr.est), partial: Boolean(yr && yr.partial), months: months.map(L) };
+}
+
+// Every year with payments, oldest first.
+export function paidYears(entries) {
+  const ys = [...new Set(paymentDates(entries).map((d) => Number(d.date.slice(0, 4))))];
+  return ys.map((y) => paidInYear(entries, y)).filter(Boolean);
+}
+
+// Made-up entries (never saved) for the "Include mortgage" switch: one per
+// month with the money paid in, so the usual spending sums can add them.
+export function paymentEntries(entries) {
+  const out = [];
+  for (const y of paidYears(entries)) y.months.forEach((v, i) => {
+    if (v > 0) out.push({ id: `mortgage-paid-${y.year}-${String(i + 1).padStart(2, '0')}`, type: 'mortgage', mortgagePaid: true, title: `Mortgage payments ${MON[i]} ${y.year}`, date: iso(y.year, i + 1, 3), cost: v, currency: 'GBP' });
+  });
+  return out;
+}
+
+// The year round-up: how far the balance came down in a year and the
+// interest the overpayments saved in it (vs the "without" estimate).
+export function yearRoundup(entries, year) {
+  const yt = yearsTable(entries);
+  const y = yt.find((r) => r.year === Number(year));
+  if (!y || y.balance === null) return null;
+  const st = statementsOf(entries);
+  const setup = setupOf(entries);
+  const prev = yt.find((r) => r.year === Number(year) - 1);
+  const s = st.find((x) => Number(x.mortgage.year) === Number(year));
+  const start = prev && prev.balance !== null ? prev.balance : s && hasNum(s.mortgage.opening) ? Number(s.mortgage.opening) : setup && Number(setup.date.slice(0, 4)) === Number(year) ? Number(setup.mortgage.amount) : null;
+  const end = s ? (s.mortgage.asOf || s.date) : `${year}-12-31`;
+  let saved = null;
+  const rows = setup ? shadowSchedule(entries) : null;
+  if (rows && y.interest !== null) {
+    const shadowI = rows.filter((r) => r.date.startsWith(String(year)) && r.date <= end).reduce((t, r) => t + p(r.interest), 0);
+    saved = L(shadowI - p(y.interest));
+  }
+  return { year: Number(year), start, balance: y.balance, paidDown: start === null ? null : L(p(start) - p(y.balance)), interest: y.interest, overpaid: y.overpaid, interestSaved: saved, est: y.est, partial: Boolean(y.partial), until: end };
+}
+
+// --------------------------------------------------------------------
+// "What if" (v14.8): pay off from the latest balance with a different
+// monthly overpayment and/or a one-off lump sum on a date. Nothing saved.
+// --------------------------------------------------------------------
+export function whatIf({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null }) {
+  let b = p(balance); const monthly = p(pay) + p(extra); const lp = p(lump);
+  let n = 0, interest = 0, lumpDone = !(lp > 0);
+  const byYear = {}; // overpayments per calendar year (pence)
+  while (b > 0 && n < 1200) {
+    const day = addMonths(firstDay, n);
+    if (!lumpDone && lumpDate && lumpDate <= day) { const x = Math.min(b, lp); b -= x; lumpDone = true; byYear[lumpDate.slice(0, 4)] = (byYear[lumpDate.slice(0, 4)] || 0) + x; if (b <= 0) break; }
+    const i = Math.round(b * rate / 1200);
+    if (monthly <= i) return null;
+    interest += i;
+    const cap = Math.min(b, monthly - i);
+    const over = Math.max(0, cap - (p(pay) - i));
+    byYear[day.slice(0, 4)] = (byYear[day.slice(0, 4)] || 0) + over;
+    b -= cap; n++;
+  }
+  if (!lumpDone && lumpDate && b <= 0) lumpDone = true;
+  return { months: n, last: n ? addMonths(firstDay, n - 1) : firstDay, interest: L(interest), overByYear: Object.fromEntries(Object.entries(byYear).map(([k, v]) => [k, L(v)])) };
+}
+
+// Years where overpayments would go over the yearly allowance (10% of the
+// balance at the start of the year, a usual Santander limit while early
+// repayment charges apply). alreadyThisYear = overpaid so far this year.
+export function overAllowance({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null, ercUntil = null, alreadyThisYear = 0, thisYear, pct = 10 }) {
+  const r = whatIf({ balance, rate, payment: pay, extra, firstDay, lump, lumpDate });
+  if (!r) return [];
+  const out = [];
+  // balance at 1 Jan of each year, on the same plan
+  const startBal = (yr) => {
+    if (Number(yr) === Number(thisYear)) return null; // this year: worked from today's balance below
+    let b = p(balance); const monthly = p(pay) + p(extra); let lumpDone = !(p(lump) > 0);
+    for (let n = 0; n < 1200 && b > 0; n++) {
+      const day = addMonths(firstDay, n);
+      if (day >= `${yr}-01-01`) break;
+      if (!lumpDone && lumpDate && lumpDate <= day) { b -= Math.min(b, p(lump)); lumpDone = true; }
+      const i = Math.round(b * rate / 1200); b -= Math.min(b, monthly - i);
+    }
+    if (!lumpDone && lumpDate && lumpDate < `${yr}-01-01`) b -= Math.min(b, p(lump));
+    return L(b);
+  };
+  for (const [yr, v] of Object.entries(r.overByYear)) {
+    if (ercUntil && `${yr}-01-01` > ercUntil) continue; // no fee once ERCs end
+    const isNow = Number(yr) === Number(thisYear);
+    const base = isNow ? Number(balance) + Number(alreadyThisYear) : startBal(yr); // rough start-of-year balance
+    const allowed = L(Math.round(p(base) * pct / 100));
+    const total = L(p(v) + (isNow ? p(alreadyThisYear) : 0));
+    if (total > allowed) out.push({ year: Number(yr), total, allowed });
+  }
+  return out;
 }

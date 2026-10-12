@@ -20,7 +20,7 @@ const hasNumber = (v) => v !== null && v !== undefined && v !== '' && isFinite(N
 // Insurance premiums are a running cost, not a one-off purchase (and a
 // policy's date is its start date, maybe years ago), so they're left out of
 // the spending totals and shown as a yearly cost on the Insurance list.
-export const isSpend = (e) => e.type !== 'insurance' && e.type !== 'mortgage'; // v14.7: a mortgage isn't spending
+export const isSpend = (e) => e.type !== 'insurance' && (e.type !== 'mortgage' || Boolean(e.mortgagePaid)); // v14.7: a mortgage isn't spending (v14.8: unless the "Include mortgage" switch adds its payments)
 
 // Total spent in a calendar year (every entry with a cost, bills included).
 export function spendInYear(entries, year) {

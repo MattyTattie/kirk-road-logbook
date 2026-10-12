@@ -88,3 +88,6 @@ export const setAfterCredits = (on) => writeRaw('hearthbook.afterCredits', on ? 
 // v14.7: Mortgage "Without overpayments" switch (this phone only).
 export const withoutOverpayOn = () => readRaw('hearthbook.withoutOverpay') === 'on';
 export const setWithoutOverpay = (on) => writeRaw('hearthbook.withoutOverpay', on ? 'on' : 'off');
+// v14.8: "Include mortgage" switch on the spending totals (this phone only).
+export const includeMortgageOn = () => readRaw('hearthbook.includeMortgage') === 'on';
+export const setIncludeMortgage = (on) => writeRaw('hearthbook.includeMortgage', on ? 'on' : 'off');

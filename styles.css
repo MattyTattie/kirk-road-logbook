@@ -1158,3 +1158,37 @@ a.year-chip { text-decoration: none; display: inline-flex; align-items: center; 
 .overlay-pages .overlay-close { position: fixed; }
 .mortgage-fields select { width: 100%; min-height: var(--tap); font: inherit; font-size: 16px; color: var(--text); padding: 10px 30px 10px 12px; border: 1px solid var(--line); border-radius: 14px; background-color: var(--surface); box-sizing: border-box; appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%); background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
 .mortgage-fields .row { align-items: flex-start; }
+
+/* ---------- v14.8 ---------- */
+a.mrow-link { color: inherit; text-decoration: none; border-radius: 8px; }
+a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
+.whatif { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.whatif-title { display: flex; justify-content: space-between; align-items: center; font-size: 15px; margin: 0 0 8px; }
+.whatif-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-2); margin-bottom: 10px; min-width: 0; }
+.whatif-field input { font: inherit; font-size: 16px; color: var(--text); background: var(--surface-2, transparent); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; box-sizing: border-box; min-width: 0; }
+.whatif-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.whatif-out { background: var(--surface-2, rgba(127,127,127,.08)); border-radius: 12px; padding: 6px 12px 4px; }
+.whatif-out .mrow:first-child { border-top: 0; }
+.mrow-v.good { color: var(--good, #3fb76f); }
+.mrow-v.bad { color: var(--bad, #e5534b); }
+.whatif-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--warn, #e0a33a); margin: 8px 0; }
+.whatif-warn svg { flex: none; margin-top: 2px; }
+.more-toggle { background: none; border: 0; color: var(--brand, var(--accent)); font: inherit; font-size: 13px; padding: 8px 0; width: 100%; cursor: pointer; }
+.mortgage-switch-row { display: flex; justify-content: flex-end; margin: 6px 0 0; }
+.up-group { margin-bottom: 18px; }
+.up-row { display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; }
+.up-date { flex: none; width: 46px; text-align: center; border-radius: 10px; padding: 6px 0; background: var(--surface-2, rgba(127,127,127,.1)); line-height: 1.1; }
+.up-date b { display: block; font-size: 18px; }
+.up-date span { font-size: 11px; color: var(--text-2); text-transform: uppercase; }
+.up-text { flex: 1; min-width: 0; }
+.up-text strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-row.highlight { outline: 2px solid var(--brand, var(--accent)); }
+.review-mortgage .mrow, .review-power .mrow { font-size: 14px; }
+.summary { flex-wrap: wrap; row-gap: 6px; }
+.summary .mortgage-switch { flex-basis: 100%; justify-content: flex-end; }
+.hero .mortgage-switch { margin-top: 10px; }
+.up-text strong { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.up-date i { display: block; font-style: normal; font-size: 10.5px; color: var(--text-2); }
+.whatif-title .btn { margin-left: auto; }
+.whatif-field select { font: inherit; font-size: 16px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 8px; width: 100%; min-width: 0; }
+.whatif-title .btn { width: auto; flex: none; min-height: 0; padding: 4px 0; }

@@ -11,7 +11,8 @@
 // is like for like (1 Jan to the same date last year). Tested in
 // tests/review.mjs.
 
-import { insurancePaidInYear, monthlyUsage } from './stats.js';
+import { insurancePaidInYear, monthlyUsage, netCost, creditsOf } from './stats.js';
+import { yearRoundup } from './mortgage.js';
 
 const P = (n) => Math.round((Number(n) || 0) * 100); // pennies
 const toPounds = (p) => p / 100;
@@ -21,6 +22,8 @@ export const CATEGORIES = [
   { id: 'receipt', label: 'Receipts' },
   { id: 'job', label: 'Jobs' },
   { id: 'warranty', label: 'Warranties' },
+  // v14.8: only with the "Include mortgage" switch (made-up monthly payment entries)
+  { id: 'mortgage', label: 'Mortgage payments' },
 ];
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -31,6 +34,7 @@ function sums(entries, year, until, now) {
   const months = Array(12).fill(0);
   for (const e of entries) {
     if (!by[e.type]) continue;
+    if (e.type === 'mortgage' && !e.mortgagePaid) continue;
     if (e.type === 'insurance') {
       const v = P(insurancePaidInYear(e, year, now));
       if (v > 0) { by.insurance.pennies += v; by.insurance.count++; items.push({ entry: e, pennies: v, insurance: true }); }
@@ -42,10 +46,13 @@ function sums(entries, year, until, now) {
     if (!v) continue;
     by[e.type].pennies += v; by[e.type].count++;
     months[Number(d.slice(5, 7)) - 1] += v;
-    items.push({ entry: e, pennies: v });
+    if (!e.mortgagePaid) items.push({ entry: e, pennies: v }); else { months[Number(d.slice(5, 7)) - 1] -= v; }
   }
   const total = Object.values(by).reduce((a, b) => a + b.pennies, 0);
-  return { by, total, items, months };
+  // v14.8: electricity paid, as charged and after EDF credits
+  const bills = entries.filter((e) => e.type === 'meter' && Number(e.cost) > 0 && (e.date || '').startsWith(String(year)) && e.date.slice(0, 10) <= until);
+  const power = { paid: toPounds(bills.reduce((t, e) => t + P(e.cost), 0)), paidNet: toPounds(bills.reduce((t, e) => t + P(netCost(e)), 0)), hasCredits: bills.some((e) => creditsOf(e).length > 0), bills: bills.length };
+  return { by, total, items, months, power };
 }
 
 /**
@@ -74,7 +81,17 @@ export function yearReview(entries, year, now = new Date()) {
   const usage = monthlyUsage(entries, year).filter((m) => m.unit === 'kWh' || !m.unit);
   const kwh = Math.round(usage.reduce((a, m) => a + m.value, 0));
   const otherCurrency = cur.items.filter((x) => x.entry.currency && x.entry.currency !== 'GBP').length;
+  // kWh up to the same month last year when this year isn't over
+  const usageOf = (yr, upTo) => monthlyUsage(entries, yr).filter((m) => m.unit === 'kWh' || !m.unit).slice(0, upTo);
+  const kwhOf = (yr, upTo) => Math.round(usageOf(yr, upTo).reduce((a, m) => a + m.value, 0));
+  const daysOf = (yr, upTo) => usageOf(yr, upTo).reduce((a, m) => a + m.days, 0);
+  const upTo = partial ? now.getMonth() + 1 : 12;
+  const real = entries.filter((e) => !e.mortgagePaid);
   return {
+    // v14.8 round-up: electricity and the mortgage, with last year next to them
+    // last year only counts as a comparison when its readings cover about as many days
+    power: { ...cur.power, kwh: kwhOf(year, upTo) || null, prev: prev.power.bills && daysOf(year - 1, upTo) >= 0.9 * daysOf(year, upTo) ? { ...prev.power, kwh: kwhOf(year - 1, upTo) || null } : null },
+    mortgage: (() => { const m = yearRoundup(real, year); if (!m) return null; const pm = yearRoundup(real, year - 1); return { ...m, prev: pm }; })(),
     year, partial, until, total: toPounds(cur.total), categories, biggest,
     prevTotal: hasPrev ? toPounds(prev.total) : null,
     change: hasPrev ? toPounds(cur.total - prev.total) : null,

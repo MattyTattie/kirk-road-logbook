@@ -334,6 +334,7 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     if (!over) return;
     const tiles = [...grid.querySelectorAll('.section-tile')];
     if (tiles.indexOf(over) > tiles.indexOf(dragging)) over.after(dragging); else over.before(dragging);
+    try { dragging.setPointerCapture(ev.pointerId); } catch {} // moving the tile drops the capture (v14.8)
   });
   const endPress = () => { if (press) { clearTimeout(press.timer); press = null; } };
   const endDrag = () => {
@@ -350,6 +351,10 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     onChange();
   };
   grid.addEventListener('pointerup', endDrag);
+  // v14.8: letting go anywhere (e.g. over the bottom bar) still saves the order.
+  const docEnd = () => { if (!grid.isConnected) { document.removeEventListener('pointerup', docEnd); document.removeEventListener('pointercancel', docEnd); return; } endDrag(); };
+  document.addEventListener('pointerup', docEnd);
+  document.addEventListener('pointercancel', docEnd);
   grid.addEventListener('pointercancel', endDrag);
   grid.addEventListener('pointerleave', endPress);
 

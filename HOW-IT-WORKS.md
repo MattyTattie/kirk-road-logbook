@@ -909,3 +909,12 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - Reminders: 6, 3 and 1 month before the deal ends (`reminders.mortgageReminder`, keys `id|date|m6` etc.), opening the Mortgage page. In the Android app the native reminders still do 30/7/0 days ("deal ends"); the web page adds the 6- and 3-month ones. Coming up shows the deal end from 6 months before (`soonDays: 183`).
 - Scanner: an annual mortgage statement PDF (text PDF) is recognised; its statement pages ("Page 1 of N", at most 8; not the guide after them) are read and kept as pictures, and the form is filled in. The parser ignores the guide's example figures. Or tap + → Mortgage and type the figures in (Annual statement or Mortgage set-up). On a statement entry, one tap on a page opens all pages to scroll through.
 - Tests: `tests/v14_7_units.mjs` (the shadow sums against hand calculations, the parser on a redacted sample), `tests/test_v14_7.py`. Test samples have names, address and account number replaced.
+
+
+## v14.8 — mortgage extras, Coming up page, year round-up
+- mortgage.js: lastKnownErc, paymentDates, paidInYear/paidYears, paymentEntries (made-up spending entries for "Include mortgage", never stored), yearRoundup (balance drop + interest saved by overpayments in a year), whatIf (payoff with a monthly overpayment and a one-off on a date; overpayments per year), overAllowance (10% a year of the start-of-year balance while ERCs apply). summary() adds source ('online banking' / 'latest statement') and knownErc; yearsTable rows carry partial + asOf.
+- mortgageui.js: newest-first table with "so far"; ERC fallback; Reminders row links to #/upcoming/mortgage; "Mortgage paid" card; whatIfBox() under Mortgage-free (inputs never saved).
+- app.js: withMortgage(list) + mortgageSwitch(where) (home hero, Logbook All summary, Year in review); renderUpcoming(focus) at #/upcoming; roundupCard() on Year in review; monthItems() for the month card's "+ N more" toggle.
+- review.js: yearReview() adds power {paid, paidNet, hasCredits, kwh, prev} and mortgage (yearRoundup + prev); a "Mortgage payments" category only from made-up entries.
+- prefs.js: includeMortgageOn / setIncludeMortgage (hearthbook.includeMortgage). stats.isSpend: mortgage only when mortgagePaid.
+- homeui.js: tile drag ends on a document pointerup too (letting go over the bottom bar).
