@@ -1192,3 +1192,8 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
 .whatif-title .btn { margin-left: auto; }
 .whatif-field select { font: inherit; font-size: 16px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 8px; width: 100%; min-width: 0; }
 .whatif-title .btn { width: auto; flex: none; min-height: 0; padding: 4px 0; }
+/* v14.9: ⓘ notes */
+.info-note { display: flex; align-items: flex-start; gap: 6px; margin: 4px 0 0; }
+.info-btn { flex: none; background: none; border: 0; padding: 2px 4px; margin: -2px 0 0 -4px; font: inherit; font-size: 15px; line-height: 1; color: var(--text-2); cursor: pointer; border-radius: 999px; min-width: 28px; min-height: 28px; }
+.info-note.open .info-btn { color: var(--brand); }
+.info-text { flex: 1; }

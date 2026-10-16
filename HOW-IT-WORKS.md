@@ -918,3 +918,11 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - review.js: yearReview() adds power {paid, paidNet, hasCredits, kwh, prev} and mortgage (yearRoundup + prev); a "Mortgage payments" category only from made-up entries.
 - prefs.js: includeMortgageOn / setIncludeMortgage (hearthbook.includeMortgage). stats.isSpend: mortgage only when mortgagePaid.
 - homeui.js: tile drag ends on a document pointerup too (letting go over the bottom bar).
+
+
+## v14.9 — keep your place, + everywhere
+- utils.keepPlace(anchorId, fn): redraw, then scroll so the element is where it was. app.js redrawInPlace(anchorId) = keepPlace + render() without the jump to the top.
+- utils.infoNote(text, {id, cls, label}): a small ⓘ button that shows/hides a note.
+- tabs(): state.tabsLeft remembers the chip row's scroll; the active chip is scrolled into view.
+- Bottom + : section screens go to #/scan/<section> (renderScan hint); a click handler makes + work even on the same address.
+- List summary / month heads skip a £0.00 total. Mortgage tile note "mortgage-free <month>".

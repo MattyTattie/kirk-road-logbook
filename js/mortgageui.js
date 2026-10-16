@@ -8,7 +8,7 @@
 // mortgage-free date for the same mortgage with no overpayments: an
 // estimate, and always labelled as one.
 
-import { el, fill, money, niceDate, daysUntil } from './utils.js';
+import { el, fill, infoNote, keepPlace, money, niceDate, daysUntil } from './utils.js';
 import { icon } from './icons.js';
 import * as prefs from './prefs.js';
 import * as M from './mortgage.js';
@@ -120,7 +120,7 @@ export function overview(everything) {
   const draw = () => {
     const on = Boolean(sh) && prefs.withoutOverpayOn();
     const sw = sh ? el('label', { class: 'credit-switch', id: 'without-overpay-row' },
-      el('input', { type: 'checkbox', role: 'switch', id: 'without-overpay', checked: on, onchange: (ev) => { prefs.setWithoutOverpay(ev.currentTarget.checked); draw(); } }),
+      el('input', { type: 'checkbox', role: 'switch', id: 'without-overpay', checked: on, onchange: (ev) => { prefs.setWithoutOverpay(ev.currentTarget.checked); keepPlace('without-overpay-row', draw); } }),
       el('span', {}, 'Without overpayments')) : null;
 
     // 1. Balance
@@ -162,8 +162,9 @@ export function overview(everything) {
           el('td', {}, y.overpaid === null ? '—' : money(y.overpaid)),
           el('td', {}, y.interest === null ? '—' : money(y.interest)))),
         el('tr', { class: 'mtotal' }, el('td', {}, 'Total'), el('td', { id: 'overpaid-total' }, money(sum('overpaid'))), el('td', { id: 'interest-total' }, money(sum('interest')))))),
-      yrs.some((y) => y.partial) ? el('p', { class: 'small muted', id: 'years-sofar-note' }, `so far = to ${niceDate(yrs.find((y) => y.partial).asOf || s.asAt)}, from online banking. The annual statement will replace it.`) : null,
-      anyEst ? el('p', { class: 'small muted', id: 'years-est-note' }, `est. = no statement for that year: worked out from the balances either side, as if the same amount was overpaid each month.`) : null) : null;
+      yrs.some((y) => y.partial) || anyEst ? infoNote([
+        yrs.some((y) => y.partial) ? el('span', { id: 'years-sofar-note' }, `so far = to ${niceDate(yrs.find((y) => y.partial).asOf || s.asAt)}, from online banking. The annual statement will replace it. `) : null,
+        anyEst ? el('span', { id: 'years-est-note' }, 'est. = no statement for that year: worked out from the balances either side, as if the same amount was overpaid each month.') : null].filter(Boolean), { id: 'years-notes', cls: 'small muted', label: 'What “so far” and “est.” mean' }) : null) : null;
 
     // 4. Mortgage-free
     const pace = s.pace, con = s.contractual;
@@ -180,7 +181,7 @@ export function overview(everything) {
     const free = freeRows.length ? el('section', { class: 'card mortgage-card', id: 'mortgage-free' },
       el('h2', { class: 'card-title' }, 'Mortgage-free'),
       el('div', { class: 'mrows' }, freeRows),
-      el('p', { class: 'small muted' }, `Estimates from the ${niceDate(s.asAt)} balance, if the ${d.rate}% rate carried on.`),
+      infoNote(`Estimates from the ${niceDate(s.asAt)} balance, if the ${d.rate}% rate carried on.`, { id: 'free-note', cls: 'small muted', label: 'How these dates are worked out' }),
       pace ? whatIfBox(s) : null) : null;
 
     // v14.8: what went in each year (normal payments and overpayments)
@@ -195,7 +196,7 @@ export function overview(everything) {
       el('table', { class: 'mtable' },
         el('thead', {}, el('tr', {}, el('th', {}, 'Year'), el('th', {}, 'Normal'), el('th', {}, 'Overpaid'), el('th', {}, 'Total'))),
         el('tbody', {}, paidRows, paidTotal)),
-      el('p', { class: 'small muted' }, `Normal = the monthly payments (${sumOf('payments')} so far). Worked out from your statements, to the nearest pound.`)) : null;
+      infoNote(`Normal = the monthly payments (${sumOf('payments')} so far). Worked out from your statements, to the nearest pound.`, { id: 'paid-note', cls: 'small muted', label: 'What these figures count' })) : null;
 
     // 5. How it's worked out
     const notes = el('details', { class: 'mortgage-notes', id: 'mortgage-assumptions' },
@@ -251,5 +252,8 @@ export function cardLine(e) {
 // Home tile: what's owed at the latest statement.
 export function tileMeta(everything) {
   const s = M.summary(everything);
-  return s ? { meta: `${pounds(s.balance)} owed`, note: `at ${niceDate(s.asAt)}` } : null;
+  if (!s) return null;
+  // v14.9: the month it's paid off at today's pace (or contractual payments)
+  const free = s.pace || s.contractual;
+  return { meta: `${pounds(s.balance)} owed`, note: free && free.last ? `mortgage-free ${M.monthText(free.last)}` : `at ${niceDate(s.asAt)}`, asAt: s.asAt };
 }

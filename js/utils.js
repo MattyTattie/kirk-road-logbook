@@ -113,3 +113,28 @@ export function dueText(word, days) {
 export function newestFirst(a, b) {
   return (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || '');
 }
+
+// v14.9: a small explanatory note tucked behind a tappable ⓘ. The text
+// keeps its id (hidden until tapped). Warnings should NOT use this.
+export function infoNote(text, { id, cls = '', label = 'How this is worked out' } = {}) {
+  const body = el('span', { class: 'info-text', id, hidden: true }, text);
+  const btn = el('button', { type: 'button', class: 'info-btn', 'aria-expanded': 'false', 'aria-label': label, title: label,
+    onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); const open = body.hidden; body.hidden = !open; btn.setAttribute('aria-expanded', String(open)); wrap.classList.toggle('open', open); } }, 'ⓘ');
+  const wrap = el('p', { class: 'info-note ' + cls, 'data-info': id || '' }, btn, body);
+  return wrap;
+}
+
+// v14.9: run something that redraws part of the screen (a switch) and keep
+// the element with this id where it was on screen, so the page doesn't
+// jump to the top. Works for sync and async redraws.
+export async function keepPlace(anchorId, fn) {
+  const a = typeof document !== 'undefined' ? document.getElementById(anchorId) : null;
+  const top = a ? a.getBoundingClientRect().top : null;
+  const y = typeof scrollY === 'number' ? scrollY : 0;
+  await fn();
+  const b = document.getElementById(anchorId);
+  const put = () => { if (b && b.isConnected && top !== null) scrollTo(0, scrollY + b.getBoundingClientRect().top - top); else scrollTo(0, y); };
+  put();
+  requestAnimationFrame(put);
+  setTimeout(put, 250); // late bits (pictures, counters) can still move things
+}

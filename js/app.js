@@ -31,7 +31,7 @@ import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
 import { exportBackup, importBackup } from './backup.js';
-import { el, fill, addTo, addFirst, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
+import { el, fill, addTo, addFirst, infoNote, keepPlace, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
@@ -103,11 +103,23 @@ const markWelcomed = () => { try { localStorage.setItem(WELCOME_KEY, 'yes'); } c
 // Screens change with a soft View Transition where the browser has one
 // (motion.js), or the "slide in" animation below otherwise.
 let firstRender = true;
+// v14.9: true while a switch redraws the screen in place (no jump to the top).
+let holdScroll = false;
+const redrawInPlace = (anchorId) => keepPlace(anchorId, async () => { holdScroll = true; try { await render(); } finally { holdScroll = false; } });
 let lastDepth = 0;
 // Only a tap on a link (tabs, back, tiles, cards) gets the transition;
 // saves and redirects swap the screen straight away.
 let linkTapAt = 0;
 document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('a[href^="#"]')) linkTapAt = performance.now(); }, true);
+// v14.9: the bottom + always goes somewhere, even when its address is the
+// one already showing (a plain link then does nothing).
+document.addEventListener('click', (e) => {
+  const add = e.target.closest && e.target.closest('#add');
+  if (!add) return;
+  e.preventDefault();
+  const to = add.getAttribute('href') || '#/new';
+  if (location.hash === to) render(); else location.hash = to;
+});
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
   const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, upcoming: 1, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
@@ -125,7 +137,7 @@ async function drawScreen(parts, viaTransition) {
   releasePhotoURLs();
   const [page, arg] = parts;
   if (pdfView && page !== 'manual') { try { pdfView.destroy(); } catch {} pdfView = null; }
-  window.scrollTo(0, 0);
+  if (!holdScroll) window.scrollTo(0, 0);
   setChrome(page, arg);
   try {
     if (page === 'new' && arg) await renderForm(arg, null);
@@ -154,7 +166,7 @@ async function drawScreen(parts, viaTransition) {
   }
   // Replay the gentle "slide in" animation for the new screen.
   app.classList.remove('screen-in');
-  if (viaTransition) return;
+  if (viaTransition || holdScroll) return;
   void app.offsetWidth;
   app.classList.add('screen-in');
 }
@@ -175,7 +187,9 @@ function setChrome(page, arg) {
   });
   applyNavPrefs();
   const add = document.getElementById('add');
-  if (add) add.href = page === 'list' && arg && arg !== 'all' ? `#/new/${arg}` : '#/new';
+  // v14.9: on a section's screen, + opens the scanner set to that section
+  // (with "Add by hand instead" on it); everywhere else, the Add chooser.
+  if (add) add.href = page === 'list' && arg && arg !== 'all' && getSection(arg).id === arg ? `#/scan/${arg}` : '#/new';
   const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome' || page === 'scan' || page === 'manual';
   document.body.classList.toggle('no-nav', bare);
 }
@@ -190,9 +204,11 @@ addEventListener('hearthbook:prefs', applyNavPrefs);
 // The pill-shaped section filters at the top of the list.
 function tabs(current, year = 0) {
   const all = [{ id: 'all', label: 'All', glyph: 'list', tone: 'brand' }, ...prefs.orderedSections()];
-  return el(
+  // v14.9: the chip row keeps its scroll position between screens, with the
+  // picked chip in view (it used to spring back to "All").
+  const nav = el(
     'nav',
-    { class: 'tabs', 'aria-label': 'Sections' },
+    { class: 'tabs', 'aria-label': 'Sections', onscroll: (ev) => { state.tabsLeft = ev.currentTarget.scrollLeft; }, onclick: (ev) => { state.tabsLeft = ev.currentTarget.scrollLeft; } },
     all.map((s) =>
       el(
         'a',
@@ -202,6 +218,20 @@ function tabs(current, year = 0) {
       )
     )
   );
+  let tries = 0;
+  const place = () => {
+    if (!nav.isConnected) { if (tries++ < 30) requestAnimationFrame(place); return; }
+    nav.scrollLeft = state.tabsLeft || 0;
+    const on = nav.querySelector('.tab.active');
+    if (on) {
+      const l = on.offsetLeft - nav.offsetLeft, r = l + on.offsetWidth;
+      if (l < nav.scrollLeft) nav.scrollLeft = Math.max(0, l - 16);
+      else if (r > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = r - nav.clientWidth + 16;
+    }
+    state.tabsLeft = nav.scrollLeft;
+  };
+  requestAnimationFrame(place);
+  return nav;
 }
 
 // A coloured rounded square with the section's icon.
@@ -360,7 +390,7 @@ async function renderHome() {
     el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} · ${money(lastYear)} in ${year - 1} · `,
       el('a', { class: 'hero-review', href: `#/year/${year}`, id: 'year-review-link' }, 'Year in review ›')),
     // v14.6: say what the total counts (Year in review adds insurance; the charts use months used).
-    el('p', { class: 'hero-sub hero-basis', id: 'spend-basis' }, `Bills by date paid, as charged · insurance not included${mortOn ? ' · incl. mortgage' : ''}`),
+    infoNote(`Bills by date paid, as charged · insurance not included${mortOn ? ' · incl. mortgage' : ''}`, { id: 'spend-basis', cls: 'hero-sub hero-basis', label: 'What this total counts' }),
     el('div', { class: 'hero-split' }, heroChips()),
     mortgageSwitch(everything, 'home')
   );
@@ -501,7 +531,7 @@ async function renderHome() {
       yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
-      cover.size ? el('p', { class: 'chart-hint', id: 'chart-cover-note' }, `Energy bills count for the months used (the month each bill covers)${netOn ? ', after EDF credits' : ''}. Insurance isn’t included.`) : null,
+      cover.size ? infoNote(`Energy bills count for the months used (the month each bill covers)${netOn ? ', after EDF credits' : ''}. Insurance isn’t included.`, { id: 'chart-cover-note', cls: 'chart-hint', label: 'What the bars count' }) : null,
       card); // fill() skips the null (replaceChildren would print it as "null")
     drawTiles(); // the tiles follow the year picker
   }
@@ -586,7 +616,7 @@ function mortgageSwitch(everything, where) {
   if (!everything.some((e) => e.type === 'mortgage')) return null;
   return el('label', { class: 'credit-switch mortgage-switch', id: `include-mortgage-${where}`, onclick: (ev) => ev.stopPropagation() },
     el('input', { type: 'checkbox', role: 'switch', id: `include-mortgage-${where}-input`, checked: prefs.includeMortgageOn(),
-      onchange: (ev) => { prefs.setIncludeMortgage(ev.currentTarget.checked); render(); } }),
+      onchange: (ev) => { prefs.setIncludeMortgage(ev.currentTarget.checked); redrawInPlace(`include-mortgage-${where}`); } }),
     el('span', {}, 'Include mortgage'));
 }
 
@@ -604,7 +634,7 @@ function sectionTile(s, everything, year) {
     const t = mortUI.tileMeta(everything);
     return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone, 'data-section': s.id, 'data-year': String(year) },
       sectionBadge(s), el('span', { class: 'tile-label' }, s.label), el('span', { class: 'tile-meta', id: 'mortgage-tile-meta' }, t ? t.meta : 'Nothing yet'),
-      t ? el('span', { class: 'tile-note' }, t.note) : null);
+      t ? el('span', { class: 'tile-note', id: 'mortgage-tile-note' }, t.note) : null);
   }
   const meta = !count ? `None in ${year}`
     : ins ? `${count} polic${count === 1 ? 'y' : 'ies'} · ${pounds}`
@@ -738,8 +768,8 @@ async function renderList(type, year = 0) {
       ? totalCost(mort.paymentEntries(everything).filter(inYear)) : 0;
     fill(summary,
       el('span', {}, `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`),
-      el('span', { class: 'total' }, netList ? 'Total after credits ' : 'Total ', el('strong', { id: 'total' }, money(sumShown(shown.filter(isSpend), netList) + mortPaid)),
-        hasIns || mortPaid ? el('small', { id: 'total-basis' }, [mortPaid ? ' incl. mortgage' : '', hasIns ? ' excl. insurance' : ''].filter(Boolean).join(',')) : null),
+      (() => { const tot = sumShown(shown.filter(isSpend), netList) + mortPaid; return tot ? el('span', { class: 'total' }, netList ? 'Total after credits ' : 'Total ', el('strong', { id: 'total' }, money(tot)),
+        hasIns || mortPaid ? el('small', { id: 'total-basis' }, [mortPaid ? ' incl. mortgage' : '', hasIns ? ' excl. insurance' : ''].filter(Boolean).join(',')) : null) : null; })(), // v14.9: hidden when there's nothing to add up
       type === 'all' && !q ? mortgageSwitch(everything, 'list') : null
     );
 
@@ -766,7 +796,7 @@ async function renderList(type, year = 0) {
       ...groups.flatMap((g) => [
         el('div', { class: 'month-head' },
           el('span', {}, g.key === 'undated' ? 'No date' : monthName(g.key)),
-          el('span', {}, money(sumShown(g.items.filter(isSpend), netList)))),
+          (() => { const t = sumShown(g.items.filter(isSpend), netList); return t ? el('span', {}, money(t)) : null; })()), // v14.9: no "£0.00" when nothing has a cost
         ...g.items.map(entryCard),
       ])
     );
@@ -813,7 +843,7 @@ function meterInsights(everything) {
   };
   const creditSwitch = () => hasCredits ? el('label', { class: 'credit-switch', id: 'credit-switch-row' },
     el('input', { type: 'checkbox', role: 'switch', id: 'after-credits', checked: prefs.afterCreditsOn(),
-      onchange: (ev) => { prefs.setAfterCredits(ev.currentTarget.checked); draw(); } }),
+      onchange: (ev) => { prefs.setAfterCredits(ev.currentTarget.checked); keepPlace('credit-switch-row', draw); } }),
     el('span', {}, 'After EDF credits')) : null;
 
   // Tap (or Enter/Space on) a bar to open the detail card; swipe or use the arrows to move.
@@ -1290,6 +1320,11 @@ async function takeSharedFile() {
 }
 
 async function renderScan(arg) {
+  // v14.9: "#/scan/meter" etc. = opened with + on that section: the scan is
+  // filed under it, and "Add by hand instead" opens its form.
+  const hint = arg && arg !== 'shared' && SECTIONS.some((x) => x.id === arg) ? arg : null;
+  const hintSec = hint ? getSection(hint) : null;
+  const byHand = () => el('a', { class: 'btn btn-lg ghost', id: 'scan-by-hand', href: hint ? `#/new/${hint}` : '#/new' }, icon('plus', 20), hint ? `Add ${hintSec.single.toLowerCase()} by hand instead` : 'Add by hand instead');
   const cameraInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, id: 'scan-camera-input' });
   const fileInput = el('input', { type: 'file', accept: 'image/*,application/pdf,.pdf', hidden: true, id: 'scan-file-input' });
   const body = el('div', { class: 'scan-body', id: 'scan-body' });
@@ -1307,7 +1342,9 @@ async function renderScan(arg) {
         el('p', {}, 'Take a photo of a receipt, or choose a bill PDF or screenshot. You’ll check everything before it’s saved.')),
       el('div', { class: 'scan-actions' },
         el('button', { type: 'button', class: 'btn btn-lg', id: 'scan-camera', onclick: () => cameraInput.click() }, icon('camera', 20), 'Take photo'),
-        el('button', { type: 'button', class: 'btn btn-lg secondary', id: 'scan-pick', onclick: () => fileInput.click() }, icon('file', 20), 'Choose photo or PDF')),
+        el('button', { type: 'button', class: 'btn btn-lg secondary', id: 'scan-pick', onclick: () => fileInput.click() }, icon('file', 20), 'Choose photo or PDF'),
+        byHand()),
+      el('p', { class: 'small muted', id: 'scan-by-hand-note' }, 'If the scan misses anything, you can fill it in or change it before saving, and your photo stays with the entry.'),
       offline
     );
   }
@@ -1365,7 +1402,8 @@ async function renderScan(arg) {
       // words on it (autosort.js); the form lets you switch in one tap.
       let type = 'receipt';
       let sorted = null;
-      if (parsed.kind === 'bill') type = 'meter';
+      if (hint && hint !== 'mortgage' && !prefs.isHidden(hint)) type = hint; // + on a section: file it there
+      else if (parsed.kind === 'bill') type = 'meter';
       else {
         sorted = classify(read.text);
         type = prefs.isHidden(sorted.type) ? 'receipt' : sorted.type;
@@ -1409,7 +1447,8 @@ async function renderScan(arg) {
   }
   fill(app,
     el('div', { class: 'scan', id: 'scan' },
-      screenHead('Scan receipt or bill', { back: { href: '#/new', label: 'Add' }, sub: 'Photo, screenshot or PDF' }),
+      screenHead(hint ? `Scan ${hint === 'meter' ? 'an electricity bill' : hint === 'insurance' ? 'a policy document' : hint === 'mortgage' ? 'a mortgage statement' : `a ${hintSec.single.toLowerCase()}`}` : 'Scan receipt or bill',
+        { back: hint ? { href: `#/list/${hint}`, label: hintSec.label } : { href: '#/new', label: 'Add' }, sub: 'Photo, screenshot or PDF' }),
       body, cameraInput, fileInput)
   );
 }
@@ -2910,7 +2949,7 @@ async function renderYearReview(year) {
       el('p', { class: 'small', id: 'review-compare' }, r.prevTotal !== null
         ? [change(r.change, `${year - 1}${r.partial ? ' (same dates)' : ''}`), ` · ${money(r.prevTotal)} in ${year - 1}${r.partial ? ' by then' : ''}`]
         : `Nothing logged in ${year - 1} to compare with.`),
-      el('p', { class: 'small muted', id: 'review-basis' }, `Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills by date paid, as charged.`),
+      infoNote(`Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills by date paid, as charged.`, { id: 'review-basis', cls: 'small muted', label: 'What this total counts' }),
       mortgageSwitch(everything, 'review')),
     roundupCard(r, year),
     r.categories.length
@@ -3084,7 +3123,7 @@ async function renderExport() {
       remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => renderExport() })),
     addTo(customiseCard(cardHead, applyNavPrefs),
       el('label', { class: 'check-row', id: 'home-tidy-row' },
-        el('input', { type: 'checkbox', id: 'home-tidy', checked: tidy, onchange: (ev) => { prefs.setHomeTidy(ev.currentTarget.checked); renderExport(); } }),
+        el('input', { type: 'checkbox', id: 'home-tidy', checked: tidy, onchange: (ev) => { prefs.setHomeTidy(ev.currentTarget.checked); keepPlace('home-tidy-row', renderExport); } }),
         el('span', {}, el('strong', {}, 'Tidy home screen'), el('span', { class: 'small muted' }, ' Spending, readings and charts fold into one “Money & energy” card; Recent and the tour are here under More. Untick to show everything on the home screen like before.')))),
     el(
       'p',
