@@ -27,7 +27,17 @@ function inTime(iso) {
 }
 
 // Balance over time: the real line, and the shadow one (dashed) when shown.
-export function balanceChart(points, shadowPoints = null) {
+// v15.0 (security review 18 Oct 2026): the chart is drawn as SVG text, so a
+// damaged date or balance from a backup or the sync file could have slipped
+// markup into it. Points without a proper YYYY-MM-DD date and a real number
+// are left out (blanked), and the label text is escaped too.
+const goodDate = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d);
+const cleanPoints = (pts) => (pts || []).filter((p) => p && goodDate(p.date) && Number.isFinite(Number(p.balance))).map((p) => ({ ...p, date: p.date.slice(0, 10), balance: Number(p.balance) }));
+const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+export function balanceChart(rawPoints, rawShadow = null) {
+  const points = cleanPoints(rawPoints);
+  const shadowPoints = rawShadow ? cleanPoints(rawShadow) : null;
+  if (!points.length) return el('div', { class: 'mortgage-chart-box', id: 'mortgage-chart' });
   const W = 340, H = 150, top = 16, bottom = 22, left = 6, right = 8;
   const all = [...points, ...(shadowPoints || [])];
   const t = (d) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
@@ -37,12 +47,12 @@ export function balanceChart(points, shadowPoints = null) {
   const x = (d) => left + ((t(d) - t0) / Math.max(1, t1 - t0)) * (W - left - right);
   const y = (v) => top + (1 - (v - lo) / Math.max(1, hi - lo)) * (H - top - bottom);
   const path = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)} ${y(p.balance).toFixed(1)}`).join(' ');
-  let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg mortgage-chart" role="img" aria-label="Balance: ${points.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}${shadowPoints ? `. Without overpayments (estimate): ${shadowPoints.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}` : ''}">`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg mortgage-chart" role="img" aria-label="${esc(`Balance: ${points.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}${shadowPoints && shadowPoints.length ? `. Without overpayments (estimate): ${shadowPoints.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}` : ''}`)}">`;
   for (const v of [hi, (hi + lo) / 2]) svg += `<line x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="chart-grid"/><text x="2" y="${(y(v) - 3).toFixed(1)}" text-anchor="start" class="chart-axis">${pounds(v).replace(/,\d{3}$/, 'k')}</text>`;
   svg += `<line x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}" class="chart-base"/>`;
   const years = [...new Set(all.map((p) => p.date.slice(0, 4)))];
   for (const yr of years) { const d = `${yr}-12-31`; if (t(d) <= t1 && t(d) >= t0) svg += `<text x="${Math.min(W - 14, x(d)).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="chart-axis">${yr}</text>`; }
-  if (shadowPoints) svg += `<path d="${path(shadowPoints)}" class="mortgage-line shadow"/>` + shadowPoints.map((p) => `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.balance).toFixed(1)}" r="3" class="mortgage-dot shadow"/>`).join('');
+  if (shadowPoints && shadowPoints.length) svg += `<path d="${path(shadowPoints)}" class="mortgage-line shadow"/>` + shadowPoints.map((p) => `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.balance).toFixed(1)}" r="3" class="mortgage-dot shadow"/>`).join('');
   svg += `<path d="${path(points)}" class="mortgage-line"/>` + points.map((p) => `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.balance).toFixed(1)}" r="3.4" class="mortgage-dot"/>`).join('');
   const box = el('div', { class: 'mortgage-chart-box', id: 'mortgage-chart' });
   box.innerHTML = svg + '</svg>';

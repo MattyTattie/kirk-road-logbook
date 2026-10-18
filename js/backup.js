@@ -8,7 +8,7 @@
 // text). Save it somewhere safe: email it to yourself, put it on Google
 // Drive, copy it to a PC. You can restore it on this phone or a new one.
 
-import { getAllEntries, getMeta, saveEntriesAndMeta, setMeta } from './db.js';
+import { getEverything as getAllEntries, getMeta, saveEntriesAndMeta, setMeta } from './db.js'; // v15.0: everything, incl. the usage entry
 import { reviveRestored, TOMBSTONES_KEY, CACHE_META_KEY } from './sync.js';
 import { blobToDataURL, dataURLToBlob } from './photos.js';
 import { APP_NAME, APP_SLUG } from './config.js';
@@ -103,5 +103,5 @@ export async function importBackup(file) {
   const remote = cache && cache.index ? cache.index : null;
   const r = reviveRestored(entries, localIds, tombs, remote);
   await saveEntriesAndMeta(r.entries, TOMBSTONES_KEY, r.tombs);
-  return entries.length;
+  return entries.filter((e) => e.type !== 'usage').length; // v15.0: the EDF usage record isn't a logbook entry
 }

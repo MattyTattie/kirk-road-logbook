@@ -52,7 +52,7 @@ import * as db from './db.js';
 import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
-export const APP_VERSION = '14.9'; // shown in Sync details; keep in step with sw.js CACHE_NAME
+export const APP_VERSION = '15.0'; // shown in Sync details; keep in step with sw.js CACHE_NAME
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
@@ -915,7 +915,7 @@ async function syncOnce(c, job = photoJob()) {
       full = true;
     };
 
-    const local = await db.getAllEntries();
+    const local = await db.getEverything();
     const localTombs = (await db.getMeta(TOMBS_KEY)) || {};
     const p = plan(local, localTombs, remote);
     const localById = new Map(local.map((e) => [e.id, e]));
@@ -1082,7 +1082,7 @@ async function syncOnce(c, job = photoJob()) {
     // win over what this sync worked out from its earlier snapshot.
     const tombsNow = (await db.getMeta(TOMBS_KEY)) || {};
     const tombs = mergeTombs(localTombs, tombsNow, p.tombs);
-    const fresh = new Map((await db.getAllEntries()).map((e) => [e.id, e]));
+    const fresh = new Map((await db.getEverything()).map((e) => [e.id, e]));
     const keep = toSave.filter((r) => (!fresh.has(r.id) || stamp(fresh.get(r.id)) <= stamp(r)) && !(tombsNow[r.id] && tombsNow[r.id] !== localTombs[r.id] && tombsNow[r.id] >= stamp(r)));
     if (keep.length) await db.saveManyEntries(keep);
     const gone = p.deleteLocal.filter((id) => fresh.has(id) && stamp(fresh.get(id)) <= p.tombs[id]);

@@ -414,7 +414,7 @@ cards, and scans a real EDF PDF bill and a receipt photo (checking the
 filled-in fields, the attached picture, a bad file, and scanning offline
 after the background download).
 
-`tests/test_sync.py` runs two phones (Matthew and Becca) against a fake,
+`tests/test_sync.py` runs two phones (yours and your partner's) against a fake,
 in-memory Google Drive (`tests/fake_drive.py`, which follows the same
 "drive.file" rules as the real one). It checks connecting, starting and
 joining a shared logbook, edits, photos, deletes, offline, a clash, an
@@ -462,9 +462,9 @@ everything stays on the phone and nothing is sent anywhere.
 
 ### What it does
 
-You and Becca each keep a full copy of the logbook on your own phone, so it
+You and your partner each keep a full copy of the logbook on your own phone, so it
 still works with no signal. A folder called **Hearthbook** in Matthew's
-Google Drive, shared with Becca, is the meeting point. Each phone swaps
+Google Drive, shared with your partner, is the meeting point. Each phone swaps
 changes with it:
 
 - when the app opens (and when you come back to it),
@@ -473,7 +473,7 @@ changes with it:
   ("Synced 2 min ago"),
 - when the phone gets its signal back.
 
-**Clashes.** Changes are merged entry by entry. Becca editing the boiler
+**Clashes.** Changes are merged entry by entry. Your partner editing the boiler
 entry while you add a receipt is not a clash; both arrive. Only if you both
 change *the same* entry before either phone syncs does the later save win
 (by the phone's clock). Deleting leaves a small "tombstone" note in the
@@ -525,8 +525,8 @@ Google offers two sensible levels of Drive permission ("scope"):
 Google treats it as low risk. With `drive.file`, choosing a *folder* in the
 picker does **not** let the app see the files inside it (Google confirms
 this: the folder's `canListChildren` is false and listing it comes back
-empty). Becca's phone also can't see any *new* file your phone creates later.
-So everything lives in one file that Becca picks once.
+empty). Your partner's phone also can't see any *new* file your phone creates later.
+So everything lives in one file that your partner picks once.
 
 If the logbook gets so big that uploads feel slow on mobile data (roughly
 30 MB or more, i.e. hundreds of photos), the way out is the full `drive`
@@ -557,7 +557,7 @@ by itself.
 
 ### One-time setup (about 15 minutes, on a computer)
 
-You need: Matthew's Google account, and Becca's Gmail address.
+You need: Matthew's Google account, and your partner's Gmail address.
 
 1. Go to **https://console.cloud.google.com** and sign in as Matthew. If
    asked, agree to the Google Cloud terms (it's free; no billing needed).
@@ -571,7 +571,7 @@ You need: Matthew's Google account, and Becca's Gmail address.
    - Audience: **External** → Next
    - Contact email: your Gmail → Next → tick the agreement → **Create**.
 5. **Audience** (left menu): leave Publishing status = **Testing**. Under
-   **Test users** → **Add users** → type your Gmail and Becca's Gmail →
+   **Test users** → **Add users** → type your Gmail and your partner's Gmail →
    **Save**.
 6. **Data Access** → **Add or remove scopes** → in the filter type
    `drive.file` → tick **…/auth/drive.file** ("See, edit, create and delete
@@ -605,12 +605,12 @@ only for your test users. The API key only allows the picker.)
 **Matthew (first):** Hearth → **More** → *Share with Google Drive* →
 **Connect Google account** → choose your account → Google says the app is in
 testing → **Continue** → allow the Drive permission → **Start a new shared
-logbook**. Then type Becca's Gmail under *Share the folder with* → **Share**.
+logbook**. Then type your partner's Gmail under *Share the folder with* → **Share**.
 (Or share the Hearthbook folder from the Drive app as **Editor**.)
 
-**Becca:** open the email from Google once (so the folder shows in her
+**Your partner:** open the email from Google once (so the folder shows in their
 "Shared with me"). Then Hearth → **Backup** → **Connect Google account**
-→ her account → **Continue** → allow → **Join a logbook shared with me**.
+→ their account → **Continue** → allow → **Join a logbook shared with me**.
 Google's file picker opens, listing the Hearthbook files: tap
 **hearthbook-sync.json** (ignore any `hearthbook-photos-…` files) →
 **Select**. The app says "1 of 1 linked" and syncs. If it says "0 of 1",
@@ -926,3 +926,11 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - tabs(): state.tabsLeft remembers the chip row's scroll; the active chip is scrolled into view.
 - Bottom + : section screens go to #/scan/<section> (renderScan hint); a click handler makes + work even on the same address.
 - List summary / month heads skip a £0.00 total. Mortgage tile note "mortgage-free <month>".
+
+## v15.0 — computer layout, EDF usage import, tighter security
+
+- **On a computer (screen 1024px wide or more)** the bottom bar turns into a menu down the left, with shortcuts to Coming up, Mortgage, Manuals and Year in review. Pages use two columns where it helps. Phones look exactly as before.
+- **Electricity use by month.** On EDF's website or app, download your usage as a CSV (monthly, daily or half-hourly all work). In Hearth go to Electricity → Electricity use by month → Import and pick the file (or several). You see what was found before anything is saved: months, total kWh, and which months are new, updated or already saved. Importing the same file twice adds nothing. Then the card compares this year with last year (e.g. Jan–Sep 2026 vs Jan–Sep 2025). The file is read on the phone or computer; nothing is uploaded except your usual sync.
+- Usage is kept as one record (`usage-electricity-edf`) that syncs and backs up like everything else; it doesn't show in lists or totals. A phone still on an older version shows it as one blank entry until it updates.
+- **Content Security Policy.** index.html has a CSP meta tag that only lets the app load its own files, Google sign-in/Drive, and Open-Meteo weather. It includes a hash of the small inline theme script at the top of index.html: if that script is ever edited, the hash must be recomputed (`openssl dgst -sha256 -binary | base64` of the script text) or dark mode stops applying before load. If something Google-related stops working, removing the meta tag is the rollback.
+- The mortgage chart ignores any point without a proper date, so odd data from a backup or sync can't inject anything.

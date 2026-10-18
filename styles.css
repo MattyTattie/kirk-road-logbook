@@ -1197,3 +1197,176 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
 .info-btn { flex: none; background: none; border: 0; padding: 2px 4px; margin: -2px 0 0 -4px; font: inherit; font-size: 15px; line-height: 1; color: var(--text-2); cursor: pointer; border-radius: 999px; min-width: 28px; min-height: 28px; }
 .info-note.open .info-btn { color: var(--brand); }
 .info-text { flex: 1; }
+
+/* =====================================================================
+   v15.0 — EDF usage card + import screen (all screen sizes)
+   ===================================================================== */
+.bottom-nav .nav-add-label, .bottom-nav .side-only { display: none; } /* sidebar-only bits; phones never show them */
+.usage-card .card-head { align-items: center; }
+.usage-card .card-head .btn { flex: none; }
+.usage-yoy { margin: 4px 0 10px !important; font-size: 14.5px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.usage-yoy strong { font-weight: 700; }
+.usage-yoy-cost { display: inline; }
+.usage-table td.bad { color: var(--bad); font-weight: 650; }
+.usage-table td.good { color: var(--good); font-weight: 650; }
+.usage-table tfoot td { border-top: 2px solid var(--line); font-weight: 700; }
+.usage-table-wrap { overflow-x: auto; margin-top: 10px; }
+.usage-foot { margin: 6px 0 0 !important; }
+.usage-foot .link-btn { padding: 0; min-height: 0; font-size: inherit; color: var(--bad); text-decoration: underline; background: none; border: 0; cursor: pointer; font: inherit; }
+.usage-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.usage-facts .stat-card { min-height: 0; padding: 10px 12px; }
+.usage-facts .stat-value { font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.usage-facts .stat-label { font-size: 12px; color: var(--text-2); font-weight: 600; }
+.usage-notes { margin: 0 0 12px; padding-left: 18px; color: var(--text-2); line-height: 1.45; }
+.usage-notes li { margin: 0 0 4px; }
+.usage-steps { margin: 0 0 10px; padding-left: 20px; line-height: 1.5; }
+.usage-steps li { margin-bottom: 4px; }
+.usage-how .btn { width: 100%; }
+.usage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.usage-actions .btn { flex: 1 1 160px; }
+.usage-pill { font-size: 11.5px; padding: 2px 8px; }
+.usage-pill.new { background: var(--good-bg); color: var(--good); }
+.usage-pill.update { background: var(--soon-bg); color: var(--soon); }
+.usage-pill.kept, .usage-pill.same { background: var(--surface-2); color: var(--text-2); }
+.usage-error .error { margin: 0 0 8px; }
+.usage-error p.small { margin: 0 0 6px; overflow-wrap: anywhere; }
+@media (max-width: 380px) { .usage-facts { grid-template-columns: 1fr 1fr; } .usage-facts .stat-card:last-child { grid-column: 1 / -1; } }
+
+/* =====================================================================
+   v15.0 — wide layout for a computer screen (Mac browser). Only from
+   1024px wide: phones (and the installed Android app) look exactly as
+   before. Same app, same data, same address: it switches by width.
+   ===================================================================== */
+@media (min-width: 1024px) {
+  :root { --side-w: 232px; }
+  body { background: var(--bg); }
+
+  /* Sidebar: the bottom bar stands up on the left */
+  .bottom-nav {
+    top: 0; bottom: 0; right: auto; width: var(--side-w); height: auto;
+    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+    padding: 84px 14px 20px; border-top: 0; border-right: 1px solid var(--line);
+    background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none;
+    overflow-y: auto;
+  }
+  .bottom-nav a {
+    flex-direction: row; justify-content: flex-start; gap: 12px; min-height: 44px; padding: 0 12px;
+    font-size: 15px; font-weight: 600; color: var(--text-2); border-radius: 12px;
+  }
+  .bottom-nav a svg { width: 20px; height: 20px; }
+  .bottom-nav a:hover { background: var(--surface-2); color: var(--text); }
+  .bottom-nav a.active { background: var(--brand-soft, color-mix(in srgb, var(--brand) 12%, transparent)); color: var(--brand); }
+  .bottom-nav a.active svg { transform: none; }
+  .bottom-nav a.active.side-dim { background: transparent; color: var(--text-2); }
+  .bottom-nav .nav-add {
+    order: -1; justify-self: auto; width: auto; height: 46px; margin: 0 0 14px; padding: 0 16px;
+    border-radius: 14px; transform: none; justify-content: center; gap: 8px; color: var(--on-brand); font-size: 15.5px;
+  }
+  .bottom-nav .nav-add:hover { color: var(--on-brand); background: linear-gradient(145deg, var(--brand-2), var(--brand)); filter: brightness(1.06); }
+  .bottom-nav .nav-add:active { transform: scale(0.98); }
+  .bottom-nav .nav-add svg { width: 20px; height: 20px; }
+  .bottom-nav .nav-add-label { display: inline; }
+  .bottom-nav .side-only { display: flex; }
+  .bottom-nav .side-only[hidden] { display: none; }
+  .bottom-nav .side-label { display: block; margin: 18px 12px 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  body.no-nav .bottom-nav { display: flex; } /* forms and the scanner keep the sidebar on a computer */
+
+  /* Top bar sits right of the sidebar; the logo sits at the top of the sidebar */
+  .topbar { z-index: 32; backdrop-filter: none; -webkit-backdrop-filter: none; background: color-mix(in srgb, var(--bg) 94%, transparent); margin-left: var(--side-w); padding: 14px 32px; justify-content: flex-end; min-height: 64px; box-sizing: border-box; }
+  .topbar .brand { position: fixed; top: 14px; left: 24px; z-index: 31; }
+  .skip:focus { left: calc(var(--side-w) + 8px); }
+
+  /* main fills the space right of the sidebar; its content is centred in a
+     1180px column (820px on reading pages) by the side padding */
+  main { --col: 1180px; max-width: none; margin: 0 0 0 var(--side-w); padding: 4px max(40px, calc((100vw - var(--side-w) - var(--col)) / 2)) 56px; box-sizing: border-box; }
+  body.no-nav main { padding-bottom: 56px; }
+  .toast { left: calc(50% + var(--side-w) / 2); }
+  .screen-title { font-size: 34px; }
+
+  /* Charts: drawn 340 wide and scaled, so keep them from getting huge */
+  .chart-svg { max-height: 300px; }
+
+  /* ---------- Home: two columns ---------- */
+  .dash { display: grid; grid-auto-flow: row dense; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); column-gap: 24px; align-items: start; }
+  .dash > * { grid-column: 1 / -1; min-width: 0; }
+  .dash > #house { grid-column: 1; }
+  .dash > #coming-up { grid-column: 2; grid-row: span 1; }
+  .dash:has(> #coming-up) > #house { margin-bottom: 18px; }
+  .dash > .ask { max-width: 640px; }
+  .house-card .house-svg, .house-card svg { max-height: 320px; }
+  .dash .section-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .month-fold-body:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); grid-template-rows: auto 1fr; column-gap: 20px; align-items: start; }
+  .month-fold-body > * { min-width: 0; }
+  .month-fold-body > .hero, .month-fold-body > #spend-card { grid-column: 1; }
+  .month-fold-body > .stat-grid { grid-column: 1; }
+  .month-fold-body > #spend-chart { grid-column: 2; grid-row: 1 / span 2; }
+  /* the full (untidy) home: spending card + stats left, chart right, Recent full width */
+  .dash > #spend-card { grid-column: 1; }
+  .dash > .stat-grid { grid-column: 1; }
+  .dash > #spend-chart { grid-column: 2; grid-row: span 2; }
+
+  /* ---------- Logbook and section lists: entries in two columns ---------- */
+  .tabs { margin: 0 0 6px; padding: 2px 0 10px; flex-wrap: wrap; overflow: visible; }
+  .search-row { max-width: 720px; }
+  #list.list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; align-items: stretch; }
+  #list.list > .month-head, #list.list > .empty, #list.list > .month-fold, #list.list > :not(a):not(.entry) { grid-column: 1 / -1; }
+  #list .entry { margin: 0; }
+
+  /* Electricity: the summary, chart and usage card sit in a column on the
+     right (floats, so the list beside them keeps one steady width); the
+     bills list stays one column on the left. */
+  main:has(> #meter-insights) > #meter-insights, main:has(> #meter-insights) > #usage-card,
+  main:has(> #usage-card) > #usage-card { float: right; clear: right; width: min(480px, 44%); margin-left: 28px; box-sizing: border-box; }
+  main:has(> #usage-card) #list.list { display: flex; flex-direction: column; gap: 8px; }
+  main:has(> #usage-card) > .search-row { max-width: none; }
+  main:has(> #usage-card)::after { content: ''; display: table; clear: both; }
+  .usage-card .card-head .btn { min-width: 110px; }
+
+  /* Mortgage: cards in two columns, tables get room */
+  .mortgage-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; align-items: start; }
+  .mortgage-overview > * { min-width: 0; }
+  .mortgage-overview > #mortgage-balance { grid-column: 1; grid-row: 1; }
+  .mortgage-overview > #mortgage-deal { grid-column: 2; grid-row: 1; }
+  .mortgage-overview > #mortgage-paid { grid-column: 1; grid-row: 2; }
+  .mortgage-overview > #mortgage-years { grid-column: 2; grid-row: 2; }
+  .mortgage-overview > #mortgage-free, .mortgage-overview > .mortgage-notes, .mortgage-overview > #mortgage-empty { grid-column: 1 / -1; }
+  .mortgage-overview > #mortgage-free { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 24px; align-items: start; }
+  .mortgage-overview > #mortgage-free > * { grid-column: 1; }
+  .mortgage-overview > #mortgage-free > #whatif { grid-column: 2; grid-row: 1 / span 6; margin-top: 0; }
+  .mtable { font-size: 14.5px; }
+
+  /* Detail pages, forms, the scanner and the import screen: a readable column */
+  main:has(> .detail-hero), main:has(> form.form), main:has(> .scan), main:has(#usage-how), main:has(> .welcome) { --col: 820px; }
+  .details .detail-row { padding-inline: 18px; }
+  .photos-large { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .photos-large img { width: 100%; height: auto; }
+
+  /* More: cards in two columns */
+  main:has(> #more-manuals) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; align-content: start; align-items: start; }
+  main:has(> #more-manuals) > * { min-width: 0; }
+  main:has(> #more-manuals) > .screen-head, main:has(> #more-manuals) > .footnote, main:has(> #more-manuals) > #recent, main:has(> #more-manuals) > .tour-card { grid-column: 1 / -1; }
+  main:has(> #more-manuals) > .more-row { grid-column: auto; }
+
+  /* Year in review */
+  main:has(> #review-total) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 18px; align-content: start; align-items: start; }
+  main:has(> #review-total) > * { min-width: 0; grid-column: 1 / -1; }
+  main:has(> #review-total) > #review-roundup { grid-column: 1; }
+  main:has(> #review-total) > #review-categories { grid-column: 2; }
+  main:has(> #review-total) > #review-biggest { grid-column: 1; }
+  main:has(> #review-total) > #review-facts { grid-column: 2; }
+
+  /* Coming up: groups side by side */
+  #upcoming-list .up-group > .list, #recent > .list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+  #upcoming-list .up-group > .list > *, #recent > .list > * { min-width: 0; margin: 0; }
+  .chooser { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  /* Manuals and rooms: grids of cards */
+  .manual-list { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .room-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .room-list .room-row { height: 100%; box-sizing: border-box; }
+}
+@media (min-width: 1360px) {
+  :root { --side-w: 248px; }
+  .dash .section-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #list.list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -56,6 +56,7 @@ import * as lookup from './manuallookup.js';
 import * as weather from './weather.js';
 import * as mort from './mortgage.js';
 import * as mortUI from './mortgageui.js';
+import * as usage from './usage.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -122,7 +123,7 @@ document.addEventListener('click', (e) => {
 });
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
-  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, upcoming: 1, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, upcoming: 1, usage: 2, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
@@ -157,6 +158,7 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'room' && parts[2] === 'add') await renderRoomTagger(decodeURIComponent(arg || ''));
     else if (page === 'room') await renderRoom(decodeURIComponent(arg || ''));
     else if (page === 'upcoming') await renderUpcoming(arg || '');
+    else if (page === 'usage') await renderUsageImport();
     else if (page === 'year') await renderYearReview(/^\d{4}$/.test(arg || '') ? Number(arg) : new Date().getFullYear());
     else if (page === 'welcome') renderWelcome();
     else await renderHome();
@@ -175,7 +177,7 @@ async function drawScreen(parts, viaTransition) {
 // right section. Hidden on the form and welcome screens.
 function setChrome(page, arg) {
   const tab =
-    page === 'list' && arg === 'meter' ? 'meter'
+    (page === 'list' && arg === 'meter') || page === 'usage' ? 'meter'
     : page === 'list' || page === 'view' || page === 'new' ? 'list'
     : ['export', 'manuals', 'manual', 'addmanual', 'editmanual', 'findmanual', 'rooms', 'room', 'year'].includes(page) ? 'export'
     : 'home';
@@ -185,6 +187,15 @@ function setChrome(page, arg) {
     if (on) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
   });
+  // v15.0: the sidebar's extra shortcuts (wide screens only) light up too.
+  const side = page === 'upcoming' ? 'upcoming' : page === 'list' && arg === 'mortgage' ? 'mortgage' : ['manuals', 'manual', 'addmanual', 'editmanual', 'findmanual'].includes(page) ? 'manuals' : page === 'year' ? 'year' : '';
+  document.querySelectorAll('.bottom-nav [data-side]').forEach((a) => {
+    const on = a.dataset.side === side;
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('.bottom-nav [data-tab]').forEach((a) => a.classList.toggle('side-dim', Boolean(side) && a.classList.contains('active')));
   applyNavPrefs();
   const add = document.getElementById('add');
   // v14.9: on a section's screen, + opens the scanner set to that section
@@ -198,6 +209,8 @@ function setChrome(page, arg) {
 function applyNavPrefs() {
   const meter = document.getElementById('nav-meter');
   if (meter) meter.hidden = prefs.isHidden('meter');
+  const mortgage = document.getElementById('side-mortgage');
+  if (mortgage) mortgage.hidden = prefs.isHidden('mortgage');
 }
 addEventListener('hearthbook:prefs', applyNavPrefs);
 
@@ -693,6 +706,8 @@ async function renderList(type, year = 0) {
 
   // --- Meter insights on the meter readings screen ---
   if (type === 'meter') screen.push(meterInsights(everything));
+  // --- v15.0: monthly kWh from the EDF usage file, this year vs last ---
+  if (type === 'meter' && !year) screen.push(await usageCard());
   // --- v14.7: Mortgage overview above its statements ---
   if (type === 'mortgage' && !year) screen.push(mortUI.overview(everything));
 
@@ -3202,4 +3217,179 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-ocr' }));
   };
   addEventListener('load', () => setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(warm, { timeout: 10000 }) : warm()), 4000));
+}
+
+// =====================================================================
+// v15.0: EDF usage files (usage.js does the reading and the sums).
+// =====================================================================
+// One card on the Electricity page: kWh per month from the EDF usage
+// download, this year against last year, and an Import button. The import
+// screen (#/usage) reads the file on the phone, shows what it found and what
+// it would change, and only saves when you tap Save.
+const kwh0 = (v) => Math.round(v).toLocaleString('en-GB');
+const pct = (f) => `${Math.abs(Math.round(f * 100))}%`;
+async function usageCard() {
+  const entry = await db.getEntry(usage.USAGE_ID);
+  const months = usage.savedMonths(entry);
+  const keys = Object.keys(months);
+  const card = el('section', { class: 'card usage-card', id: 'usage-card', 'aria-labelledby': 'usage-title' });
+  const head = el('div', { class: 'card-head' },
+    el('div', { class: 'card-head-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('chart')),
+      el('div', {}, el('h2', { class: 'card-title', id: 'usage-title' }, 'Electricity use by month'),
+        el('p', { class: 'card-sub', id: 'usage-sub' }, keys.length ? `From your EDF usage file · ${usage.monthLabel(keys[0])} – ${usage.monthLabel(keys[keys.length - 1])}` : 'From the usage file you download from EDF'))),
+    keys.length ? el('a', { class: 'btn small-btn secondary', href: '#/usage', id: 'usage-import-again' }, icon('upload', 16), 'Import') : null);
+  if (!keys.length) {
+    return fill(card, head,
+      el('p', { class: 'small muted' }, 'Download your usage from your EDF account as a CSV file (monthly, daily or half-hourly), then pick it here. Hearth adds up the kWh for each month and shows this year against last year. The file is read on this phone only.'),
+      el('a', { class: 'btn secondary', href: '#/usage', id: 'usage-import' }, icon('upload', 18), 'Import EDF usage file'));
+  }
+  const years = usage.yearsIn(months);
+  if (!state.usageYear || !years.includes(state.usageYear)) state.usageYear = years[years.length - 1];
+  const body = el('div', { class: 'usage-body', id: 'usage-body' });
+  const draw = () => {
+    const yr = state.usageYear;
+    const key = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+    const bars = MON3.map((mn, i) => {
+      const a = months[key(yr, i + 1)], b = months[key(yr - 1, i + 1)];
+      return { key: key(yr, i + 1), label: mn.slice(0, 1), short: mn, title: `${MONTH_LONG[i]} ${yr}`, value: a ? a.kwh : 0, compare: b ? b.kwh : null, compareTitle: `${MONTH_LONG[i]} ${yr - 1}`,
+        muted: !a, partial: Boolean(a && a.partial), partialNote: a && a.partial ? 'so far' : '' };
+    });
+    const yoy = usage.yearOnYear(months, yr);
+    const soFar = bars.find((b) => b.partial);
+    const yoyLine = yoy
+      ? el('p', { class: 'usage-yoy', id: 'usage-yoy' },
+          el('strong', {}, `${yoy.label} ${yr}: ${kwh0(yoy.now)} kWh`),
+          ' · ',
+          el('span', { class: 'yoy ' + (yoy.now > yoy.then ? 'up' : 'down') }, `${yoy.now > yoy.then ? '▲' : '▼'} ${pct(yoy.change)} ${yoy.now > yoy.then ? 'more' : 'less'}`),
+          ` than ${yoy.label} ${yr - 1} (${kwh0(yoy.then)} kWh)`,
+          yoy.costNow != null ? el('span', { class: 'small muted usage-yoy-cost', id: 'usage-yoy-cost' }, ` · cost ${money(yoy.costNow)} vs ${money(yoy.costThen)}`) : null)
+      : el('p', { class: 'usage-yoy small muted', id: 'usage-yoy' }, `No full months in both ${yr} and ${yr - 1} to compare yet.`);
+    const rowsK = bars.map((b, i) => i).filter((i) => months[key(yr, i + 1)] || months[key(yr - 1, i + 1)]);
+    const hasCost = rowsK.some((i) => (months[key(yr, i + 1)] || {}).cost != null);
+    const cell = (m) => (m ? `${kwh0(m.kwh)}${m.partial ? '*' : ''}` : '–');
+    const table = el('table', { class: 'mtable usage-table', id: 'usage-table' },
+      el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', {}, `${yr} kWh`), el('th', {}, `${yr - 1} kWh`), el('th', {}, 'Change'), hasCost ? el('th', { class: 'usage-cost-col' }, `${yr} cost`) : null)),
+      el('tbody', {}, rowsK.map((i) => {
+        const a = months[key(yr, i + 1)], b = months[key(yr - 1, i + 1)];
+        const ch = a && b && !a.partial && !b.partial && b.kwh ? (a.kwh - b.kwh) / b.kwh : null;
+        return el('tr', { class: a && a.partial ? 'est' : '' }, el('td', {}, MONTH_LONG[i]), el('td', {}, cell(a)), el('td', {}, cell(b)),
+          el('td', { class: ch == null ? '' : ch > 0 ? 'bad' : 'good' }, ch == null ? '' : `${ch > 0 ? '+' : '−'}${pct(ch)}`),
+          hasCost ? el('td', { class: 'usage-cost-col' }, a && a.cost != null ? money(a.cost) : '–') : null);
+      })),
+      yoy ? el('tfoot', {}, el('tr', { class: 'mtotal' }, el('td', {}, `${yoy.label}`), el('td', {}, kwh0(yoy.now)), el('td', {}, kwh0(yoy.then)), el('td', { class: yoy.now > yoy.then ? 'bad' : 'good' }, `${yoy.now > yoy.then ? '+' : '−'}${pct(yoy.change)}`), hasCost ? el('td', { class: 'usage-cost-col' }, yoy.costNow != null ? money(yoy.costNow) : '') : null)) : null);
+    fill(body,
+      years.length > 1 ? (() => { const p = yearPicker('usage-years', years, yr, (y) => { state.usageYear = y; keepPlace('usage-years', draw); }, '', { newestFirst: true }); p.querySelector('[data-year="0"]')?.remove(); return p; })() : null,
+      yoyLine,
+      el('div', { class: 'usage-split' },
+        el('div', { class: 'usage-chart-wrap' },
+          barChart(bars, { height: 130, format: (v) => kwh0(v), describe: (b, v) => `${b.title}${b.partial ? ' (so far)' : ''}: ${kwh0(v)} kWh; ${b.compareTitle}: ${b.compare == null ? 'no data' : kwh0(b.compare) + ' kWh'}` }),
+          el('p', { class: 'chart-legend', id: 'usage-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1),
+            soFar ? el('span', { class: 'lg-part-wrap' }, el('i', { class: 'lg-part' }), `${soFar.short} so far`) : null)),
+        el('div', { class: 'usage-table-wrap' }, table,
+          soFar ? el('p', { class: 'small muted' }, '* part of the month so far (not compared)') : null)));
+  };
+  draw();
+  const last = entry.usage && Array.isArray(entry.usage.imports) && entry.usage.imports.length ? entry.usage.imports[entry.usage.imports.length - 1] : null;
+  return fill(card, head, body,
+    el('p', { class: 'small muted usage-foot', id: 'usage-foot' },
+      last && last.at ? `Last imported ${new Date(last.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}. ` : '',
+      'These are EDF’s figures from the usage file; your bills above stay as they are. ',
+      el('button', { type: 'button', class: 'link-btn usage-remove', id: 'usage-remove', onclick: async () => {
+        if (!confirm('Remove the imported EDF usage months? Your bills aren’t touched. You can import the file again any time.')) return;
+        await db.deleteEntry(usage.USAGE_ID);
+        sync.recordDelete(usage.USAGE_ID);
+        toast('Usage months removed');
+        redrawInPlace('usage-card');
+      } }, 'Remove usage data')));
+}
+
+async function renderUsageImport() {
+  const everything = await db.getAllEntries();
+  const entry = await db.getEntry(usage.USAGE_ID);
+  const saved = usage.savedMonths(entry);
+  const input = el('input', { type: 'file', id: 'usage-file', accept: '.csv,text/csv,text/plain,application/vnd.ms-excel', multiple: true, hidden: true });
+  const out = el('div', { id: 'usage-preview', 'aria-live': 'polite' });
+  const pickBtn = el('button', { type: 'button', class: 'btn', id: 'usage-pick', onclick: () => input.click() }, icon('upload', 18), 'Choose EDF usage file');
+  input.addEventListener('change', async () => {
+    const files = [...input.files];
+    input.value = '';
+    if (!files.length) return;
+    const parsed = [], problems = [];
+    for (const f of files) {
+      try {
+        if (f.size > 25 * 1024 * 1024) throw new usage.UsageFileError('That file is too big to be an EDF usage download.');
+        if (/\.(xlsx|xls|pdf|json|zip)$/i.test(f.name)) throw new usage.UsageFileError(`“${f.name}” isn’t a CSV file. On the EDF website, pick CSV when you download your usage.`);
+        parsed.push({ name: f.name, p: usage.parseUsageCSV(await f.text()) });
+      } catch (err) {
+        problems.push({ name: f.name, message: err instanceof usage.UsageFileError ? err.message : 'That file could not be read.' });
+      }
+    }
+    showPreview(parsed, problems);
+  });
+  const showPreview = (parsed, problems) => {
+    const errBox = problems.length ? el('div', { class: 'card usage-error', id: 'usage-error', role: 'alert' },
+      el('p', { class: 'error' }, problems.length === 1 && !parsed.length ? 'That file wasn’t recognised' : `${problems.length} file${problems.length === 1 ? '' : 's'} not recognised`),
+      problems.map((x) => el('p', { class: 'small' }, el('strong', {}, x.name), ': ', x.message))) : null;
+    if (!parsed.length) { fill(out, errBox); return; }
+    const all = usage.combineParsed(parsed.map((x) => x.p));
+    const plan = usage.planMerge(saved, all.months);
+    const keys = Object.keys(all.months);
+    const total = keys.reduce((t, k) => t + all.months[k].kwh, 0);
+    const costs = keys.filter((k) => all.months[k].cost != null);
+    const totalCost = costs.reduce((t, k) => t + all.months[k].cost, 0);
+    // Months your bills (meter readings) also cover: nothing on them changes.
+    const billMonths = new Set();
+    for (const y of new Set(keys.map((k) => Number(k.slice(0, 4))))) for (const m of monthlyUsage(everything, y)) if (m.days > 0) billMonths.add(m.key);
+    const alsoBills = keys.filter((k) => billMonths.has(k));
+    const partial = keys.filter((k) => all.months[k].partial);
+    const status = (k) => (plan.added.includes(k) ? ['new', 'New'] : plan.updated.includes(k) ? ['update', 'Update'] : plan.same.includes(k) ? ['same', 'Already saved'] : ['kept', 'Kept yours']);
+    const toSave = plan.added.length + plan.updated.length;
+    const kinds = all.kinds.map(usage.kindLabel).join(' + ');
+    fill(out, errBox, el('section', { class: 'card usage-preview', id: 'usage-preview-card' },
+      el('div', { class: 'card-head' }, el('div', { class: 'card-head-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('check')),
+        el('div', {}, el('h2', { class: 'card-title' }, 'Check before saving'), el('p', { class: 'card-sub' }, parsed.map((x) => x.name).join(', '))))),
+      all.fuel === 'gas' ? el('p', { class: 'warn-text small', id: 'usage-gas' }, 'This looks like a gas file. Hearth will show it as electricity, so only save it if that’s right.') : null,
+      el('div', { class: 'usage-facts' },
+        el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Months found'), el('strong', { class: 'stat-value', id: 'usage-months-found' }, String(keys.length)), el('span', { class: 'small muted' }, `${usage.monthLabel(all.from)} – ${usage.monthLabel(all.to)}`)),
+        el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Total'), el('strong', { class: 'stat-value', id: 'usage-total' }, `${kwh0(total)} kWh`), el('span', { class: 'small muted' }, costs.length ? `${money(totalCost)} on EDF’s figures` : 'no cost in the file')),
+        el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Will save'), el('strong', { class: 'stat-value', id: 'usage-to-save' }, `${toSave} month${toSave === 1 ? '' : 's'}`),
+          el('span', { class: 'small muted', id: 'usage-overlap' }, [plan.added.length ? `${plan.added.length} new` : '', plan.updated.length ? `${plan.updated.length} updated` : '', plan.same.length ? `${plan.same.length} already saved` : '', plan.kept.length ? `${plan.kept.length} kept` : ''].filter(Boolean).join(' · ')))),
+      el('ul', { class: 'usage-notes small' },
+        el('li', {}, `Read as ${kinds} (${all.rows.toLocaleString('en-GB')} row${all.rows === 1 ? '' : 's'})${all.kinds.includes('halfhourly') || all.kinds.includes('daily') ? ', added up into calendar months' : ''}.`),
+        plan.same.length || plan.updated.length || plan.kept.length ? el('li', { id: 'usage-overlap-note' }, `Overlaps what’s saved: ${plan.same.length ? `${plan.same.length} month${plan.same.length === 1 ? '' : 's'} the same (skipped, no duplicates)` : ''}${plan.same.length && (plan.updated.length || plan.kept.length) ? '; ' : ''}${plan.updated.length ? `${plan.updated.map((k) => usage.monthLabel(k)).join(', ')} will be updated from this file` : ''}${plan.kept.length ? `${plan.updated.length ? '; ' : ''}${plan.kept.map((k) => usage.monthLabel(k)).join(', ')} kept (what’s saved covers more of the month)` : ''}.`) : el('li', { id: 'usage-overlap-note' }, 'Nothing saved yet overlaps these months.'),
+        partial.length ? el('li', {}, `${partial.map((k) => usage.monthLabel(k)).join(', ')} ${partial.length === 1 ? 'is' : 'are'} only part of the month (so far), so ${partial.length === 1 ? 'it isn’t' : 'they aren’t'} compared with last year.`) : null,
+        all.skippedEmpty.length ? el('li', { id: 'usage-skipped' }, `${all.skippedEmpty.length} month${all.skippedEmpty.length === 1 ? '' : 's'} with 0 kWh left out (${usage.monthLabel(all.skippedEmpty[0])}${all.skippedEmpty.length > 1 ? ` – ${usage.monthLabel(all.skippedEmpty[all.skippedEmpty.length - 1])}` : ''}), probably before your EDF supply started.`) : null,
+        alsoBills.length ? el('li', { id: 'usage-bills-note' }, `Your bills also cover ${alsoBills.length} of these months. They stay exactly as they are; the file’s figures are shown separately.`) : null,
+        all.badRows ? el('li', {}, `${all.badRows} row${all.badRows === 1 ? '' : 's'} without a date or kWh skipped.`) : null),
+      el('table', { class: 'mtable usage-table', id: 'usage-preview-table' },
+        el('thead', {}, el('tr', {}, el('th', {}, 'Month'), el('th', {}, 'kWh'), el('th', {}, 'Cost'), el('th', {}, ''))),
+        el('tbody', {}, [...keys].reverse().map((k) => {
+          const m = all.months[k], [cls, label] = status(k);
+          return el('tr', { class: m.partial ? 'est' : '' }, el('td', {}, usage.monthLabel(k)), el('td', {}, `${kwh0(m.kwh)}${m.partial ? '*' : ''}`), el('td', {}, m.cost != null ? money(m.cost) : '–'), el('td', {}, el('span', { class: `pill usage-pill ${cls}` }, label)));
+        }))),
+      el('div', { class: 'usage-actions' },
+        el('button', { type: 'button', class: 'btn', id: 'usage-save', disabled: !toSave, onclick: async (ev) => {
+          ev.currentTarget.disabled = true;
+          const fresh = await db.getEntry(usage.USAGE_ID); // in case sync brought months meanwhile
+          const merged = usage.planMerge(usage.savedMonths(fresh), all.months);
+          const at = new Date().toISOString();
+          const saved2 = usage.usageEntry(fresh, merged.months, { at, kind: all.kinds.join('+'), months: keys.length, added: merged.added.length, updated: merged.updated.length }, at);
+          await db.saveEntry(saved2);
+          sync.recordSave(saved2.id);
+          toast(`${merged.added.length + merged.updated.length} month${merged.added.length + merged.updated.length === 1 ? '' : 's'} saved`);
+          location.hash = '#/list/meter';
+          setTimeout(() => document.getElementById('usage-card')?.scrollIntoView({ block: 'start' }), 400);
+        } }, toSave ? `Save ${toSave} month${toSave === 1 ? '' : 's'}` : 'Nothing new to save'),
+        el('button', { type: 'button', class: 'btn secondary', id: 'usage-other', onclick: () => input.click() }, 'Pick a different file'))));
+  };
+  fill(app,
+    screenHead('Import EDF usage', { back: { href: '#/list/meter', label: 'Electricity' }, sub: 'Monthly kWh from the usage file you download from EDF' }),
+    el('section', { class: 'card usage-how', id: 'usage-how' },
+      el('ol', { class: 'usage-steps small' },
+        el('li', {}, 'On the EDF website or app, go to your usage and choose to download it.'),
+        el('li', {}, 'Pick CSV. Monthly, daily or half-hourly all work (half-hourly is added up into days and months).'),
+        el('li', {}, 'Choose the file here. You can pick several files at once, e.g. one per year.')),
+      el('p', { class: 'small muted' }, 'The file is read on this device only. Months already saved aren’t duplicated; you’ll see what changes before anything is saved.'),
+      pickBtn, input),
+    out);
 }

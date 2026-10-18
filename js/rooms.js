@@ -1,7 +1,7 @@
 // =====================================================================
 // rooms.js — rooms you can tag things to (v13).
 // =====================================================================
-// A room is just a name ("Kitchen", "Becca's office"). An entry (job,
+// A room is just a name ("Kitchen", "Spare room"). An entry (job,
 // receipt, warranty) can carry ONE room in an optional `room` field. That
 // field travels with the entry everywhere (sync file, backups) exactly like
 // its notes do, and older versions of the app simply ignore it (they keep

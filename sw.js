@@ -43,10 +43,11 @@
 //         one sync at a time, "Moving photos to Drive: 12 of 38" progress.
 // v13.9 = no stray word "null" on entry pages, rooms, tagging or year in review.
 // v14.0 = tidy home (This month card), house follows the weather, Aug/Sep chart labels, KB size, manual lookup from a label.
+// v15.0 = wide layout on computers (sidebar, columns), EDF usage file import + month-by-month year-on-year, security fixes (mortgage chart dates, Content-Security-Policy).
 // v14.1 = shown as "Hearth" (cache prefix stays hearthbook-), "Money & energy" card, Weather card on More, electricity months by midpoint, latest-period daily use, "so far" bars, VAT wording (0% 1 Oct 2026 – 31 Mar 2027).
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v14.9';
+const CACHE_NAME = 'hearthbook-v15.0';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -110,6 +111,7 @@ const APP_SHELL = [
   './js/reminders.js',
   './js/mortgage.js',
   './js/mortgageui.js',
+  './js/usage.js',
   './js/search.js',
   './js/house.js',
   './js/motion.js',

@@ -74,7 +74,14 @@ async function run(storeName, mode, action) {
 
 // ---------- Entries ----------
 
-export function getAllEntries() {
+// v15.0: the app's screens never see the EDF usage entry (type 'usage', see
+// usage.js); it isn't a logbook item. Backups and sync use getEverything().
+export async function getAllEntries() {
+  return (await getEverything()).filter((e) => !e || e.type !== 'usage');
+}
+
+// Every record, including the usage entry: for backups and sync only.
+export function getEverything() {
   return run('entries', 'readonly', (store) => store.getAll());
 }
 
