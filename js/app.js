@@ -57,6 +57,7 @@ import * as weather from './weather.js';
 import * as mort from './mortgage.js';
 import * as mortUI from './mortgageui.js';
 import * as usage from './usage.js';
+import * as rem from './reminderlogic.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -123,7 +124,7 @@ document.addEventListener('click', (e) => {
 });
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
-  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, upcoming: 1, usage: 2, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, upcoming: 1, usage: 2, reminder: 3, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
@@ -159,6 +160,7 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'room') await renderRoom(decodeURIComponent(arg || ''));
     else if (page === 'upcoming') await renderUpcoming(arg || '');
     else if (page === 'usage') await renderUsageImport();
+    else if (page === 'reminder') await renderReminderForm(arg ? decodeURIComponent(arg) : '');
     else if (page === 'year') await renderYearReview(/^\d{4}$/.test(arg || '') ? Number(arg) : new Date().getFullYear());
     else if (page === 'welcome') renderWelcome();
     else await renderHome();
@@ -201,7 +203,7 @@ function setChrome(page, arg) {
   // v14.9: on a section's screen, + opens the scanner set to that section
   // (with "Add by hand instead" on it); everywhere else, the Add chooser.
   if (add) add.href = page === 'list' && arg && arg !== 'all' && getSection(arg).id === arg ? `#/scan/${arg}` : '#/new';
-  const bare = page === 'edit' || (page === 'new' && arg) || page === 'welcome' || page === 'scan' || page === 'manual';
+  const bare = page === 'edit' || page === 'reminder' || (page === 'new' && arg) || page === 'welcome' || page === 'scan' || page === 'manual';
   document.body.classList.toggle('no-nav', bare);
 }
 
@@ -555,7 +557,7 @@ async function renderHome() {
   for (const e of renewSoon) if (!soonList.includes(e)) soonList.push(e);
   // v14.7: a mortgage deal ending within 6 months is always in Coming up.
   for (const e of upcoming(everything)) if (e.type === 'mortgage' && daysUntil(e.dueDate) <= soonDaysFor(e) && !soonList.includes(e)) soonList.push(e);
-  const recent = everything.slice(0, 4);
+  const recent = everything.filter((e) => !rem.isReminder(e)).slice(0, 4);
 
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
   const dash = el('div', { class: 'dash', id: 'dashboard' });
@@ -664,7 +666,8 @@ function sectionTile(s, everything, year) {
 // LIST screen
 // ---------------------------------------------------------------------
 async function renderList(type, year = 0) {
-  const everything = (await db.getAllEntries()).sort(newestFirst);
+  // v15.1: reminders aren't logbook items; they live in Coming up.
+  const everything = (await db.getAllEntries()).filter((e) => !rem.isReminder(e)).sort(newestFirst);
   // "#/list/receipt/2026": just that year (from the spending card's chips).
   const inYear = (e) => !year || (e.date || '').startsWith(String(year));
   const inSectionAll = (type === 'all' ? everything : everything.filter((e) => e.type === type)).filter(inYear);
@@ -1241,13 +1244,16 @@ function entryCard(e) {
   const thumb =
     e.photos && e.photos.length
       ? el('span', { class: 'thumb-wrap' }, el('img', { class: 'thumb', src: photoURL(e.photos[0].blob), alt: '' }), el('span', { class: 'thumb-tag', 'data-tone': section.tone }, icon(section.glyph, 12)))
-      : el('div', { class: 'thumb placeholder', 'data-tone': section.tone }, icon(section.glyph, 24));
+      : el('div', { class: 'thumb placeholder', 'data-tone': rem.isReminder(e) ? 'amber' : section.tone }, icon(rem.isReminder(e) ? 'bell' : section.glyph, 24));
 
   const isIns = section.kind === 'insurance';
   // v14.7: a mortgage statement: balance and rate; a past deal end isn't flagged
   const isMort = section.kind === 'mortgage';
   if (isMort && days !== null && days < 0) dueClass = '';
-  const details = isIns
+  const isRem = rem.isReminder(e); // v15.1
+  const details = isRem
+    ? ['Reminder', rem.repeatText(e.reminder), e.room].filter(Boolean).join(' · ')
+    : isIns
     ? [e.insType ? insuranceTypeLabel(e.insType) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
     : isMort ? mortUI.cardLine(e)
     : [e.type === 'meter' && Number(e.cost) > 0 ? `paid ${niceDate(e.date)}` : niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
@@ -1293,6 +1299,12 @@ function renderChooser() {
       el('span', { class: 'scan-choice-text' },
         el('span', { class: 'choice-label' }, 'Scan receipt or bill'),
         el('span', { class: 'choice-blurb' }, 'Photo or PDF — fills in the details for you')),
+      icon('chevron', 20)),
+    el('a', { class: 'scan-choice reminder-choice', href: '#/reminder', id: 'reminder-choice' },
+      el('span', { class: 'scan-choice-icon' }, icon('bell', 26)),
+      el('span', { class: 'scan-choice-text' },
+        el('span', { class: 'choice-label' }, 'Add reminder'),
+        el('span', { class: 'choice-blurb' }, 'Smoke alarm test, boiler service… one-off or repeating')),
       icon('chevron', 20)),
     el('p', { class: 'chooser-or' }, 'or add by hand'),
     el(
@@ -1627,6 +1639,8 @@ function creditFields(list, scanned) {
 
 // ---------------------------------------------------------------------
 async function renderForm(type, id) {
+  // v15.1: a reminder has its own simpler form.
+  if (id) { const r = await db.getEntry(id); if (rem.isReminder(r)) return renderReminderForm(id); }
   // Editing? Load the existing entry. Adding? Start a blank one.
   let entry;
   if (id) {
@@ -2165,6 +2179,7 @@ async function renderDetail(id) {
     );
     return;
   }
+  if (rem.isReminder(e)) return renderReminderDetail(e); // v15.1
   const section = getSection(e.type);
   const days = daysUntil(e.dueDate);
   let dueClass = '';
@@ -2872,11 +2887,13 @@ async function renderUpcoming(focus) {
     const sec = getSection(e ? e.type : 'mortgage');
     const days = daysUntil(r.date);
     const title = e ? (e.type === 'mortgage' ? `${e.supplier || 'Mortgage'} deal ends` : e.title || 'Untitled') : r.title;
-    const sub = e ? [sec.single, dueText(sec.dueWord || 'due', days)].join(' · ') : `${r.sub} · ${dueText('', days).trim()}`;
-    return el('a', { class: 'card up-row' + (r.mortgage ? ' up-mortgage' : ''), href: e ? `#/view/${e.id}` : '#/list/mortgage', 'data-date': r.date, 'data-section': sec.id },
+    const isRem = rem.isReminder(e); // v15.1
+    const sub = isRem ? ['Reminder', rem.repeatText(e.reminder), dueText('due', days)].join(' · ') : e ? [sec.single, dueText(sec.dueWord || 'due', days)].join(' · ') : `${r.sub} · ${dueText('', days).trim()}`;
+    const done = isRem ? el('button', { type: 'button', class: 'btn small up-done', 'data-done': e.id, 'aria-label': `Mark ${title} done`, onclick: async (ev) => { ev.preventDefault(); ev.stopPropagation(); await reminderDone(e); holdScroll = true; try { await render(); } finally { holdScroll = false; } } }, icon('check', 16), 'Done') : null;
+    return el('a', { class: 'card up-row' + (r.mortgage ? ' up-mortgage' : '') + (isRem ? ' up-reminder' : ''), href: e ? `#/view/${e.id}` : '#/list/mortgage', 'data-date': r.date, 'data-section': isRem ? 'reminder' : sec.id },
       el('span', { class: 'up-date', 'aria-hidden': 'true' }, el('b', {}, String(Number(r.date.slice(8, 10)))), el('span', {}, MON[Number(r.date.slice(5, 7)) - 1]), el('i', {}, r.date.slice(0, 4))),
       el('span', { class: 'up-text' }, el('strong', {}, title), el('span', { class: 'small muted' }, sub)),
-      sectionBadge(sec, 'sm'));
+      done || sectionBadge(sec, 'sm'));
   };
   const groups = [
     ['Overdue', late.map((e) => ({ date: e.dueDate, entry: e }))],
@@ -2885,12 +2902,12 @@ async function renderUpcoming(focus) {
     ['Later', rows.filter((r) => daysUntil(r.date) > 92)],
   ].filter(([, list]) => list.length);
   fill(app,
-    screenHead('Coming up', { id: 'upcoming-title', back: { href: '#/', label: 'Home' }, sub: 'Due dates, renewals, warranty ends and mortgage reminders, soonest first' }),
+    screenHead('Coming up', { id: 'upcoming-title', back: { href: '#/', label: 'Home' }, sub: 'Reminders, due dates, renewals, warranty ends and mortgage reminders, soonest first', action: el('a', { class: 'btn small secondary', href: '#/reminder', id: 'upcoming-add-reminder' }, icon('plus', 16), 'Reminder') }),
     groups.length
       ? el('div', { id: 'upcoming-list' }, groups.map(([name, list]) => el('section', { class: 'group up-group', 'data-group': name },
           el('div', { class: 'group-head' }, el('h2', {}, name), el('span', { class: 'small muted' }, `${list.length}`)),
           el('div', { class: 'list' }, list.map(row)))))
-      : el('div', { class: 'empty', id: 'upcoming-empty' }, el('div', { class: 'empty-art' }, icon('clock', 36)), el('p', {}, 'Nothing coming up. Add a warranty, a policy or a job with a due date and it shows here.')),
+      : el('div', { class: 'empty', id: 'upcoming-empty' }, el('div', { class: 'empty-art' }, icon('clock', 36)), el('p', {}, 'Nothing coming up. Add a reminder, a warranty, a policy or a job with a due date and it shows here.')),
     el('p', { class: 'small muted footnote' }, prefs.remindersOn() ? 'Phone reminders are on (More → Reminders).' : 'Phone reminders are off. Turn them on under More → Reminders.'));
   if (focus === 'mortgage') {
     const first = app.querySelector('.up-mortgage');
@@ -3053,7 +3070,7 @@ async function renderExport() {
       onclick: () => { setTheme(value); renderExport(); } }, icon(glyph, 16), label);
 
   // v14: Recent entries and the quick tour live here (tidy home screen).
-  const recent = entries.slice().sort(newestFirst).slice(0, 4);
+  const recent = entries.filter((e) => !rem.isReminder(e)).sort(newestFirst).slice(0, 4);
   const tidy = prefs.homeTidy();
   fill(app,
     screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
@@ -3154,7 +3171,129 @@ async function renderExport() {
 }
 
 // ---------------------------------------------------------------------
+// REMINDERS (v15.1): standalone reminders, e.g. "Test smoke alarms" every
+// month. Stored as a Jobs entry with a `reminder` object (reminderlogic.js)
+// so backups, sync and older versions carry them unchanged.
+// #/reminder = new, #/reminder/p:<preset> = new from a quick pick,
+// #/reminder/<id> = edit.
+// ---------------------------------------------------------------------
+async function reminderDone(e) {
+  const saved = rem.markDone(e, todayISO());
+  await db.saveEntry(saved);
+  sync.recordSave(saved.id);
+  toast(saved.dueDate ? `Done · next due ${niceDate(saved.dueDate)}` : 'Done');
+  return saved;
+}
+
+const REPEAT_CHOICES = [['0', 'One-off (no repeat)'], ['1:month', 'Every month'], ['3:month', 'Every 3 months'], ['6:month', 'Every 6 months'], ['1:year', 'Every year'], ['custom', 'Custom…']];
+
+async function renderReminderForm(arg) {
+  const editing = arg && !arg.startsWith('p:') ? await db.getEntry(arg) : null;
+  if (arg && !arg.startsWith('p:') && !rem.isReminder(editing)) { location.replace('#/reminder'); return; }
+  const pre = arg && arg.startsWith('p:') ? rem.preset(arg.slice(2)) : null;
+  const r = editing ? editing.reminder : pre ? { every: pre.every, unit: pre.unit, early: null } : { every: 0, unit: null, early: null };
+  const e = editing || { title: pre ? pre.title : '', dueDate: '', notes: pre ? pre.notes : '', room: '' };
+  const field = (label, input, hint) => el('label', { class: 'field' }, el('span', { class: 'label' }, label), input, hint ? el('span', { class: 'hint' }, hint) : null);
+  const repKey = !rem.repeats(r) ? '0' : REPEAT_CHOICES.some(([k]) => k === `${r.every}:${r.unit}`) ? `${r.every}:${r.unit}` : 'custom';
+  const form = el('form', { class: 'form', id: 'reminder-form', novalidate: true });
+  const custom = el('div', { class: 'row', id: 'repeat-custom', hidden: repKey !== 'custom' || undefined },
+    field('Every', el('input', { name: 'every', type: 'number', min: '1', max: '99', inputmode: 'numeric', value: rem.repeats(r) ? String(r.every) : '2' })),
+    field('Unit', el('select', { name: 'unit' }, rem.UNITS.map((u) => el('option', { value: u, selected: (rem.repeats(r) ? r.unit : 'month') === u }, u + 's')))));
+  const allEntries = await db.getAllEntries();
+  const names = rooms.roomList(await rooms.getStored(), allEntries);
+  if (e.room && !names.some((n) => rooms.sameRoom(n, e.room))) names.push(e.room);
+  addTo(form,
+    el('header', { class: 'form-head' },
+      el('a', { class: 'back', href: editing ? `#/view/${editing.id}` : '#/new', onclick: (ev) => { ev.preventDefault(); history.back(); } }, icon('back', 20), 'Back'),
+      el('div', { class: 'form-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('bell', 22)), el('h1', { class: 'screen-title' }, editing ? 'Edit reminder' : 'New reminder'))),
+    !editing ? el('div', { class: 'preset-picks', id: 'reminder-presets' },
+      el('span', { class: 'label' }, 'Quick picks (optional)'),
+      el('div', { class: 'preset-row' }, rem.PRESETS.map((p) => el('a', { class: 'tab preset' + (pre && pre.key === p.key ? ' active' : ''), href: `#/reminder/p:${p.key}`, 'data-preset': p.key, onclick: (ev) => { ev.preventDefault(); location.replace(`#/reminder/p:${p.key}`); } }, p.title)))) : null,
+    field('What', el('input', { name: 'title', value: e.title || '', autocomplete: 'off', placeholder: 'e.g. Test smoke alarms', required: true })),
+    field(editing ? 'Next due' : 'First due', el('input', { name: 'dueDate', type: 'date', value: (e.dueDate || '').slice(0, 10) || (editing ? '' : todayISO()) })),
+    field('Repeat', el('select', { name: 'repeat', id: 'repeat-select', onchange: (ev) => { custom.hidden = ev.target.value !== 'custom'; } }, REPEAT_CHOICES.map(([k, l]) => el('option', { value: k, selected: k === repKey }, l))),
+      'When you mark a repeating reminder done, it moves on to the next date.'),
+    custom,
+    field('Phone reminder', el('select', { name: 'early', id: 'early-select' },
+      rem.EARLY.map((n) => el('option', { value: n ? String(n) : '', selected: (r.early || null) === n }, n ? `Also ${rem.earlyText(n)}` : '30 days, 7 days and on the day'))),
+      'The phone reminds you 30 days and 7 days before, and on the day. An extra early alert shows when you open Hearth.'),
+    field('Room (optional)', el('select', { name: 'room', id: 'reminder-room' }, el('option', { value: '' }, 'No room'), names.map((n) => el('option', { value: n, selected: Boolean(e.room) && rooms.sameRoom(n, e.room) }, n)))),
+    field('Notes (optional)', el('textarea', { name: 'notes', rows: '3', placeholder: 'Who to call, what to check…' }, e.notes || '')),
+    el('p', { class: 'error', id: 'reminder-error', role: 'alert', hidden: true }),
+    el('div', { class: 'row form-actions' },
+      el('button', { type: 'submit', class: 'btn', id: 'reminder-save' }, icon('check', 20), 'Save reminder')));
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const v = (k) => String(form.elements[k].value || '').trim();
+    const err = form.querySelector('#reminder-error');
+    if (!v('title')) { err.textContent = 'Give the reminder a name.'; err.hidden = false; form.elements.title.focus(); return; }
+    if (!/^\d{4}-\d\d-\d\d$/.test(v('dueDate'))) { err.textContent = 'Pick the date it’s due.'; err.hidden = false; return; }
+    const rep = v('repeat');
+    const [every, unit] = rep === 'custom' ? [v('every'), v('unit')] : rep === '0' ? [0, null] : rep.split(':');
+    const now = new Date().toISOString();
+    const saved = {
+      photos: [], supplier: '', meterValue: null, meterUnit: '',
+      ...(editing || {}),
+      id: editing ? editing.id : db.newId(),
+      type: 'job',
+      title: v('title').slice(0, 120),
+      date: editing ? editing.date : todayISO(),
+      cost: null,
+      dueDate: v('dueDate'),
+      notes: v('notes'),
+      reminder: rem.buildReminder(editing && editing.reminder, { every, unit, early: v('early') }),
+      createdAt: editing ? editing.createdAt || now : now,
+      updatedAt: now,
+    };
+    if (saved.reminder.lastDue) delete saved.reminder.lastDue; // it's active again
+    if (v('room')) saved.room = rooms.cleanName(v('room')); else delete saved.room;
+    await db.saveEntry(saved);
+    sync.recordSave(saved.id);
+    toast('Reminder saved');
+    location.replace(`#/view/${saved.id}`);
+  });
+  fill(app, form);
+  if (!editing && !pre) form.elements.title.focus();
+}
+
+function renderReminderDetail(e) {
+  const r = e.reminder;
+  const days = daysUntil(e.dueDate);
+  const cls = days === null ? 'calm' : days < 0 ? 'expired' : days <= 30 ? 'soon' : 'calm';
+  const history = (Array.isArray(r.done) ? r.done : []).slice().reverse();
+  const rows = [
+    ['Next due', e.dueDate ? `${niceDate(e.dueDate)} (${dueText('due', days)})` : `Done${history[0] ? ` ${niceDate(history[0].on)}` : ''}`, 'clock'],
+    ['Repeats', rem.repeatText(r), 'calendar'],
+    ['Phone reminder', `30 days, 7 days and on the day${r.early ? ` · also ${rem.earlyText(r.early)}` : ''}`, 'bell'],
+    ['Room', e.room ? el('a', { href: `#/room/${encodeURIComponent(e.room)}`, class: 'link' }, e.room) : null, 'door'],
+  ].filter(([, val]) => val);
+  fill(app,
+    el('a', { class: 'back', href: '#/upcoming' }, icon('back', 20), 'Coming up'),
+    el('header', { class: 'detail-hero', 'data-tone': 'amber' },
+      el('div', { class: 'detail-kicker' }, el('span', { class: 'kicker-link' }, el('span', { class: 'badge badge-sm', 'data-tone': 'amber' }, icon('bell', 18)), el('span', {}, 'Reminder')), e.dueDate ? el('span', { class: 'pill ' + cls }, dueText('due', days)) : el('span', { class: 'pill calm' }, 'Done')),
+      el('h1', { id: 'detail-title' }, e.title),
+      el('p', { class: 'detail-meta' }, rem.repeatText(r))),
+    e.dueDate ? el('button', { type: 'button', class: 'btn btn-lg', id: 'reminder-done', onclick: async () => { const s = await reminderDone(e); renderReminderDetail(s); } }, icon('check', 20), rem.repeats(r) ? 'Mark done · move to next date' : 'Mark done') : null,
+    el('dl', { class: 'details' }, rows.map(([k, val, g]) => el('div', { class: 'detail-row' }, el('dt', {}, icon(g, 18), k), el('dd', {}, val)))),
+    e.notes ? el('section', { class: 'notes-card' }, el('h2', { class: 'card-title' }, 'Notes'), el('p', { class: 'notes' }, e.notes)) : null,
+    history.length ? el('section', { class: 'card reminder-history', id: 'reminder-history' },
+      el('h2', { class: 'card-title' }, `Done · ${history.length}`),
+      el('ul', { class: 'plain-list' }, history.slice(0, 12).map((h) => el('li', {}, `${niceDate(h.on)}${h.due && h.due !== h.on ? ` (was due ${niceDate(h.due)})` : ''}`))),
+      el('button', { type: 'button', class: 'btn link-btn small', id: 'reminder-undo', onclick: async () => { const s = rem.undoDone(e); await db.saveEntry(s); sync.recordSave(s.id); toast('Undone'); renderReminderDetail(s); } }, 'Undo last done')) : null,
+    el('div', { class: 'row detail-actions' },
+      el('a', { class: 'btn secondary', href: `#/reminder/${encodeURIComponent(e.id)}`, id: 'edit' }, icon('pencil', 20), 'Edit'),
+      el('button', { class: 'btn danger-soft', id: 'delete', onclick: async () => {
+        if (!confirm(`Delete the reminder "${e.title}"? This cannot be undone.`)) return;
+        await db.deleteEntry(e.id);
+        sync.recordDelete(e.id);
+        toast('Deleted');
+        location.replace('#/upcoming');
+      } }, icon('trash', 20), 'Delete')));
+}
+
+// ---------------------------------------------------------------------
 // Start-up
+
 // ---------------------------------------------------------------------
 window.addEventListener('hashchange', render);
 render();

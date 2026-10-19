@@ -47,7 +47,8 @@
 // v14.1 = shown as "Hearth" (cache prefix stays hearthbook-), "Money & energy" card, Weather card on More, electricity months by midpoint, latest-period daily use, "so far" bars, VAT wording (0% 1 Oct 2026 – 31 Mar 2027).
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
-const CACHE_NAME = 'hearthbook-v15.0';
+// v15.1 = Add reminder: standalone one-off or repeating reminders (stored as jobs with a reminder object).
+const CACHE_NAME = 'hearthbook-v15.1';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -112,6 +113,7 @@ const APP_SHELL = [
   './js/mortgage.js',
   './js/mortgageui.js',
   './js/usage.js',
+  './js/reminderlogic.js',
   './js/search.js',
   './js/house.js',
   './js/motion.js',

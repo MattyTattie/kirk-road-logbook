@@ -927,6 +927,13 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - Bottom + : section screens go to #/scan/<section> (renderScan hint); a click handler makes + work even on the same address.
 - List summary / month heads skip a £0.00 total. Mortgage tile note "mortgage-free <month>".
 
+## v15.1 — reminders
+
+- **Add reminder.** Tap + → Add reminder (or "+ Reminder" on Coming up). Give it a name and a date, and choose whether it repeats (every month, 3 or 6 months, every year, or your own). Quick picks fill in common ones (smoke alarm test, boiler service, stove sweep, dishwasher filter, gutters); nothing is added until you press Save.
+- Reminders show in Coming up, on the home Coming up card, in Ask Hearth and in the phone reminders (30 days, 7 days and on the day; optionally an extra alert 1, 3 or 14 days before when you open Hearth).
+- **Mark done** on the reminder or in Coming up. A repeating one moves on to its next date and keeps a list of when it was done; a one-off is finished. "Undo last done" puts it back.
+- A reminder is saved as a Jobs entry with an extra `reminder` part, so it backs up and syncs like everything else. Older versions show it as a job with a due date. Reminders don't appear in the Logbook lists.
+
 ## v15.0 — computer layout, EDF usage import, tighter security
 
 - **On a computer (screen 1024px wide or more)** the bottom bar turns into a menu down the left, with shortcuts to Coming up, Mortgage, Manuals and Year in review. Pages use two columns where it helps. Phones look exactly as before.

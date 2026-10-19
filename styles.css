@@ -1370,3 +1370,19 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
   .dash .section-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   #list.list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* v15.1: reminders */
+.preset-picks { margin: 4px 0 14px; }
+.preset-picks .label { display: block; font-weight: 600; font-size: 14px; color: var(--text-2); margin-bottom: 8px; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset-row .tab { text-decoration: none; }
+.up-done { flex: none; min-height: 40px; padding: 0 12px; gap: 4px; }
+.reminder-history ul { list-style: none; margin: 4px 0 8px; padding: 0; }
+.reminder-history li { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.reminder-history li:last-child { border-bottom: 0; }
+#reminder-done { width: 100%; margin: 4px 0 14px; }
+.reminder-choice { margin-top: 10px; background: linear-gradient(135deg, var(--amber), color-mix(in srgb, var(--amber) 70%, #c2410c)); }
+#reminder-form select { width: 100%; min-height: var(--tap); font: inherit; font-size: 16px; color: var(--text); padding: 10px 30px 10px 12px; border: 1px solid var(--line); border-radius: 14px; background-color: var(--surface); box-sizing: border-box; appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%); background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+#reminder-form select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--brand) 18%, transparent); }
+.up-row .up-done { flex: 0 0 auto; width: auto; }
+#upcoming-add-reminder { flex: 0 0 auto; width: auto; }

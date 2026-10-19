@@ -24,6 +24,7 @@ const SECTION_WORDS = {
   receipt: 'receipt', receipts: 'receipt', bought: 'receipt', purchase: 'receipt', purchases: 'receipt',
   warranty: 'warranty', warranties: 'warranty', guarantee: 'warranty', guarantees: 'warranty',
   insurance: 'insurance', insurances: 'insurance', policy: 'insurance', policies: 'insurance', insured: 'insurance', cover: 'insurance',
+  reminder: 'job', reminders: 'job', // v15.1: reminders are stored as jobs
   job: 'job', jobs: 'job', repair: 'job', repairs: 'job', service: 'job', servicing: 'job',
 };
 const QUESTION_WORDS = {

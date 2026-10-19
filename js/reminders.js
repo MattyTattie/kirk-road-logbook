@@ -33,6 +33,8 @@ export function dueReminders(entries, now = new Date(), log = {}) {
   for (const e of withoutSuperseded(entries)) {
     // v14.7: a mortgage deal end: 6, 3 and 1 month before (only the latest statement)
     if (e.type === 'mortgage') { const r = mortgageReminder(e, now, log); if (r) out.push(r); continue; }
+    // v15.1: a reminder's extra early alert (e.g. 3 days before), shown by the page
+    if (e.type === 'job' && e.reminder && /^\d{4}-\d\d-\d\d/.test(e.dueDate || '')) { const r = earlyReminder(e, now, log); if (r) out.push(r); }
     if (!WORD[e.type] || !e.dueDate || !/^\d{4}-\d\d-\d\d/.test(e.dueDate)) continue;
     const days = dayDiff(e.dueDate.slice(0, 10), now);
     if (days < 0 || days > WINDOW_DAYS) continue;
@@ -47,6 +49,18 @@ export function dueReminders(entries, now = new Date(), log = {}) {
     });
   }
   return out.sort((a, b) => a.days - b.days);
+}
+
+// v15.1: "also remind me N days before" on a reminder (not 30/7/0, which the
+// normal ones cover). Key "id|date|eN". Shown once, when N days or fewer are left.
+export function earlyReminder(e, now = new Date(), log = {}) {
+  const n = Number(e.reminder && e.reminder.early);
+  if (!n || n === 30 || n === 7) return null;
+  const days = dayDiff(e.dueDate.slice(0, 10), now);
+  if (days <= 0 || days > n) return null;
+  const key = `${e.id}|${e.dueDate}|e${n}`;
+  if (log[key]) return null;
+  return { key, id: e.id, days, threshold: `e${n}`, title: `${e.title || 'Reminder'} is due ${inDays(days)}`, body: `Due on ${ukDate(e.dueDate.slice(0, 10))}. Tap to open it in Hearth.`, url: `./index.html#/view/${encodeURIComponent(e.id)}` };
 }
 
 // The mortgage reminder due now, if any: the nearest of 6, 3 and 1 month
@@ -95,7 +109,7 @@ export function check(getEntries, { force = false } = {}) {
   const onlyEarly = native.active() && !force;
   checking = checking || (async () => {
     try {
-      const due = dueReminders(await getEntries(), new Date(), notifiedLog()).filter((r) => !onlyEarly || r.threshold === 'm6' || r.threshold === 'm3');
+      const due = dueReminders(await getEntries(), new Date(), notifiedLog()).filter((r) => !onlyEarly || r.threshold === 'm6' || r.threshold === 'm3' || /^e\d/.test(String(r.threshold)));
       if (!due.length) return [];
       const reg = await navigator.serviceWorker.ready;
       for (const r of due) {
