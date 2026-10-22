@@ -8,7 +8,7 @@
 // mortgage-free date for the same mortgage with no overpayments: an
 // estimate, and always labelled as one.
 
-import { el, fill, infoNote, keepPlace, money, niceDate, daysUntil } from './utils.js';
+import { el, fill, moreInfo, infoNote, keepPlace, money, niceDate, daysUntil } from './utils.js';
 import { icon } from './icons.js';
 import * as prefs from './prefs.js';
 import * as M from './mortgage.js';
@@ -93,15 +93,28 @@ function whatIfBox(s) {
     const saved = Math.round((now.interest - r.interest) * 100) / 100;
     const same = diff === 0 && Math.abs(saved) < 1;
     const warn = M.overAllowance({ ...plan, ercUntil: d.ercUntil || d.end, alreadyThisYear: already, thisYear });
+    // v15.2: green when it's sooner, red when it's later, plain when the same;
+    // the workings fold away under "More info".
+    const kind = same || diff === 0 ? 'plain' : diff > 0 ? 'good' : 'bad';
+    const when2 = same ? 'same as now' : diff > 0 ? `${monthsText(diff)} sooner than now` : diff < 0 ? `${monthsText(-diff)} later than now` : 'same month as now';
     fill(out,
-      el('div', { class: 'mrow', id: 'whatif-free' }, el('span', { class: 'mrow-k' }, 'Mortgage-free'), el('span', { class: 'mrow-v' }, longMonth(r.last),
-        el('small', { id: 'whatif-months' }, same ? 'same as now' : diff > 0 ? `${monthsText(diff)} sooner than now` : diff < 0 ? `${monthsText(-diff)} later than now` : 'same month as now'))),
-      same ? null : el('div', { class: 'mrow', id: 'whatif-interest' }, el('span', { class: 'mrow-k' }, saved >= 0 ? 'Interest saved' : 'Extra interest'),
-        el('span', { class: 'mrow-v' + (saved >= 0 ? ' good' : ' bad') }, pounds(Math.abs(saved)), el('small', {}, 'compared with now'))),
+      el('div', { class: `result-box ${kind}`, id: 'whatif-box' },
+        el('div', { class: 'mrow', id: 'whatif-free' }, el('span', { class: 'mrow-k' }, 'Mortgage-free'), el('span', { class: 'mrow-v' }, longMonth(r.last),
+          el('small', { id: 'whatif-months' }, when2))),
+        same ? null : el('div', { class: 'mrow', id: 'whatif-interest' }, el('span', { class: 'mrow-k' }, saved >= 0 ? 'Interest saved' : 'Extra interest'),
+          el('span', { class: 'mrow-v' + (saved >= 0 ? ' good' : ' bad') }, pounds(Math.abs(saved)), el('small', {}, 'compared with now')))),
       warn.length ? el('p', { class: 'whatif-warn', id: 'whatif-warn' }, icon('alert', 16), el('span', {},
         warn.map((w) => `${w.year}: ${pounds(w.total)} overpaid, more than the usual 10% a year (about ${pounds(w.allowed)}).`).join(' '),
         ' Santander may charge an early repayment charge on the extra, so check with them first.')) : null,
-      el('p', { class: 'small muted' }, `Just trying it out: nothing is saved. Now: ${cash(s.extra || 0)} a month extra, mortgage-free ${longMonth(now.last)}.`));
+      moreInfo([`Just trying it out: nothing is saved. Interest is worked out each month as the balance × ${d.rate}% ÷ 12, and the rate is assumed to stay the same.`], { id: 'whatif-more', rows: [
+        ['Balance now', money(s.balance)],
+        ['Rate', `${d.rate}%`],
+        ['Monthly payment', money(d.payment)],
+        ['Extra each month', `${cash(extra)} (now ${cash(s.extra || 0)})`],
+        l ? ['One-off', `${cash(l)} in ${longMonth(plan.lumpDate)}`] : null,
+        ['Mortgage-free now', longMonth(now.last)],
+        ['Interest from here', `${pounds(r.interest)} (now ${pounds(now.interest)})`],
+      ] }));
   };
   for (const i of [monthly, lump, when]) { i.addEventListener('input', update); i.addEventListener('change', update); }
   const reset = el('button', { type: 'button', class: 'btn link-btn', id: 'whatif-reset', onclick: () => { monthly.value = String(s.extra || 0); lump.value = ''; when.value = defWhen; update(); } }, 'Reset');
@@ -113,6 +126,18 @@ function whatIfBox(s) {
       el('label', { class: 'whatif-field' }, el('span', {}, 'One-off payment (£)'), lump),
       el('label', { class: 'whatif-field' }, el('span', {}, 'Paid in'), when)),
     out);
+}
+
+// v15.2: the headline answer in a coloured box (green = ahead of plan).
+function freeHeadline(on, sh, pace, con, s) {
+  const best = pace && s.extra ? pace : con;
+  if (!best) return null;
+  const vs = on && sh ? sh.mortgageFree : con && pace && s.extra ? con.last : null;
+  const ahead = vs ? monthsBetween(best.last, vs) : 0;
+  if (ahead > 0) return el('div', { class: 'result-box good', id: 'free-headline' }, el('div', { class: 'rb-head' }, icon('check', 18), el('span', {}, `Mortgage-free by ${longMonth(best.last)}`)),
+    el('p', { class: 'rb-sub' }, `${monthsText(ahead)} sooner than ${on && sh ? 'without overpayments' : 'paying only the contractual payments'}`));
+  return el('div', { class: 'result-box plain', id: 'free-headline' }, el('div', { class: 'rb-head' }, el('span', {}, `Mortgage-free by ${longMonth(best.last)}`)),
+    el('p', { class: 'rb-sub' }, 'Paying the normal monthly payment'));
 }
 
 export function overview(everything) {
@@ -190,6 +215,7 @@ export function overview(everything) {
     }
     const free = freeRows.length ? el('section', { class: 'card mortgage-card', id: 'mortgage-free' },
       el('h2', { class: 'card-title' }, 'Mortgage-free'),
+      freeHeadline(on, sh, pace, con, s),
       el('div', { class: 'mrows' }, freeRows),
       infoNote(`Estimates from the ${niceDate(s.asAt)} balance, if the ${d.rate}% rate carried on.`, { id: 'free-note', cls: 'small muted', label: 'How these dates are worked out' }),
       pace ? whatIfBox(s) : null) : null;

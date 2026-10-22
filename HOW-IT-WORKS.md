@@ -941,3 +941,9 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - Usage is kept as one record (`usage-electricity-edf`) that syncs and backs up like everything else; it doesn't show in lists or totals. A phone still on an older version shows it as one blank entry until it updates.
 - **Content Security Policy.** index.html has a CSP meta tag that only lets the app load its own files, Google sign-in/Drive, and Open-Meteo weather. It includes a hash of the small inline theme script at the top of index.html: if that script is ever edited, the hash must be recomputed (`openssl dgst -sha256 -binary | base64` of the script text) or dark mode stops applying before load. If something Google-related stops working, removing the meta tag is the rollback.
 - The mortgage chart ignores any point without a proper date, so odd data from a backup or sync can't inject anything.
+
+## v15.2 additions
+- js/glossary.js: word list + tap-to-explain pop-up + Words explained page.
+- js/tapselect.js: turns every select into a tap list (bottom sheet), keeping the real select in the page.
+- js/outcomes.js: works out whether a result box is good (green), bad (red) or warn (amber).
+- Undo: the old copy of a record is saved again with a newer time, so sync treats it as the latest.

@@ -138,3 +138,20 @@ export async function keepPlace(anchorId, fn) {
   requestAnimationFrame(put);
   setTimeout(put, 250); // late bits (pictures, counters) can still move things
 }
+
+// v15.2: a coloured result box for a key outcome. kind: 'good' (green),
+// 'bad' (red), 'warn' (amber) or 'plain'. head = short answer, sub = one line.
+export function resultBox(kind, head, sub, { id, iconNode } = {}) {
+  return el('div', { class: `result-box ${kind}`, id, role: 'status' },
+    el('div', { class: 'rb-head' }, iconNode || null, el('span', {}, head)),
+    sub ? el('p', { class: 'rb-sub' }, sub) : null);
+}
+// v15.2: "More info" fold: the short answer stays on screen, the workings
+// go underneath. rows = [[label, value], ...] and/or extra paragraphs.
+export function moreInfo(body, { id, label = 'More info', rows } = {}) {
+  return el('details', { class: 'more-info', id },
+    el('summary', {}, label),
+    el('div', { class: 'mi-body' },
+      rows && rows.length ? el('div', { class: 'mi-rows' }, rows.filter(Boolean).map(([k, v]) => [el('span', {}, k), el('span', {}, v)])) : null,
+      [].concat(body || []).map((b) => (typeof b === 'string' ? el('p', {}, b) : b))));
+}

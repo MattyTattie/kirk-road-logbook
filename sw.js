@@ -48,7 +48,8 @@
 // (Only caches named 'hearthbook-…' are deleted on activate; other apps on the
 // same github.io origin keep theirs.)
 // v15.1 = Add reminder: standalone one-off or repeating reminders (stored as jobs with a reminder object).
-const CACHE_NAME = 'hearthbook-v15.1';
+// v15.2 = tap-to-explain words + Words explained page, tap lists instead of drop-downs, green/red result boxes, More info folds, Undo after edits/deletes.
+const CACHE_NAME = 'hearthbook-v15.2';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -129,6 +130,9 @@ const APP_SHELL = [
   './js/manuallookup.js',
   './js/homelogic.js',
   './js/vat.js',
+  './js/glossary.js',
+  './js/tapselect.js',
+  './js/outcomes.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',

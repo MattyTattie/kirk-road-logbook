@@ -31,7 +31,7 @@ import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
 import { exportBackup, importBackup } from './backup.js';
-import { el, fill, addTo, addFirst, infoNote, keepPlace, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
+import { el, fill, addTo, addFirst, infoNote, keepPlace, resultBox, moreInfo, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
@@ -58,6 +58,9 @@ import * as mort from './mortgage.js';
 import * as mortUI from './mortgageui.js';
 import * as usage from './usage.js';
 import * as rem from './reminderlogic.js';
+import * as gloss from './glossary.js';
+import { billsVsLastYear, comingUpState } from './outcomes.js';
+import { startTapSelect } from './tapselect.js';
 
 const app = document.getElementById('app');
 const WELCOME_KEY = 'hearthbook.welcomed';
@@ -76,6 +79,9 @@ const state = {
 document.title = APP_NAME;
 document.querySelectorAll('[data-app-name]').forEach((n) => (n.textContent = APP_NAME));
 applyTheme();
+// v15.2: tap-to-explain words and tap lists, on every screen.
+gloss.startTerms(app);
+startTapSelect(document.body);
 
 // ---------------------------------------------------------------------
 // Photo previews
@@ -124,7 +130,7 @@ document.addEventListener('click', (e) => {
 });
 async function render() {
   const parts = location.hash.replace(/^#\/?/, '').split('/'); // "#/list/all" -> ["list","all"]
-  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, year: 2, upcoming: 1, usage: 2, reminder: 3, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
+  const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, glossary: 2, year: 2, upcoming: 1, usage: 2, reminder: 3, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
@@ -161,6 +167,7 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'upcoming') await renderUpcoming(arg || '');
     else if (page === 'usage') await renderUsageImport();
     else if (page === 'reminder') await renderReminderForm(arg ? decodeURIComponent(arg) : '');
+    else if (page === 'glossary') renderGlossary(arg || '');
     else if (page === 'year') await renderYearReview(/^\d{4}$/.test(arg || '') ? Number(arg) : new Date().getFullYear());
     else if (page === 'welcome') renderWelcome();
     else await renderHome();
@@ -181,7 +188,7 @@ function setChrome(page, arg) {
   const tab =
     (page === 'list' && arg === 'meter') || page === 'usage' ? 'meter'
     : page === 'list' || page === 'view' || page === 'new' ? 'list'
-    : ['export', 'manuals', 'manual', 'addmanual', 'editmanual', 'findmanual', 'rooms', 'room', 'year'].includes(page) ? 'export'
+    : ['export', 'manuals', 'manual', 'addmanual', 'editmanual', 'findmanual', 'rooms', 'room', 'year', 'glossary'].includes(page) ? 'export'
     : 'home';
   document.querySelectorAll('.bottom-nav [data-tab]').forEach((a) => {
     const on = a.dataset.tab === tab;
@@ -255,11 +262,30 @@ function sectionBadge(section, size = 'md') {
 }
 
 // A little pop-up message at the bottom of the screen, e.g. "Saved".
-function toast(message) {
-  const t = el('div', { class: 'toast', role: 'status' }, icon('check', 18), message);
+function toast(message, undo) {
+  document.querySelectorAll('.toast').forEach((o) => o.remove());
+  const life = undo ? 6000 : 2200;
+  let done = false;
+  const t = el('div', { class: 'toast' + (undo ? ' has-undo' : ''), role: 'status', id: 'toast' }, icon('check', 18), message,
+    undo ? el('button', { type: 'button', class: 'toast-undo', id: 'toast-undo', onclick: async () => { if (done) return; done = true; t.remove(); try { await undo(); } catch (err) { console.error(err); } } }, 'Undo') : null);
   addTo(document.body, t);
-  setTimeout(() => t.classList.add('out'), 2200);
-  setTimeout(() => t.remove(), 2600);
+  setTimeout(() => t.classList.add('out'), life);
+  setTimeout(() => { done = true; t.remove(); }, life + 400);
+}
+// v15.2: put a record back the way it was (undo after an edit or delete).
+// It's saved again as a normal change with a new updatedAt, so on sync it
+// beats the delete or the edit on every phone. Same record, same format.
+async function restoreEntry(prev, msg = 'Put back') {
+  const back = { ...prev, updatedAt: new Date().toISOString() };
+  await db.saveEntry(back);
+  await sync.recordSave(back.id);
+  toast(msg);
+  return back;
+}
+// v15.2: undo adding a brand-new entry = delete it again (normal delete).
+async function undoNew(id) {
+  await db.deleteEntry(id);
+  await sync.recordDelete(id);
 }
 
 // Screen header: optional back link, large title, optional subtitle.
@@ -849,6 +875,8 @@ function meterInsights(everything) {
   // credits printed on the bills. Only shown once a bill has credits.
   const hasCredits = everything.some((e) => e.type === 'meter' && creditsOf(e).length);
   const creditNote = el('p', { class: 'meter-stats-note credit-note', id: 'credit-note', hidden: true });
+  const creditMore = el('div', { id: 'credit-more-slot' }); // v15.2: workings under the saved line
+  const yoyBox = el('div', { id: 'bills-yoy-slot' }); // v15.2: bills up/down on last year
   const drawStats = (yr) => {
     const s = meterSummary(everything, yr);
     if (s && yr) { // v14.6: bills for months with no readings at all
@@ -858,6 +886,12 @@ function meterInsights(everything) {
     }
     fill(stats, meterStatsCells(s, unit, statsNote, hasCredits && prefs.afterCreditsOn()));
     savedLine(creditNote, s, hasCredits && prefs.afterCreditsOn());
+    const netOn = hasCredits && prefs.afterCreditsOn();
+    fill(creditMore, netOn && s && s.credits && s.credits.total ? moreInfo(['Credits are the amounts printed on each bill. The Bills box and the charts use what was paid after them while the switch is on.'], { id: 'credit-more', rows: [
+      ['Bills as charged', money(s.billsTotal)], ['EDF credits', `−${money(s.credits.total)}`], ['Paid after credits', money(s.billsNet)]] }) : null);
+    const y = billsVsLastYear(everything, yr, netOn);
+    fill(yoyBox, y ? resultBox(y.kind, y.kind === 'plain' ? `Bills about the same as ${yr - 1}` : `Bills ${y.diff < 0 ? 'down' : 'up'} ${money(Math.abs(y.diff))} on ${yr - 1}${y.pct !== null ? ` (${y.diff < 0 ? '−' : '+'}${Math.abs(y.pct)}%)` : ''}`,
+      `${y.months ? y.months + ' ' : ''}${yr}: ${money(y.now)} · same months ${yr - 1}: ${money(y.then)}${netOn ? ' (after credits)' : ''}`, { id: 'bills-yoy', iconNode: icon(y.kind === 'good' ? 'check' : y.kind === 'bad' ? 'alert' : 'chart', 18) }) : null);
   };
   const creditSwitch = () => hasCredits ? el('label', { class: 'credit-switch', id: 'credit-switch-row' },
     el('input', { type: 'checkbox', role: 'switch', id: 'after-credits', checked: prefs.afterCreditsOn(),
@@ -947,7 +981,7 @@ function meterInsights(everything) {
   return el(
     'section',
     { class: 'card meter-card', id: 'meter-insights', 'aria-label': 'Meter summary' },
-    stats, statsNote, creditNote,
+    stats, statsNote, creditNote, creditMore, yoyBox,
     box
   );
 }
@@ -1915,9 +1949,10 @@ async function renderForm(type, id) {
     if (credits) { if (credits.length) saved.credits = credits; else delete saved.credits; } // v14.5
     if (mortF) { saved.cost = null; if (saved.mortgage.kind === 'statement' || saved.mortgage.kind === 'setup') saved.mortgage.dealEnd = saved.dueDate || null; }
     if (!saved.currency || saved.currency === 'GBP' || ins || mortF) delete saved.currency; // pounds = no field (as before)
+    const prevRec = id ? await db.getEntry(id) : null; // v15.2: for Undo
     await db.saveEntry(saved);
     sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
-    toast('Saved');
+    toast('Saved', prevRec ? async () => { await restoreEntry(prevRec, 'Change undone'); if (location.hash === `#/view/${saved.id}`) render(); else location.hash = `#/view/${saved.id}`; } : null);
     // replace() instead of a normal link, so pressing Back afterwards
     // doesn't take you back into the form.
     location.replace(`#/view/${saved.id}`);
@@ -2269,11 +2304,12 @@ async function renderDetail(id) {
           class: 'btn danger-soft',
           id: 'delete',
           onclick: async () => {
-            // Always ask first — there's no undo!
-            if (!confirm(`Delete "${e.title}"? This cannot be undone.`)) return;
+            // Ask first; v15.2: then a few seconds to undo it.
+            if (!confirm(`Delete "${e.title}"?`)) return;
+            const before = await db.getEntry(e.id); // with its photos
             await db.deleteEntry(e.id);
             sync.recordDelete(e.id); // so the delete reaches the other phone too
-            toast('Deleted');
+            toast('Deleted', async () => { await restoreEntry(before); location.hash = `#/view/${e.id}`; });
             location.replace(`#/list/${e.type}`);
           },
         },
@@ -2903,6 +2939,8 @@ async function renderUpcoming(focus) {
   ].filter(([, list]) => list.length);
   fill(app,
     screenHead('Coming up', { id: 'upcoming-title', back: { href: '#/', label: 'Home' }, sub: 'Reminders, due dates, renewals, warranty ends and mortgage reminders, soonest first', action: el('a', { class: 'btn small secondary', href: '#/reminder', id: 'upcoming-add-reminder' }, icon('plus', 16), 'Reminder') }),
+    (() => { if (!groups.length) return null; const st = comingUpState(late.length, rows.filter((r) => daysUntil(r.date) <= 30).length);
+      return resultBox(st.kind, st.head, st.sub, { id: 'upcoming-state', iconNode: icon(st.kind === 'good' ? 'check' : st.kind === 'bad' ? 'alert' : 'clock', 18) }); })(),
     groups.length
       ? el('div', { id: 'upcoming-list' }, groups.map(([name, list]) => el('section', { class: 'group up-group', 'data-group': name },
           el('div', { class: 'group-head' }, el('h2', {}, name), el('span', { class: 'small muted' }, `${list.length}`)),
@@ -2959,6 +2997,19 @@ function roundupCard(r, year) {
 }
 
 // ---------------------------------------------------------------------
+// WORDS EXPLAINED (v15.2): every tap-to-explain word in one list
+// ---------------------------------------------------------------------
+function renderGlossary(focus) {
+  fill(app,
+    screenHead('Words explained', { back: { href: '#/export', label: 'More' }, sub: 'Tap a dotted-underlined word anywhere in Hearth to see what it means' }),
+    el('div', { class: 'no-terms', id: 'glossary' }, gloss.GROUPS.map((g) => el('section', { class: 'gloss-group', 'data-group': g },
+      el('h2', {}, g),
+      el('div', { class: 'card' }, gloss.TERMS.filter((t) => t[3] === g).map(([key, name, desc]) => el('div', { class: 'gloss-item' + (key === focus ? ' hl' : ''), id: `gl-${key}`, 'data-term': key },
+        el('strong', {}, name), el('p', {}, desc))))))));
+  if (focus) { const t = document.getElementById(`gl-${focus}`); if (t) t.scrollIntoView({ block: 'center' }); }
+}
+
+// ---------------------------------------------------------------------
 // YEAR IN REVIEW (v13): what the house cost in one year
 // ---------------------------------------------------------------------
 async function renderYearReview(year) {
@@ -2978,10 +3029,15 @@ async function renderYearReview(year) {
     el('section', { class: 'card review-hero', id: 'review-total' },
       el('p', { class: 'eyebrow' }, r.partial ? `${year} so far (to ${niceDate(r.until)})` : `${year}`),
       el('p', { class: 'review-value', id: 'review-value' }, money(r.total)),
+      r.prevTotal !== null && r.change !== null ? resultBox(Math.abs(r.change) < 1 ? 'plain' : r.change < 0 ? 'good' : 'warn',
+        Math.abs(r.change) < 1 ? `About the same as ${year - 1}` : `${money(Math.abs(r.change))} ${r.change < 0 ? 'less' : 'more'} than ${year - 1}${r.partial ? ' by this date' : ''}`, null, { id: 'review-outcome' }) : null,
       el('p', { class: 'small', id: 'review-compare' }, r.prevTotal !== null
         ? [change(r.change, `${year - 1}${r.partial ? ' (same dates)' : ''}`), ` · ${money(r.prevTotal)} in ${year - 1}${r.partial ? ' by then' : ''}`]
         : `Nothing logged in ${year - 1} to compare with.`),
       infoNote(`Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills by date paid, as charged.`, { id: 'review-basis', cls: 'small muted', label: 'What this total counts' }),
+      r.categories.length ? moreInfo([`Each section’s total for ${year}${r.partial ? ' so far' : ''}, with ${year - 1}${r.partial ? ' to the same date' : ''} beside it.`], { id: 'review-more', rows: [
+        ...r.categories.map((c) => [c.label, `${money(c.total)}${c.prev !== null && c.prev !== undefined ? ` (${money(c.prev)})` : ''}`]),
+        ['Total', `${money(r.total)}${r.prevTotal !== null ? ` (${money(r.prevTotal)})` : ''}`]] }) : null,
       mortgageSwitch(everything, 'review')),
     roundupCard(r, year),
     r.categories.length
@@ -3087,6 +3143,10 @@ async function renderExport() {
       el('span', { class: 'badge badge-md', 'data-tone': 'brand' }, icon('chart')),
       el('span', { class: 'more-row-text' }, el('strong', {}, 'Year in review'), el('span', { class: 'small muted' }, 'What the house cost each year')),
       icon('chevron', 18)),
+    el('a', { class: 'card more-row', href: '#/glossary', id: 'more-glossary' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'sky' }, icon('book')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Words explained'), el('span', { class: 'small muted' }, 'Mortgage, electricity and house words in plain English')),
+      icon('chevron', 18)),
     tidy && recent.length ? el('section', { class: 'group', id: 'recent' },
       el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
       el('div', { class: 'list' }, recent.map(entryCard))) : null,
@@ -3181,7 +3241,7 @@ async function reminderDone(e) {
   const saved = rem.markDone(e, todayISO());
   await db.saveEntry(saved);
   sync.recordSave(saved.id);
-  toast(saved.dueDate ? `Done · next due ${niceDate(saved.dueDate)}` : 'Done');
+  toast(saved.dueDate ? `Done · next due ${niceDate(saved.dueDate)}` : 'Done', async () => { await restoreEntry(e, 'Undone'); holdScroll = true; try { await render(); } finally { holdScroll = false; } });
   return saved;
 }
 
@@ -3283,10 +3343,10 @@ function renderReminderDetail(e) {
     el('div', { class: 'row detail-actions' },
       el('a', { class: 'btn secondary', href: `#/reminder/${encodeURIComponent(e.id)}`, id: 'edit' }, icon('pencil', 20), 'Edit'),
       el('button', { class: 'btn danger-soft', id: 'delete', onclick: async () => {
-        if (!confirm(`Delete the reminder "${e.title}"? This cannot be undone.`)) return;
+        if (!confirm(`Delete the reminder "${e.title}"?`)) return;
         await db.deleteEntry(e.id);
         sync.recordDelete(e.id);
-        toast('Deleted');
+        toast('Deleted', async () => { await restoreEntry(e); location.hash = `#/view/${e.id}`; });
         location.replace('#/upcoming');
       } }, icon('trash', 20), 'Delete')));
 }
