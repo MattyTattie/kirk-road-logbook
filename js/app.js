@@ -1615,6 +1615,7 @@ function mortgageKindField(entry) {
             // v15.3: a monthly payment is just the small form (no name, lender, date or deal end)
             f.querySelectorAll('.m-not-monthly').forEach((g) => { g.hidden = mon; });
             if (mon && f.__monthlyUpdate) f.__monthlyUpdate();
+            const h = document.getElementById('form-screen-title'); if (h) h.textContent = `${h.dataset.verb} ${mon ? 'monthly payment' : h.dataset.single}`; // v15.4
           } }), label))));
 }
 function mortgageFields(entry, all = []) {
@@ -1779,7 +1780,7 @@ async function renderForm(type, id) {
   addTo(form,
     el('header', { class: 'form-head' },
       el('a', { class: 'back', href: id ? `#/view/${id}` : '#/new', onclick: (ev) => { ev.preventDefault(); history.back(); } }, icon('back', 20), 'Back'),
-      el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title' }, `${id ? 'Edit' : 'New'} ${section.single.toLowerCase()}`))
+      el('div', { class: 'form-title' }, sectionBadge(section), el('h1', { class: 'screen-title', id: 'form-screen-title', 'data-verb': id ? 'Edit' : 'New', 'data-single': section.single.toLowerCase() }, `${id ? 'Edit' : 'New'} ${mortF && entry.mortgage && entry.mortgage.kind === 'monthly' ? 'monthly payment' : section.single.toLowerCase()}`))
     ),
     scan ? scanHint(scan, (t) => {
       // Keep what's been typed so far, then reopen the form in the other section.

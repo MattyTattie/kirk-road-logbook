@@ -1468,3 +1468,37 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .mpay-fold .mf-title { font-weight: 650; overflow-wrap: anywhere; }
 .mpay-fold-list { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
 .mpay-fold-list .entry { margin: 0; }
+
+/* =====================================================================
+   v15.4 — computer (wide) layout: plainer, desktop-software look.
+   Only from 1024px wide, so phones are exactly as before.
+   ===================================================================== */
+@media (min-width: 1024px) {
+  :root, :root[data-theme='dark'], :root:not([data-theme='light']) { --radius: 6px; --shadow: none; --shadow-lift: 0 2px 8px rgba(0, 0, 0, 0.14); }
+  .card, .entry, .stat-card, .house-card, .tile, .up-row, .ask, .search-wrap, .mpay-fold, .result-box { border-radius: 6px; box-shadow: none; }
+  .card, .house-card, .stat-card, .tile, .entry { border: 1px solid var(--line); }
+  .card { padding: 14px 16px; margin-bottom: 12px; }
+  .entry { padding: 10px 12px; min-height: 64px; }
+  .entry:hover { transform: none; background: var(--surface-2); }
+  .entry-title, .up-text strong, .tag-text strong, .period-items a span:first-child { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+
+  /* section pills → flat tabs with an underline */
+  .tabs { gap: 2px; border-bottom: 1px solid var(--line); padding: 0; margin: 0 0 14px; }
+  .tab { min-height: 38px; padding: 0 12px; border-radius: 0; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: transparent; box-shadow: none; color: var(--text-2); font-size: 14px; }
+  .tab:hover { color: var(--text); background: var(--surface-2); }
+  .tab.active { background: transparent; color: var(--text); border-bottom-color: var(--brand); }
+  .tab.active .ico { color: var(--tone, var(--text-2)); }
+
+  /* sidebar: plain Add button, square highlights */
+  .bottom-nav a { border-radius: 6px; min-height: 38px; font-size: 14px; }
+  .bottom-nav .nav-add, .bottom-nav .nav-add:hover { height: 38px; border-radius: 6px; box-shadow: none; background: var(--brand); filter: none; font-size: 14.5px; margin-bottom: 12px; }
+  .bottom-nav .nav-add:hover { background: var(--brand-2); }
+  .btn { border-radius: 6px; box-shadow: none; }
+
+  /* home: house fits its column (whole picture, not stretched or cropped) */
+  .dash { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 20px; }
+  .dash > #house { align-self: start; }
+  .dash > #house .house-svg { width: 100%; height: auto; max-height: 240px; aspect-ratio: 360 / 144; margin: 0 auto; }
+  .dash:not(:has(> #coming-up)) > #house { max-width: 600px; }
+  .section-grid { gap: 10px; }
+}
