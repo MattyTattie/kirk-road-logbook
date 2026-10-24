@@ -1309,7 +1309,7 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
   .tabs { margin: 0 0 6px; padding: 2px 0 10px; flex-wrap: wrap; overflow: visible; }
   .search-row { max-width: 720px; }
   #list.list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; align-items: stretch; }
-  #list.list > .month-head, #list.list > .empty, #list.list > .month-fold, #list.list > :not(a):not(.entry) { grid-column: 1 / -1; }
+  #list.list > .month-head, #list.list > .empty, #list.list > .month-fold, #list.list > .mpay-fold, #list.list > :not(a):not(.entry) { grid-column: 1 / -1; }
   #list .entry { margin: 0; }
 
   /* Electricity: the summary, chart and usage card sit in a column on the
@@ -1453,3 +1453,18 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 #upcoming-state { margin: 0 0 14px; }
 .whatif-out .result-box .mrow { border: 0; }
 .whatif-out .result-box .mrow-v small { color: inherit; opacity: .85; }
+
+/* v15.3: mortgage monthly payments */
+.m-kind-seg .seg-btn { padding: 6px 8px; white-space: normal; text-align: center; line-height: 1.25; overflow-wrap: anywhere; }
+.monthly-out { margin: 4px 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.monthly-out .mrow-v small { white-space: normal; }
+.monthly-out p { margin: 4px 0 0; overflow-wrap: anywhere; }
+.mpay-fold { padding: 0; overflow: hidden; }
+.mpay-fold > summary { list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 14px 16px; cursor: pointer; }
+.mpay-fold > summary::-webkit-details-marker { display: none; }
+.mpay-fold > summary::after { content: '›'; margin-left: auto; color: var(--text-2); transition: transform .2s; font-size: 20px; line-height: 1; }
+.mpay-fold[open] > summary::after { transform: rotate(90deg); }
+.mpay-fold > summary:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.mpay-fold .mf-title { font-weight: 650; overflow-wrap: anywhere; }
+.mpay-fold-list { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
+.mpay-fold-list .entry { margin: 0; }

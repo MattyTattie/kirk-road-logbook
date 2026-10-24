@@ -19,19 +19,98 @@
 // rate ÷ 12, rounded to the penny, added on the payment date (how the
 // Santander statements work it out). Everything projected is an ESTIMATE.
 
+const hasNum = (v) => v !== null && v !== undefined && v !== '' && isFinite(Number(v));
 const p = (x) => Math.round(Number(x) * 100); // £ → pence
 const L = (pence) => Math.round(pence) / 100; // pence → £
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export const isMortgage = (e) => e && e.type === 'mortgage' && e.mortgage && typeof e.mortgage === 'object';
 export const setupOf = (entries) => entries.filter((e) => isMortgage(e) && e.mortgage.kind === 'setup').sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0] || null;
-export const statementsOf = (entries) => entries.filter((e) => isMortgage(e) && e.mortgage.kind === 'statement' && Number(e.mortgage.year) > 1900)
+// The statements actually saved (annual ones and online-banking "so far" ones).
+export const realStatementsOf = (entries) => entries.filter((e) => isMortgage(e) && e.mortgage.kind === 'statement' && Number(e.mortgage.year) > 1900)
   .sort((a, b) => Number(a.mortgage.year) - Number(b.mortgage.year) || (a.date || '').localeCompare(b.date || ''));
-export const latestStatement = (entries) => { const s = statementsOf(entries); return s[s.length - 1] || null; };
+// v15.3: statements PLUS "so far" figures made up from monthly payments
+// typed in after the last statement (monthlyStatements below). Every sum
+// on the Mortgage page, Year in review and Include mortgage reads this, so
+// the monthly payments feed them all without any other changes.
+export const statementsOf = (entries) => monthlyStatements(entries, realStatementsOf(entries));
+export const latestStatement = (entries) => { const s = realStatementsOf(entries); return s[s.length - 1] || null; };
+
+// --------------------------------------------------------------------
+// v15.3: Monthly payments. An entry with mortgage {kind:'monthly',
+// capital, interest, total, contractual, overpaid} on its payment date.
+// Overpayment = total direct debit − the contractual payment of the deal
+// in force (saved with it). The balance comes down by capital + overpaid.
+// A monthly payment on or before the latest statement's date, or in a year
+// that has a full annual statement, is already counted there: left out.
+// --------------------------------------------------------------------
+export const monthlyOf = (entries) => entries.filter((e) => isMortgage(e) && e.mortgage.kind === 'monthly' && /^\d{4}-\d{2}-\d{2}/.test(e.date || ''))
+  .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+export const monthlyOverpaid = (m) => (hasNum(m.overpaid) ? Number(m.overpaid) : hasNum(m.total) && hasNum(m.contractual) ? Math.max(0, L(p(m.total) - p(m.contractual))) : 0);
+// The monthly payments that count (not covered by a statement).
+export function activeMonthly(entries, real = realStatementsOf(entries)) {
+  const full = new Set(real.filter((s) => !s.mortgage.partial).map((s) => Number(s.mortgage.year)));
+  const base = real[real.length - 1];
+  const setup = setupOf(entries);
+  const after = base ? (base.mortgage.asOf || base.date || `${base.mortgage.year}-12-31`) : setup ? setup.date : null;
+  if (!after) return [];
+  return monthlyOf(entries).filter((e) => e.date.slice(0, 10) > after && !full.has(Number(e.date.slice(0, 4))));
+}
+function monthlyStatements(entries, real) {
+  const mon = activeMonthly(entries, real);
+  if (!mon.length) return real;
+  const base = real[real.length - 1] || null;
+  const setup = setupOf(entries);
+  const bm = base ? base.mortgage : setup.mortgage;
+  let bal = p(base ? base.mortgage.balance : setup.mortgage.amount);
+  const out = [...real];
+  const years = [...new Set(mon.map((e) => Number(e.date.slice(0, 4))))];
+  for (const y of years) {
+    const list = mon.filter((e) => Number(e.date.slice(0, 4)) === y);
+    const open = bal;
+    let over = 0, int = 0, cap = 0;
+    for (const e of list) { const m = e.mortgage; over += p(monthlyOverpaid(m)); int += p(hasNum(m.interest) ? m.interest : 0); cap += p(hasNum(m.capital) ? m.capital : 0); }
+    bal = Math.max(0, bal - cap - over);
+    const last = list[list.length - 1];
+    const asOf = last.date.slice(0, 10);
+    const sameYear = base && Number(base.mortgage.year) === y && base.mortgage.partial;
+    const pay = Number(last.mortgage.contractual) || Number(bm.payment) || null;
+    const common = { balance: L(bal), asOf, partial: true, lastOverpay: monthlyOverpaid(last.mortgage), payment: pay, monthlyCount: list.length, fromMonthly: true, erc: null };
+    if (sameYear) {
+      const b = base.mortgage;
+      out[out.length - 1] = { ...base, date: asOf, mortgage: { ...b, ...common, overpaid: L(p(b.overpaid || 0) + over), interest: L(p(b.interest || 0) + int), source: `${b.source || 'online banking'} and monthly payments`, monthlyCount: list.length } };
+    } else {
+      out.push({ id: `monthly-${y}`, type: 'mortgage', synthetic: true, date: asOf, supplier: base ? base.supplier : setup.supplier,
+        mortgage: { kind: 'statement', year: y, opening: L(open), overpaid: L(over), interest: L(int), rate: bm.rate, rateType: bm.rateType || 'fixed', dealEnd: bm.dealEnd || null, ercUntil: bm.ercUntil || null, deals: [], source: 'monthly payments', ...common } });
+    }
+  }
+  return out;
+}
+
+// The contractual monthly payment on a day: the deal in force (statements,
+// then the set-up); else the latest statement's payment.
+export function contractualOn(entries, day) {
+  const setup = setupOf(entries);
+  const real = realStatementsOf(entries);
+  let pay = setup ? Number(setup.mortgage.payment) || 0 : 0;
+  for (const d of dealTimeline(entries)) { if (!day || d.from <= day) { if (Number(d.payment) > 0) pay = Number(d.payment); } else break; }
+  const last = real[real.length - 1];
+  if (last && Number(last.mortgage.payment) > 0 && (!day || (last.date || '') <= day)) pay = Number(last.mortgage.payment);
+  return pay || null;
+}
+// The usual payment day (from the first payment; 3rd if not known) in a month.
+export function paymentDayIn(entries, yyyyMm) {
+  const setup = setupOf(entries);
+  const d = setup && setup.mortgage.firstPayment ? Number(setup.mortgage.firstPayment.slice(8, 10)) : 3;
+  const [y, m] = yyyyMm.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return iso(y, m, Math.min(d, last));
+}
 
 // Only the latest statement's deal end counts for Coming up / reminders
 // (an older statement of the same deal would repeat it).
 // (Without a statement yet, the set-up entry's deal end counts.)
+// v15.3: monthly payments never carry a deal end (always superseded).
 export function supersededIds(entries) {
   const keep = latestStatement(entries) || setupOf(entries);
   return new Set(entries.filter((e) => isMortgage(e) && e !== keep).map((e) => e.id));
@@ -64,7 +143,7 @@ export function dealTimeline(entries) {
   const setup = setupOf(entries);
   const out = [];
   if (setup) out.push({ from: setup.date || setup.mortgage.start, rate: Number(setup.mortgage.rate), payment: Number(setup.mortgage.payment), end: setup.mortgage.dealEnd || null, rateType: setup.mortgage.rateType || 'fixed' });
-  for (const s of statementsOf(entries)) {
+  for (const s of realStatementsOf(entries)) {
     // typed in by hand (no deals listed): its rate from the end of the
     // previous deal if that was in or before its year, or else 1 January
     const sm = s.mortgage;
@@ -74,7 +153,7 @@ export function dealTimeline(entries) {
       if (!out.some((x) => Number(x.rate) === Number(sm.rate) && x.from <= from)) out.push({ from, rate: Number(sm.rate), payment: Number(sm.payment) || null, end: sm.dealEnd || null, rateType: sm.rateType || 'fixed' });
     }
   }
-  for (const s of statementsOf(entries)) for (const d of s.mortgage.deals || []) {
+  for (const s of realStatementsOf(entries)) for (const d of s.mortgage.deals || []) {
     if (!d || !d.from || !(Number(d.rate) > 0)) continue;
     if (out.some((x) => x.from === d.from && Number(x.rate) === Number(d.rate))) continue;
     if (Number(d.days) > 0 && Number(d.days) < 7) continue; // a day or two between deals: left out
@@ -161,7 +240,6 @@ export function yearsTable(entries) {
   }
   return out;
 }
-const hasNum = (v) => v !== null && v !== undefined && v !== '' && isFinite(Number(v));
 
 // Months to pay a balance off (and the last payment date) with a monthly
 // payment + overpayment at a rate. null if it never would.
@@ -331,7 +409,7 @@ export function statementFromParsed(x) {
 // The last entry that has an early repayment charge, and its date (online
 // banking updates don't show the ERC, so the last known one is kept).
 export function lastKnownErc(entries) {
-  const st = statementsOf(entries).filter((s) => hasNum(s.mortgage.erc));
+  const st = realStatementsOf(entries).filter((s) => hasNum(s.mortgage.erc));
   const s = st[st.length - 1];
   return s ? { erc: Number(s.mortgage.erc), date: s.mortgage.asOf || s.date } : null;
 }

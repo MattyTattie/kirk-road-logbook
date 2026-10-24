@@ -947,3 +947,6 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 - js/tapselect.js: turns every select into a tap list (bottom sheet), keeping the real select in the page.
 - js/outcomes.js: works out whether a result box is good (green), bad (red) or warn (amber).
 - Undo: the old copy of a record is saved again with a newer time, so sync treats it as the latest.
+
+## v15.3: mortgage monthly payments
+Add → Mortgage → "Monthly payment": type the capital repayment, interest due and total direct debit from the lender's app. Hearth takes the normal payment for the deal off the total to get the overpayment, and brings the balance down by capital + overpayment from the last statement (or online-banking figure). The Mortgage page, charts, mortgage-free date, "so far" year, Mortgage paid, Include mortgage and Year in review all follow. When the annual statement for that year is added, it takes over and the monthly ones stop counting (no double counting). In the Mortgage list they fold under their year. Sums: mortgage.js (statementsOf / activeMonthly / contractualOn).

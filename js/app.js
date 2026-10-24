@@ -794,10 +794,31 @@ async function renderList(type, year = 0) {
     // v14.7: Mortgage: newest statement first, the set-up last; no money total.
     if (section && section.kind === 'mortgage') {
       const order = (e) => (e.mortgage && e.mortgage.kind === 'setup' ? '0000' : String((e.mortgage && e.mortgage.year) || (e.date || '').slice(0, 4)));
-      const sorted = [...shown].sort((a, b) => order(b).localeCompare(order(a)) || (b.date || '').localeCompare(a.date || ''));
-      const nSt = shown.filter((e) => !(e.mortgage && e.mortgage.kind === 'setup')).length;
-      fill(summary, el('span', {}, `${nSt} statement${nSt === 1 ? '' : 's'}`), shown.length > nSt ? el('span', { class: 'total' }, 'and the set-up') : null);
-      fill(list, ...(sorted.length ? sorted.map(entryCard)
+      // v15.3: monthly payments fold under their year ("3 monthly payments"), newest first inside
+      const isMon = (e) => e.mortgage && e.mortgage.kind === 'monthly';
+      const mons = shown.filter(isMon);
+      const sorted = [...shown.filter((e) => !isMon(e))].sort((a, b) => order(b).localeCompare(order(a)) || (b.date || '').localeCompare(a.date || ''));
+      const monYears = [...new Set(mons.map((e) => (e.date || '').slice(0, 4)))].sort().reverse();
+      const fold = (yr) => {
+        const items = mons.filter((e) => (e.date || '').slice(0, 4) === yr).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        const over = items.reduce((t, e) => t + Math.round(mort.monthlyOverpaid(e.mortgage) * 100), 0) / 100;
+        return el('details', { class: 'card mpay-fold', id: `monthly-fold-${yr}`, 'data-year': yr, open: q ? true : undefined },
+          el('summary', { class: 'mpay-fold-head' }, el('span', { class: 'mf-title' }, `${yr}: ${items.length} monthly payment${items.length === 1 ? '' : 's'}`),
+            el('span', { class: 'mf-sub small muted' }, `${money(over)} overpaid`)),
+          el('div', { class: 'mpay-fold-list' }, items.map(entryCard)));
+      };
+      const out = [];
+      const placed = new Set();
+      for (const e of sorted) {
+        const yr = order(e);
+        for (const y of monYears) if (!placed.has(y) && y >= yr && yr !== '0000') { out.push(fold(y)); placed.add(y); }
+        if (yr === '0000') for (const y of monYears) if (!placed.has(y)) { out.push(fold(y)); placed.add(y); }
+        out.push(entryCard(e));
+      }
+      for (const y of monYears) if (!placed.has(y)) out.push(fold(y));
+      const nSt = sorted.filter((e) => !(e.mortgage && e.mortgage.kind === 'setup')).length;
+      fill(summary, el('span', {}, [`${nSt} statement${nSt === 1 ? '' : 's'}`, mons.length ? `${mons.length} monthly payment${mons.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')), sorted.length > nSt ? el('span', { class: 'total' }, 'and the set-up') : null);
+      fill(list, ...(out.length ? out
         : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
             el('p', {}, q ? 'Nothing matches your search.' : 'No statements yet. Scan your annual mortgage statement, or tap + to add one.'))]));
       return;
@@ -1324,7 +1345,7 @@ function renderSearch(initial = '') {
 // ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
-const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car and life policies', mortgage: 'Annual statements, your deal and balance' };
+const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car and life policies', mortgage: 'Annual statements, monthly payments, your deal and balance' };
 function renderChooser() {
   fill(app,
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
@@ -1585,12 +1606,18 @@ async function ocrReady() {
 function mortgageKindField(entry) {
   const kind = (entry.mortgage && entry.mortgage.kind) || 'statement';
   return el('div', { class: 'field' }, el('span', { class: 'label', id: 'm-kind-label' }, 'What is it?'),
-    el('div', { class: 'seg seg-full', role: 'radiogroup', 'aria-labelledby': 'm-kind-label' },
-      [['statement', 'Annual statement'], ['setup', 'Mortgage set-up']].map(([id, label]) => el('label', { class: 'seg-btn radio-seg' },
+    el('div', { class: 'seg seg-full m-kind-seg', role: 'radiogroup', 'aria-labelledby': 'm-kind-label' },
+      [['statement', 'Annual statement'], ['monthly', 'Monthly payment'], ['setup', 'Mortgage set-up']].map(([id, label]) => el('label', { class: 'seg-btn radio-seg', id: `m-kind-${id}` },
         el('input', { type: 'radio', name: 'mKind', value: id, checked: kind === id,
-          onchange: (ev) => ev.target.form.querySelectorAll('[data-mkind]').forEach((g) => { g.hidden = g.dataset.mkind !== ev.target.value; }) }), label))));
+          onchange: (ev) => {
+            const f = ev.target.form, mon = ev.target.value === 'monthly';
+            f.querySelectorAll('[data-mkind]').forEach((g) => { g.hidden = g.dataset.mkind !== ev.target.value; });
+            // v15.3: a monthly payment is just the small form (no name, lender, date or deal end)
+            f.querySelectorAll('.m-not-monthly').forEach((g) => { g.hidden = mon; });
+            if (mon && f.__monthlyUpdate) f.__monthlyUpdate();
+          } }), label))));
 }
-function mortgageFields(entry) {
+function mortgageFields(entry, all = []) {
   const m = entry.mortgage || {};
   const kind = m.kind || 'statement';
   const f = (label, name, value, extra = {}, hint) => el('label', { class: 'field' }, el('span', { class: 'label' }, label),
@@ -1610,11 +1637,45 @@ function mortgageFields(entry) {
         el('summary', {}, 'More from the statement (optional)'),
         el('div', { class: 'row' }, f('Opening balance £', 'mOpening', st.opening), f('Monthly overpayment now £', 'mLastOverpay', st.lastOverpay)),
         f('Term left', 'mTermLeft', st.termLeft, { inputmode: 'text', placeholder: 'e.g. 21 yrs 3 months' }))),
+    monthlyFields(entry, all, f),
     el('div', { 'data-mkind': 'setup', hidden: kind !== 'setup', id: 'm-setup-fields' },
       el('div', { class: 'row' }, f('Amount borrowed £ *', 'sAmount', su.amount), f('Term in years *', 'sTermYears', su.termMonths ? Math.round(su.termMonths / 12 * 100) / 100 : '')),
       el('div', { class: 'row' }, f('Interest rate % *', 'sRate', su.rate), rateType('sRateType', su.rateType)),
       el('div', { class: 'row' }, f('Monthly payment £', 'sPayment', su.payment), f('First payment', 'sFirst', su.firstPayment, { type: 'date' })),
       el('div', { class: 'row' }, f('First payment’s interest £', 'sFirstInterest', su.firstInterest, {}, 'Optional, from the first statement.'), f('Rate after a deal %', 'sSvr', su.svr, {}, 'Your lender’s follow-on or standard variable rate.'))));
+}
+// v15.3: a monthly payment: three boxes from the lender's app, the
+// overpayment worked out live (total direct debit − the normal payment).
+function monthlyFields(entry, all, f) {
+  const m = entry.mortgage && entry.mortgage.kind === 'monthly' ? entry.mortgage : {};
+  const day = m.kind ? entry.date : mort.paymentDayIn(all, todayISO().slice(0, 7));
+  const dateIn = el('input', { name: 'mDate', type: 'date', value: day || todayISO(), id: 'm-date' });
+  const out = el('div', { class: 'monthly-out', id: 'm-monthly-out', 'aria-live': 'polite' });
+  const box = el('div', { 'data-mkind': 'monthly', hidden: (entry.mortgage && entry.mortgage.kind) !== 'monthly', id: 'm-monthly-fields' },
+    el('label', { class: 'field' }, el('span', { class: 'label' }, 'Payment date *'), dateIn),
+    el('div', { class: 'row' }, f('Capital repayment £ *', 'mCapital', m.capital), f('Interest due £ *', 'mInterestDue', m.interest)),
+    f('Total direct debit £ *', 'mTotal', m.total, {}, 'The whole payment, with any overpayment in it.'),
+    out);
+  const num = (n) => { const i = box.querySelector(`[name=${n}]`); const x = Number(String(i.value).replace(/[£,\s]/g, '')); return i.value.trim() && isFinite(x) ? x : null; };
+  const update = () => {
+    const con = mort.contractualOn(all, dateIn.value || todayISO());
+    const total = num('mTotal'), cap = num('mCapital'), int = num('mInterestDue');
+    const rows = [];
+    if (con) rows.push(el('div', { class: 'mrow', id: 'm-normal' }, el('span', { class: 'mrow-k' }, 'Normal payment'), el('span', { class: 'mrow-v' }, money(con), el('small', {}, 'from your deal'))));
+    if (con && total !== null) {
+      const over = Math.max(0, Math.round((total - con) * 100) / 100);
+      rows.push(el('div', { class: 'mrow', id: 'm-overpay' }, el('span', { class: 'mrow-k' }, 'Overpayment'), el('span', { class: 'mrow-v good' }, money(over))));
+      if (total < con - 0.005) rows.push(el('p', { class: 'small muted', id: 'm-under-note' }, `The direct debit is less than the normal ${money(con)}, so no overpayment is counted.`));
+    }
+    if (con && cap !== null && int !== null && Math.abs(cap + int - con) > 0.01) rows.push(el('p', { class: 'small muted', id: 'm-sum-note' }, `Just a note: capital + interest is ${money(cap + int)}, not the normal ${money(con)}. Worth a quick check, but it still saves.`));
+    if (!con) rows.push(el('p', { class: 'small muted', id: 'm-no-deal' }, 'Add a statement or the set-up first, so Hearth knows your normal payment.'));
+    fill(out, ...rows);
+  };
+  box.addEventListener('input', update);
+  box.addEventListener('change', update);
+  update();
+  box.__update = update;
+  return box;
 }
 const hasVal = (v) => v !== null && v !== undefined && v !== '';
 function mortgageFromForm(form) {
@@ -1628,6 +1689,16 @@ function mortgageFromForm(form) {
   const pick = (spec) => { const out = {}; for (const [k, n, label, opt] of spec) { const r = num(n, label, opt); if (r.error) return { error: r.error }; out[k] = r.value; } return { out }; };
   const old = form.__entry && form.__entry.mortgage ? form.__entry.mortgage : {};
   const kind = (form.querySelector('[name=mKind]:checked') || {}).value || 'statement';
+  if (kind === 'monthly') { // v15.3
+    const date = v('mDate');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Please choose the payment date.' };
+    const r = pick([['capital', 'mCapital', 'capital repayment', { required: true }], ['interest', 'mInterestDue', 'interest due', { required: true }], ['total', 'mTotal', 'total direct debit', { required: true }]]);
+    if (r.error) return r;
+    const contractual = mort.contractualOn(form.__all || [], date);
+    if (!contractual) return { error: 'Add an annual statement or the mortgage set-up first, so Hearth knows your normal payment.' };
+    const overpaid = Math.max(0, Math.round((r.out.total - contractual) * 100) / 100);
+    return { mortgage: { ...(old.kind === 'monthly' ? old : {}), kind: 'monthly', ...r.out, contractual, overpaid }, date };
+  }
   if (kind === 'setup') {
     const r = pick([['amount', 'sAmount', 'amount borrowed', { required: true }], ['termYears', 'sTermYears', 'term', { required: true }], ['rate', 'sRate', 'interest rate', { required: true }],
       ['payment', 'sPayment', 'monthly payment'], ['firstInterest', 'sFirstInterest', 'first payment’s interest'], ['svr', 'sSvr', 'rate after a deal']]);
@@ -1696,6 +1767,9 @@ async function renderForm(type, id) {
   // A labelled input field. "name" is how we find it again on save.
   const field = (label, input, hint) =>
     el('label', { class: 'field' }, el('span', { class: 'label' }, label), input, hint ? el('span', { class: 'hint' }, hint) : null);
+  // v15.3: fields a mortgage monthly payment doesn't need (hidden for it)
+  const monKind = mortF && entry.mortgage && entry.mortgage.kind === 'monthly';
+  const notMon = (n) => { if (mortF) { n.classList.add('m-not-monthly'); if (monKind) n.hidden = true; } return n; };
 
   const form = el('form', { class: 'form', id: 'entry-form', novalidate: true });
   form.__entry = entry; // v14.7: mortgageFromForm keeps the fields it doesn't show (deals)
@@ -1724,8 +1798,8 @@ async function renderForm(type, id) {
               el('input', { type: 'radio', name: 'insType', value: t.id, checked: (entry.insType || 'home') === t.id }), t.label))))
       : null,
     mortF ? mortgageKindField(entry) : null,
-    field(ins || mortF ? 'Name (optional)' : 'Title *', el('input', { name: 'title', required: !ins && !mortF, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : mortF ? 'e.g. Santander mortgage statement 2025' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : mortF ? 'Left blank, it’s made from the lender and year.' : null),
-    mortF ? field('Lender *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Santander' })) : null,
+    notMon(field(ins || mortF ? 'Name (optional)' : 'Title *', el('input', { name: 'title', required: !ins && !mortF, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : mortF ? 'e.g. Santander mortgage statement 2025' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : mortF ? 'Left blank, it’s made from the lender and year.' : null)),
+    mortF ? notMon(field('Lender *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Santander' }))) : null,
     ins ? field('Insurer *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Aviva' })) : null,
     ins ? field('Policy number', el('input', { name: 'policyNumber', value: entry.policyNumber || '', autocomplete: 'off' })) : null,
     ins
@@ -1735,7 +1809,7 @@ async function renderForm(type, id) {
             el('option', { value: 'annual', selected: entry.costFreq !== 'monthly' }, 'Yearly'),
             el('option', { value: 'monthly', selected: entry.costFreq === 'monthly' }, 'Monthly'))))
       : null,
-    field(ins ? 'Start date *' : 'Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() }), mortF ? 'Statement: its date (usually 31 December). Set-up: the day the mortgage started.' : null),
+    notMon(field(ins ? 'Start date *' : 'Date *', el('input', { name: 'date', type: 'date', required: true, value: entry.date || todayISO() }), mortF ? 'Statement: its date (usually 31 December). Set-up: the day the mortgage started.' : null)),
     ins || mortF
       ? null
       : el('div', { class: 'row cost-row' },
@@ -1777,9 +1851,17 @@ async function renderForm(type, id) {
     );
   }
   if (section.showDue) {
-    addTo(form, field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : mortF ? 'The end of the current deal. Reminders 6, 3 and 1 month before.' : null));
+    addTo(form, notMon(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : mortF ? 'The end of the current deal. Reminders 6, 3 and 1 month before.' : null)));
   }
-  if (mortF) addTo(form, mortgageFields(entry));
+  if (mortF) {
+    form.__all = allEntries; // v15.3: the normal payment for a monthly payment
+    const mf = mortgageFields(entry, allEntries);
+    addTo(form, mf);
+    const mb = mf.querySelector('#m-monthly-fields');
+    form.__monthlyUpdate = mb && mb.__update;
+    // a new monthly payment: fill in the lender from the last mortgage entry
+    if (!entry.supplier && form.elements.supplier) { const last = allEntries.filter((e) => e.type === 'mortgage' && e.supplier).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0]; if (last) form.elements.supplier.value = last.supplier; }
+  }
   if (ins) addTo(form, field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
   // v13: which room it belongs to (optional; jobs, receipts, warranties).
   const roomable = rooms.ROOM_TYPES.includes(entry.type);
@@ -1875,12 +1957,14 @@ async function renderForm(type, id) {
 
     let title = v('title');
     // v14.7: the mortgage figures (mortgageFromForm below)
-    let mortgage = null;
+    let mortgage = null, mDate = null;
     if (mortF) {
-      if (!v('supplier')) return showError('Please enter the lender.');
+      const monthly = (form.querySelector('[name=mKind]:checked') || {}).value === 'monthly';
+      if (!monthly && !v('supplier')) return showError('Please enter the lender.');
       const r = mortgageFromForm(form);
       if (r.error) return showError(r.error);
       mortgage = r.mortgage;
+      if (mortgage.kind === 'monthly') { mDate = r.date; if (!title || (entry.mortgage && entry.mortgage.kind !== 'monthly')) title = `Mortgage payment ${mort.monthText(mDate)}`; else if (/^Mortgage payment [A-Z][a-z]{2} \d{4}$/.test(title)) title = `Mortgage payment ${mort.monthText(mDate)}`; }
       if (!title) title = mortgage.kind === 'setup' ? `${v('supplier')} mortgage` : `${v('supplier')} mortgage statement ${mortgage.year}`;
     }
     if (ins) {
@@ -1888,7 +1972,7 @@ async function renderForm(type, id) {
       if (!title) title = `${insuranceTypeLabel(form.elements.insType.value)} insurance – ${v('supplier')}`;
     }
     if (!title) return showError('Please give it a title.');
-    if (!v('date')) return showError(ins ? 'Please choose the start date.' : 'Please choose a date.');
+    if (!mDate && !v('date')) return showError(ins ? 'Please choose the start date.' : 'Please choose a date.');
 
     const cost = parseMoney(v('cost'));
     if (cost === undefined) return showError('The cost should be a number, like 12.50');
@@ -1931,7 +2015,7 @@ async function renderForm(type, id) {
       id: entry.id || db.newId(),
       ...extra,
       title,
-      date: v('date'),
+      date: mDate || v('date'),
       cost,
       supplier: v('supplier'),
       notes: v('notes'),
@@ -1947,6 +2031,7 @@ async function renderForm(type, id) {
     if (roomable) { if (v('room')) saved.room = rooms.cleanName(v('room')); else delete saved.room; }
     if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
     if (credits) { if (credits.length) saved.credits = credits; else delete saved.credits; } // v14.5
+    if (mortF && saved.mortgage.kind === 'monthly') saved.dueDate = null; // v15.3
     if (mortF) { saved.cost = null; if (saved.mortgage.kind === 'statement' || saved.mortgage.kind === 'setup') saved.mortgage.dealEnd = saved.dueDate || null; }
     if (!saved.currency || saved.currency === 'GBP' || ins || mortF) delete saved.currency; // pounds = no field (as before)
     const prevRec = id ? await db.getEntry(id) : null; // v15.2: for Undo

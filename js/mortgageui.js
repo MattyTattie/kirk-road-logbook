@@ -198,7 +198,7 @@ export function overview(everything) {
           el('td', {}, y.interest === null ? '—' : money(y.interest)))),
         el('tr', { class: 'mtotal' }, el('td', {}, 'Total'), el('td', { id: 'overpaid-total' }, money(sum('overpaid'))), el('td', { id: 'interest-total' }, money(sum('interest')))))),
       yrs.some((y) => y.partial) || anyEst ? infoNote([
-        yrs.some((y) => y.partial) ? el('span', { id: 'years-sofar-note' }, `so far = to ${niceDate(yrs.find((y) => y.partial).asOf || s.asAt)}, from online banking. The annual statement will replace it. `) : null,
+        yrs.some((y) => y.partial) ? el('span', { id: 'years-sofar-note' }, `so far = to ${niceDate(yrs.find((y) => y.partial).asOf || s.asAt)}, from ${s.latest && s.latest.mortgage.fromMonthly ? s.source : 'online banking'}. The annual statement will replace it. `) : null,
         anyEst ? el('span', { id: 'years-est-note' }, 'est. = no statement for that year: worked out from the balances either side, as if the same amount was overpaid each month.') : null].filter(Boolean), { id: 'years-notes', cls: 'small muted', label: 'What “so far” and “est.” mean' }) : null) : null;
 
     // 4. Mortgage-free
@@ -239,6 +239,7 @@ export function overview(everything) {
       el('summary', {}, 'How these are worked out'),
       el('ul', {},
         el('li', {}, 'Balances, rates, payments, overpayments and interest come from your annual statements.'),
+        M.activeMonthly(everything).length ? el('li', { id: 'notes-monthly' }, 'Monthly payments you type in after the last statement bring the balance down by the capital repayment plus the overpayment (the direct debit minus the normal payment). When the annual statement comes, it replaces them.') : null,
         sh ? el('li', {}, `“Without overpayments” is an estimate: the same ${pounds(s.setup.mortgage.amount)} over ${monthsText(Number(s.setup.mortgage.termMonths) || 300)}, the same rates and dates, paying only the monthly payment. At each new deal the payment is worked out again on that balance over the rest of the term. Interest is the balance × rate ÷ 12 each month.`) : null,
         sh ? el('li', {}, 'A day or two charged at a different rate between deals is left out.') : null,
         anyEst ? el('li', {}, 'A year without a statement is estimated from the balances either side, so the interest saved depends on that estimate.') : null,
@@ -255,6 +256,14 @@ export function overview(everything) {
 // A statement / set-up's own lines on its detail page.
 export function detailRows(e) {
   const m = e.mortgage || {};
+  if (m.kind === 'monthly') return [ // v15.3
+    ['Payment date', e.date ? niceDate(e.date) : null, 'calendar'],
+    ['Total direct debit', hasNum(m.total) ? money(m.total) : null, 'receipt'],
+    ['Capital repayment', hasNum(m.capital) ? money(m.capital) : null, 'key'],
+    ['Interest due', hasNum(m.interest) ? money(m.interest) : null, 'chart'],
+    ['Normal payment', hasNum(m.contractual) ? money(m.contractual) : null, 'receipt'],
+    ['Overpayment', money(M.monthlyOverpaid(m)), 'sparkle'],
+  ];
   if (m.kind === 'setup') return [
     ['Borrowed', hasNum(m.amount) ? money(m.amount) : null, 'key'],
     ['Term', m.termMonths ? monthsText(Number(m.termMonths)) : null, 'calendar'],
@@ -281,6 +290,7 @@ const hasNum = (v) => v !== null && v !== undefined && v !== '' && isFinite(Numb
 // One line under the title in lists.
 export function cardLine(e) {
   const m = e.mortgage || {};
+  if (m.kind === 'monthly') return [hasNum(m.total) ? `Paid ${money(m.total)}` : '', `${cash(M.monthlyOverpaid(m))} overpaid`].filter(Boolean).join(' · '); // v15.3
   if (m.kind === 'setup') return [hasNum(m.amount) ? `${pounds(m.amount)} over ${monthsText(Number(m.termMonths) || 0)}` : '', e.supplier].filter(Boolean).join(' · ');
   return [hasNum(m.balance) ? `Balance ${money(m.balance)}` : '', hasNum(m.rate) ? `${m.rate}% ${m.rateType || 'fixed'}` : ''].filter(Boolean).join(' · ');
 }
