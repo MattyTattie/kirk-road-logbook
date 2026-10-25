@@ -102,12 +102,13 @@ export function houseSVG({ phase = 'day', glow = 0.5, due = 0, battery = null, w
       </linearGradient>
       <radialGradient id="hb-spill-${id}"><stop offset="0" class="spill-in"/><stop offset="1" class="spill-out"/></radialGradient>
     </defs>
-    <rect width="360" height="190" fill="url(#${sky})" class="h-sky"/>
+    <rect x="-2000" width="4360" height="190" fill="url(#${sky})" class="h-sky"/>
     <g class="h-stars" aria-hidden="true">${stars.map(([x, y, r], i) => `<circle cx="${x}" cy="${y}" r="${r}" style="--d:${i % 5}"/>`).join('')}</g>
     <circle cx="62" cy="50" r="14" class="h-sun" aria-hidden="true"/>
     <g class="h-clouds" aria-hidden="true">${clouds}</g>
+    <path d="M-2000 150 H0 V190 H-2000Z M360 140 H2360 V190 H360Z" class="h-hill" aria-hidden="true"/>
     <path d="M0 150 C 60 128 120 140 180 134 S 300 124 360 140 V190 H0Z" class="h-hill" aria-hidden="true"/>
-    <rect x="0" y="160" width="360" height="30" class="h-ground" aria-hidden="true"/>
+    <rect x="-2000" y="160" width="4360" height="30" class="h-ground" aria-hidden="true"/>
     <ellipse cx="180" cy="166" rx="92" ry="14" fill="url(#hb-spill-${id})" class="h-spill" opacity="${spill}" aria-hidden="true"/>
 
     <!-- a simple tree on the left -->
@@ -135,7 +136,7 @@ export function houseSVG({ phase = 'day', glow = 0.5, due = 0, battery = null, w
       <circle cx="184" cy="145" r="1.8" class="h-knob"/>
       <rect x="164" y="158" width="32" height="3" rx="1" class="h-step"/>
     </a>
-    <rect width="360" height="190" class="h-shade" aria-hidden="true" pointer-events="none"/>
+    <rect x="-2000" width="4360" height="190" class="h-shade" aria-hidden="true" pointer-events="none"/>
     ${moonSVG}
     <circle cx="180" cy="119" r="2.2" class="h-lamp" aria-hidden="true" pointer-events="none"/>
     <a href="#/list/meter" class="h-part h-windows" aria-label="Windows: electricity bills">

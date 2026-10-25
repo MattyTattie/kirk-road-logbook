@@ -1512,3 +1512,19 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .zoom-btns { position: absolute; z-index: 2; right: 14px; bottom: max(18px, env(safe-area-inset-bottom)); display: flex; gap: 8px; }
 .zoom-btn { width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, 0.6); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35); color: #fff; font-size: 24px; line-height: 1; }
 .app-version { text-align: center; }
+
+/* v15.6: computer layout — house as a slim banner across the top of Home,
+   Coming up full width underneath as a tidy grid. Phone unchanged. */
+@media (min-width: 1024px) {
+  .dash > #house, .dash > #coming-up { grid-column: 1 / -1; max-width: none; margin-bottom: 16px; }
+  .dash:not(:has(> #coming-up)) > #house { max-width: none; }
+  .dash > #house .house-body { position: relative; }
+  .dash > #house .house-svg { width: 100%; height: 180px; max-height: none; aspect-ratio: auto; }
+  .dash > #house .house-caption { position: absolute; left: 12px; bottom: 10px; padding: 0; }
+  .dash > #house .house-caption .hc-chip { background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); padding: 5px 10px; font-size: 13px; }
+  .dash > #house .house-caption .hc-chip.due { background: var(--soon-bg); }
+  .dash > #house ~ *:not(#coming-up) { order: 2; }
+  .dash > #coming-up > .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+  .dash > #coming-up > .list > * { margin: 0; min-width: 0; }
+  .dash > #coming-up .up-text, .dash > #coming-up .entry * { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+}
