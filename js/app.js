@@ -115,6 +115,9 @@ let firstRender = true;
 let holdScroll = false;
 const redrawInPlace = (anchorId) => keepPlace(anchorId, async () => { holdScroll = true; try { await render(); } finally { holdScroll = false; } });
 let lastDepth = 0;
+// v15.5: where each screen was scrolled to, so going back lands in the same place.
+const scrollMemory = new Map();
+let lastHash = location.hash;
 // Only a tap on a link (tabs, back, tiles, cards) gets the transition;
 // saves and redirects swap the screen straight away.
 let linkTapAt = 0;
@@ -133,6 +136,9 @@ async function render() {
   const depth = { home: 0, '': 0, list: 1, search: 1, export: 1, manuals: 2, findmanual: 3, rooms: 2, glossary: 2, year: 2, upcoming: 1, usage: 2, reminder: 3, new: 2, scan: 2, view: 2, manual: 3, room: 3, addmanual: 3, editmanual: 3, edit: 3 }[parts[0]] ?? 1;
   const direction = depth < lastDepth ? 'back' : 'forward';
   lastDepth = depth;
+  if (!firstRender) scrollMemory.set(lastHash, window.scrollY);
+  const goingBack = !firstRender && direction === 'back';
+  lastHash = location.hash;
   const vt = !firstRender && performance.now() - linkTapAt < 600 && typeof document.startViewTransition === 'function' && !reducedMotion();
   if (firstRender) {
     firstRender = false;
@@ -140,6 +146,8 @@ async function render() {
     document.body.classList.add('ready'); // fades the launch logo away (index.html)
   } else if (vt) await transition(() => drawScreen(parts, true), { direction });
   else await drawScreen(parts, false);
+  const y = goingBack ? scrollMemory.get(location.hash) : undefined;
+  if (y) requestAnimationFrame(() => window.scrollTo(0, Math.min(y, document.documentElement.scrollHeight)));
 }
 async function drawScreen(parts, viaTransition) {
   releasePhotoURLs();
@@ -2406,26 +2414,136 @@ async function renderDetail(id) {
   );
 }
 
+// v15.5: photo viewers close on the cross, the dark background, Back or Esc
+// (tapping the photo itself no longer closes it, so it can be zoomed).
+let openViewer = null;
+function viewerHistory(overlay, cleanup) {
+  let closed = false;
+  const close = (fromBack) => {
+    if (closed) return; closed = true;
+    overlay.remove(); cleanup && cleanup();
+    removeEventListener('popstate', onPop); removeEventListener('hashchange', onHash);
+    openViewer = null;
+    if (!fromBack && history.state && history.state.hearthViewer) history.back();
+  };
+  const onPop = () => close(true);
+  const onHash = () => close(true);
+  history.pushState({ hearthViewer: true }, '');
+  addEventListener('popstate', onPop);
+  addEventListener('hashchange', onHash);
+  openViewer = close;
+  return close;
+}
+
 // v14.7: several pages (a mortgage statement) full screen, one under the
 // other, starting at the one tapped. The cross (or Back) closes it.
 function showPages(urls, start, title) {
-  const close = () => { overlay.remove(); removeEventListener('hashchange', close); };
   const pages = urls.map((u, i) => el('img', { src: u, alt: `Page ${i + 1} of ${urls.length}`, 'data-page': String(i + 1) }));
   const overlay = el('div', { class: 'overlay overlay-pages', role: 'dialog', 'aria-label': `${title}: ${urls.length} pages`, id: 'pages-viewer' },
-    el('div', { class: 'pages-scroll' }, pages.map((img, i) => el('figure', {}, img, el('figcaption', {}, `Page ${i + 1} of ${urls.length}`)))),
-    el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close', onclick: close }, icon('x', 22)));
-  addEventListener('hashchange', close);
+    el('div', { class: 'pages-scroll' }, pages.map((img, i) => el('figure', {}, img, el('figcaption', {}, `Page ${i + 1} of ${urls.length}`)))));
+  const close = viewerHistory(overlay);
+  overlay.append(el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close', onclick: () => close() }, icon('x', 22)));
   addTo(document.body, overlay);
   requestAnimationFrame(() => pages[start] && pages[start].scrollIntoView({ block: 'start' }));
 }
 
-// Tap a photo to see it full screen; tap again to close.
+// Tap a photo to see it full screen. v15.5: zoom with pinch, double-tap,
+// the mouse wheel or the +/− buttons; drag to move around when zoomed.
 function showFullPhoto(url) {
-  const overlay = el('div', { class: 'overlay', role: 'dialog', 'aria-label': 'Photo', onclick: () => overlay.remove() },
-    el('img', { src: url, alt: 'Photo' }),
-    el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close' }, icon('x', 22)));
+  const img = el('img', { src: url, alt: 'Photo', class: 'zoom-img', draggable: 'false' });
+  const stage = el('div', { class: 'zoom-stage' }, img);
+  const overlay = el('div', { class: 'overlay overlay-zoom', role: 'dialog', 'aria-label': 'Photo', id: 'photo-viewer' }, stage);
+  let scale = 1, x = 0, y = 0;
+  const MAX = 6;
+  const apply = () => {
+    if (scale <= 1.01) { scale = 1; x = 0; y = 0; }
+    const w = img.offsetWidth, h = img.offsetHeight; // limit panning to the photo's edges
+    const mx = Math.max(0, (w * scale - innerWidth) / 2), my = Math.max(0, (h * scale - innerHeight) / 2);
+    x = Math.max(-mx, Math.min(mx, x)); y = Math.max(-my, Math.min(my, y));
+    img.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    overlay.classList.toggle('zoomed', scale > 1);
+    overlay.dataset.scale = scale.toFixed(2);
+  };
+  // Zoom keeping the point (cx, cy) on the screen still.
+  const zoomTo = (next, cx = innerWidth / 2, cy = innerHeight / 2) => {
+    next = Math.max(1, Math.min(MAX, next));
+    const ox = cx - innerWidth / 2, oy = cy - innerHeight / 2;
+    x = ox - (ox - x) * (next / scale); y = oy - (oy - y) * (next / scale);
+    scale = next; apply();
+  };
+  const pointers = new Map();
+  let pinch = null, drag = null, moved = false, lastTap = 0;
+  stage.addEventListener('pointerdown', (ev) => {
+    if (ev.target !== img) return;
+    try { img.setPointerCapture(ev.pointerId); } catch {}
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    moved = false;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: scale };
+      drag = null;
+    } else drag = { x: ev.clientX, y: ev.clientY, ox: x, oy: y };
+  });
+  stage.addEventListener('pointermove', (ev) => {
+    if (!pointers.has(ev.pointerId)) return;
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch && pointers.size >= 2) {
+      const [a, b] = [...pointers.values()];
+      moved = true;
+      zoomTo(pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / (pinch.d || 1), (a.x + b.x) / 2, (a.y + b.y) / 2);
+    } else if (drag && scale > 1) {
+      if (Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) > 4) moved = true;
+      x = drag.ox + ev.clientX - drag.x; y = drag.oy + ev.clientY - drag.y; apply();
+    }
+  });
+  const up = (ev) => {
+    pointers.delete(ev.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 1) { const [p] = [...pointers.values()]; drag = { x: p.x, y: p.y, ox: x, oy: y }; }
+    if (!pointers.size) drag = null;
+  };
+  stage.addEventListener('pointerup', up);
+  stage.addEventListener('pointercancel', up);
+  // Double-tap / double-click: zoom in to that spot, or back out.
+  img.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (moved) return;
+    const now = Date.now();
+    if (now - lastTap < 350) { lastTap = 0; if (scale > 1) zoomTo(1); else zoomTo(2.5, ev.clientX, ev.clientY); }
+    else lastTap = now;
+  });
+  img.addEventListener('dblclick', (ev) => ev.preventDefault());
+  overlay.addEventListener('wheel', (ev) => { ev.preventDefault(); zoomTo(scale * Math.exp(-ev.deltaY * 0.0025), ev.clientX, ev.clientY); }, { passive: false });
+  const keys = (ev) => {
+    if (ev.key === '+' || ev.key === '=') zoomTo(scale * 1.5);
+    else if (ev.key === '-' || ev.key === '_') zoomTo(scale / 1.5);
+    else if (ev.key === '0') zoomTo(1);
+  };
+  addEventListener('keydown', keys);
+  const close = viewerHistory(overlay, () => removeEventListener('keydown', keys));
+  // The dark background closes it; the photo itself doesn't.
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay || ev.target === stage) close(); });
+  overlay.append(
+    el('div', { class: 'zoom-btns', role: 'group', 'aria-label': 'Zoom' },
+      el('button', { type: 'button', class: 'zoom-btn', id: 'zoom-out', 'aria-label': 'Zoom out', onclick: (ev) => { ev.stopPropagation(); zoomTo(scale / 1.5); } }, '−'),
+      el('button', { type: 'button', class: 'zoom-btn', id: 'zoom-in', 'aria-label': 'Zoom in', onclick: (ev) => { ev.stopPropagation(); zoomTo(scale * 1.5); } }, '+')),
+    el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close photo', id: 'photo-close', onclick: (ev) => { ev.stopPropagation(); close(); } }, icon('x', 22)));
   addTo(document.body, overlay);
+  img.addEventListener('load', apply);
 }
+
+// Esc on a computer: close an open photo, or leave a form / bill screen.
+addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || ev.defaultPrevented) return;
+  if (openViewer) { ev.preventDefault(); openViewer(); return; }
+  if (document.querySelector('dialog[open], .sheet.open')) return;
+  const page = location.hash.replace(/^#\/?/, '').split('/')[0];
+  if (['edit', 'new', 'reminder', 'scan', 'addmanual', 'editmanual', 'findmanual'].includes(page)) {
+    ev.preventDefault();
+    const back = app.querySelector('a.back, .screen-back, a[data-back]');
+    if (back && back.getAttribute('href')) location.hash = back.getAttribute('href'); else history.back();
+  }
+});
 
 // ---------------------------------------------------------------------
 // MANUALS (More → Manuals): every appliance guide, plus your own
@@ -3312,7 +3430,8 @@ async function renderExport() {
       el('br'),
       '⚠️ Clearing Chrome’s site data or "storage" for this app deletes the whole logbook. Keep backups!'
     ),
-    el('p', { class: 'small muted footnote' }, `${APP_NAME} · ${sync.getStatus().state === 'off' || sync.getStatus().state === 'unconfigured' ? 'everything stays on this phone' : 'synced through your own Google Drive'}`)
+    el('p', { class: 'small muted footnote' }, `${APP_NAME} · ${sync.getStatus().state === 'off' || sync.getStatus().state === 'unconfigured' ? 'everything stays on this phone' : 'synced through your own Google Drive'}`),
+    el('p', { class: 'small muted footnote app-version', id: 'app-version' }, `Version ${sync.APP_VERSION}`)
   );
 }
 
