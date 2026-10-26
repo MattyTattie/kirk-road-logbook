@@ -189,9 +189,16 @@ export function shadowSchedule(entries, { until = null } = {}) {
     const monthly = Math.round(bal * rate / 1200);
     // first payment: a month's interest plus the odd days since the loan
     // started, paid on top (the statement's figure when we have it)
-    const interest = k > 0 ? monthly : Number(m.firstInterest) > 0 ? p(m.firstInterest) : Math.round(bal * rate / 100 * dayDiff(setup.date, day) / 365);
+    // v15.7: with no statement figure, a full month's interest plus the odd
+    // days from the start to a month before the first payment.
+    const oddFrom = addMonths(day, -1);
+    const interest = k > 0 ? monthly : Number(m.firstInterest) > 0 ? p(m.firstInterest)
+      : oddFrom >= setup.date ? monthly + Math.round(bal * rate / 100 * dayDiff(setup.date, oddFrom) / 365)
+        : Math.round(bal * rate / 100 * dayDiff(setup.date, day) / 365);
     let cap = pay - monthly;
-    if (cap > bal) cap = bal;
+    // v15.7: a few pounds of rounding left over is cleared by this payment,
+    // not carried into a stray extra month.
+    if (cap > bal || bal - cap < 500) cap = bal;
     bal -= cap;
     rows.push({ date: day, interest: L(interest), capital: L(cap), balance: L(bal), payment: L(pay) });
     // a new deal starts from this payment: work the payment out again
@@ -494,7 +501,10 @@ export function yearRoundup(entries, year) {
 // "What if" (v14.8): pay off from the latest balance with a different
 // monthly overpayment and/or a one-off lump sum on a date. Nothing saved.
 // --------------------------------------------------------------------
-export function whatIf({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null }) {
+export function whatIf({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null, today = null }) {
+  // v15.7: a one-off can't be paid in the past: dated before today, it goes
+  // in at the first payment day from today.
+  if (lumpDate && today && lumpDate < today) { let k = 0; while (addMonths(firstDay, k) < today && k < 1200) k++; lumpDate = addMonths(firstDay, k); }
   let b = p(balance); const monthly = p(pay) + p(extra); const lp = p(lump);
   let n = 0, interest = 0, lumpDone = !(lp > 0);
   const byYear = {}; // overpayments per calendar year (pence)

@@ -1551,6 +1551,7 @@ function canvasToBlob(canvas) {
 function scanFields(p, type) {
   const f = { title: p.title || '', date: p.date || todayISO(), cost: p.total != null ? Number(p.total).toFixed(2) : null, supplier: p.supplier || '', notes: p.notes || '' };
   if (p.currency && p.currency !== 'GBP') f.currency = p.currency; // e.g. a holiday receipt in euros
+  if (p.room && type !== 'meter') f.room = p.room; // v15.7: only when the item makes it obvious (shelving → Garage)
   if (type === 'meter') {
     f.meterValue = p.meter && p.meter.closing != null ? p.meter.closing : null;
     f.meterUnit = (p.meter && p.meter.unit) || 'kWh';

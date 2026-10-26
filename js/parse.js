@@ -194,12 +194,94 @@ function detectSupplier(text) {
 // v13.5: "Contact:", "Contact person", "Customer service" are labels, not the seller.
 const NOT_A_NAME = /\bcontact\b|\bkontakt\b|ansprechpartner|customer\s+service|kundenservice|^[\w .'-]{1,25}:\s*$|\b\d+[a-z]?\s+[a-z]+\s+(?:road|rd|street|st|avenue|ave|lane|drive|close|way|crescent|terrace|place|court|gardens)\b|address|united kingdom|^(mr|mrs|ms|miss|dr)\b|\b[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}\b|invoice|receipt|statement|page \d|smell gas|power cut|tel\b|phone|e-?mail|www\.|https?:|@|order|customer|account|vat|date|total|bill to|deliver|ship|^your\b|^\W*$|comunitario|factura|\bfact\b|ticket|datos|vuelo|extranjero|\biva\b|cliente|tarjeta|art[ií]culos|descrip|precio|cantidad|unidad/i;
 
+// v15.7: "Hi Matthew," / "Dear Sir" / "Thanks for your order" are greetings
+// in an order email, never the shop or the title.
+export const GREETING = /^\W*(?:hi|hiya|hello|hey|dear|good\s+(?:morning|afternoon|evening)|thanks|thank\s+you|welcome|congratulations)\b/i;
+
+// v15.7: the shop's own sign-off: "The BiGDUG Team", "Kind regards, Screwfix".
+function teamName(allLines) {
+  for (const l of allLines.slice().reverse()) {
+    const m = l.trim().match(/^(?:the\s+)?([A-Z][A-Za-z0-9&'.\-]*(?:\s[A-Z][A-Za-z0-9&'.\-]*){0,2})\s+(?:customer\s+(?:service|care)\s+)?team\.?$/i);
+    if (m && !/^(?:the|our|your|support|sales|customer|service)$/i.test(m[1])) return tidyName(m[1]);
+  }
+  return '';
+}
+function regardsName(allLines) {
+  for (let i = 0; i < allLines.length; i++) {
+    const m = allLines[i].match(/^\s*(?:kind|best|warm)?\s*regards,?\s*(.*)$/i) || allLines[i].match(/^\s*(?:many\s+)?thanks,?\s*$/i) && [null, ''];
+    if (!m || !/regards/i.test(allLines[i])) continue;
+    const cand = tidyName((m[1] || allLines[i + 1] || '').replace(/^the\s+/i, ''));
+    const letters = (cand.match(/[A-Za-z]/g) || []).length;
+    if (letters >= 3 && cand.length <= 40 && !NOT_A_NAME.test(cand) && !GREETING.test(cand)) return cand;
+  }
+  return '';
+}
+// "contact@bigdug.co.uk" -> "BIGDUG" (not personal mail like gmail).
+function domainName(clean) {
+  const mail = findContactEmail(clean);
+  if (!mail) return '';
+  const parts = mail.split('@')[1].toLowerCase().split('.');
+  const label = parts.find((x) => !/^(?:mail|email|e|shop|store|orders?|info|news|www|uk|co|com|net|org)$/.test(x)) || parts[0];
+  return label && label.length >= 3 && /[a-z]/.test(label) ? label.toUpperCase() : '';
+}
+// v15.7: order: company line, the shop's "… Team" sign-off, its email
+// domain, "Kind regards, X", then the first prominent line (no greetings).
+function receiptSupplier(allLines, clean) {
+  const company = companyName(allLines);
+  if (company) return company;
+  const team = teamName(allLines);
+  const dom = domainName(clean);
+  // "The BiGDUG Team" + contact@bigdug.co.uk: one name whichever screenshot it is.
+  if (team && dom && team.replace(/[^a-z0-9]/gi, '').toLowerCase() === dom.toLowerCase()) return dom;
+  return team || dom || regardsName(allLines) || fallbackSupplier(allLines);
+}
+
+// v15.7: the first line of an order table ("1 HR246B BiGDUG Garage Heavy Duty
+// Shelving | 1770h x …") -> "BiGDUG Garage Heavy Duty Shelving".
+export function firstItemName(allLines) {
+  const head = allLines.findIndex((l) => /\b(?:description|product|item)\b/i.test(l) && /\b(?:qty|quantity|price|total|amount)\b/i.test(l));
+  if (head < 0) return '';
+  const before = allLines.slice(0, head);
+  for (const l of allLines.slice(head + 1, head + 4)) {
+    let t = l.replace(/^\s*\d{1,3}\s+/, '').replace(/^(?=[A-Z0-9.\-]*\d)[A-Z0-9.\-]{4,}\s+/, '');
+    t = t.split(/\s[|•/]\s|\s{2,}|\s(?:£|€|\$|(?:GBP|EUR|USD)\s?)?[\d,]*\d[.,]\d{2}\b|\s\d+\s*x\s/i)[0];
+    t = t.replace(/\s+\d+\s+(?:GBP|EUR|USD)$/i, ''); // the quantity before a currency code
+    t = t.replace(/\s*[A-Z]{2,}\d{3,}[A-Z0-9]*$/, '').replace(/\s+\d+(?:[a-z]{1,2})?(?:\s*x)?$/i, '').trim();
+    // The customer's name printed again above the table ("Matthew X - PERMIT").
+    // (and the delivery address, "Estimated arrival: …" lines)
+    if (/[:*]/.test(t) || (/,/.test(t) && /\b(?:road|rd|street|avenue|lane|drive|close|crescent|terrace|place|court|gardens|way)\b/i.test(t))) continue;
+    const two = (t.match(/^([A-Z][a-z]+\s+[A-Z][a-z]+)\b/) || [])[1];
+    if (two && before.some((b) => b.trim().startsWith(two))) continue;
+    if (before.some((b) => b.includes(t.slice(0, 14)))) continue;
+    const letters = (t.match(/[A-Za-z]/g) || []).length;
+    if (letters >= 6 && t.split(/\s+/).length >= 2 && !/subtotal|total|vat|delivery/i.test(t)) return t.slice(0, 80);
+  }
+  return '';
+}
+
+// v15.7: a room only when the item makes it obvious; otherwise blank.
+const ROOM_WORDS = [
+  ['Garage', /\b(?:shelving|shelf\s+unit|racking|workbench|tool\s*(?:box|chest|cabinet)|garage)\b/i],
+  ['Shed', /\bshed\b/i],
+  ['Outside', /\b(?:lawn\s*mower|mower|garden\s+hose|hosepipe|patio|bbq|barbecue|trampoline|strimmer|decking)\b/i],
+  ['Kitchen', /\b(?:oven|hob|cooker\s*hood|dishwasher|fridge|freezer|microwave|kettle|toaster|kitchen)\b/i],
+  ['Bathroom', /\b(?:towel\s+rail|shower|toilet|basin|bathroom|bath\s+(?:panel|screen|tub))\b/i],
+  ['Bedroom', /\b(?:mattress|wardrobe|bed\s*frame|bedside|bedroom)\b/i],
+  ['Living room', /\b(?:sofa|settee|armchair|tv\s+(?:unit|stand)|living\s+room)\b/i],
+];
+export function guessRoom(text) {
+  const hits = ROOM_WORDS.filter(([, re]) => re.test(text || '')).map(([r]) => r);
+  // "Garage shelving" names two words for one room; two rooms = not obvious.
+  return new Set(hits).size === 1 ? hits[0] : '';
+}
+
 function fallbackSupplier(allLines) {
   // A line that looks like a company ("… Ltd", "… Limited") near the top…
   const company = companyName(allLines);
   if (company) return company;
   // …otherwise the first prominent line that isn't an address or boilerplate.
   for (const l of allLines.slice(0, 6)) {
+    if (GREETING.test(l)) continue; // v15.7
     const name = tidyName(l);
     const letters = (name.match(/[A-Za-z]/g) || []).length;
     if (letters >= 4 && letters / name.length > 0.75 && name.length <= 40 && !NOT_A_NAME.test(name) && !repeats(name)) return name;
@@ -739,7 +821,7 @@ export function parseDocument(text, { today = new Date() } = {}) {
   const foreign = currency !== 'GBP';
   // (only for receipts in another currency: UK documents behave as before)
   const airport = kind === 'receipt' && foreign ? airportInfo(clean) : null;
-  const supplier = sup ? sup.name : (airport && airport.shop) || fallbackSupplier(allLines);
+  const supplier = sup ? sup.name : (airport && airport.shop) || (kind === 'receipt' && !foreign ? receiptSupplier(allLines, clean) : fallbackSupplier(allLines));
   const reference = pickReference(clean);
   // v13.5: the seller's legal name when it isn't the shop name ("Lampenwelt
   // GmbH" behind lights.co.uk; only for shops we know, because the first
@@ -783,6 +865,11 @@ export function parseDocument(text, { today = new Date() } = {}) {
     result.total = pickTotal(allLines, opts);
     result.date = pickDate(allLines, defaultYear);
     result.title = `${supplier || 'Receipt'}${reference ? ' order ' + reference : ' receipt'}`;
+    // v15.7: the first item from the order table makes a better title.
+    const item = !foreign ? firstItemName(allLines) : '';
+    if (item) result.title = item;
+    const room = guessRoom(item);
+    if (room) result.room = room;
     const bits = [];
     if (vehicleTax) {
       // DVLA: "Vehicle tax W123 BEX – 12 months", the amount actually paid.
@@ -810,7 +897,8 @@ export function parseDocument(text, { today = new Date() } = {}) {
   result.found = {
     // v13.5: a company line ("… Ltd", "… GmbH") or a DVLA confirmation counts
     // too, so the Supplier box is tinted rather than flagged as missing.
-    supplier: !!sup || !!companyGuess || !!vehicleTax,
+    // v15.7: a sign-off / shop email domain / "Kind regards, X" counts too
+    supplier: !!sup || !!companyGuess || !!vehicleTax || (kind === 'receipt' && !foreign && !!supplier && supplier !== fallbackSupplier(allLines)),
     date: !!result.date,
     total: result.total != null,
     reading: !!(result.meter && result.meter.closing != null),

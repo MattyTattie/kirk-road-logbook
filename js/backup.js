@@ -12,6 +12,7 @@ import { getEverything as getAllEntries, getMeta, saveEntriesAndMeta, setMeta } 
 import { reviveRestored, TOMBSTONES_KEY, CACHE_META_KEY } from './sync.js';
 import { blobToDataURL, dataURLToBlob } from './photos.js';
 import { APP_NAME, APP_SLUG } from './config.js';
+import { todayISO } from './utils.js';
 
 // NEVER change FORMAT: it's how a restore recognises a backup file, and it
 // must keep matching every backup you've already made (the app used to be
@@ -44,7 +45,7 @@ export async function exportBackup() {
   // Turn it into a file and "click" a hidden download link.
   const json = JSON.stringify(backup);
   const blob = new Blob([json], { type: 'application/json' });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayISO(); // v15.7: local date (UTC was yesterday after midnight in summer time)
   const filename = `${APP_SLUG}-backup-${today}.json`;
 
   const url = URL.createObjectURL(blob);

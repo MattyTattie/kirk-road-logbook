@@ -13,6 +13,7 @@
 import { remindersOn, notifiedLog, markNotified } from './prefs.js';
 import * as native from './native.js';
 import { withoutSuperseded, reminderDates } from './mortgage.js';
+import { todayISO } from './utils.js';
 
 export const WINDOW_DAYS = 30;
 export const THRESHOLDS = [30, 7, 0];
@@ -115,7 +116,7 @@ export function check(getEntries, { force = false } = {}) {
       for (const r of due) {
         await reg.showNotification(r.title, { body: r.body, tag: `hearthbook-${r.id}`, data: { url: r.url }, icon: './icons/icon-192.png', badge: './icons/icon-192.png' });
       }
-      markNotified(due.map((r) => r.key), new Date().toISOString().slice(0, 10));
+      markNotified(due.map((r) => r.key), todayISO()); // v15.7: local date
       return due;
     } catch (err) { console.warn('reminders:', err); return []; } finally { checking = null; }
   })();

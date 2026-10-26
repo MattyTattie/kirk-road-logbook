@@ -8,7 +8,7 @@
 // mortgage-free date for the same mortgage with no overpayments: an
 // estimate, and always labelled as one.
 
-import { el, fill, moreInfo, infoNote, keepPlace, money, niceDate, daysUntil } from './utils.js';
+import { el, fill, moreInfo, infoNote, keepPlace, money, niceDate, daysUntil, todayISO } from './utils.js';
 import { icon } from './icons.js';
 import * as prefs from './prefs.js';
 import * as M from './mortgage.js';
@@ -78,7 +78,10 @@ function whatIfBox(s) {
   const monthly = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '1', id: 'whatif-monthly', value: String(s.extra || 0) });
   const lump = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '100', id: 'whatif-lump', placeholder: '0' });
   // the month the one-off goes in (payment days from the next one, 5 years ahead)
-  const opts = Array.from({ length: 60 }, (_, k) => M.addMonths(s.firstAfter, k));
+  // v15.7: only payment days from today on (not before today)
+  const today = todayISO();
+  let k0 = 0; while (M.addMonths(s.firstAfter, k0) < today && k0 < 1200) k0++;
+  const opts = Array.from({ length: 60 }, (_, k) => M.addMonths(s.firstAfter, k0 + k));
   const pick = (iso) => opts.find((o) => o >= iso) || opts[0];
   const defWhen = pick(d.end || s.firstAfter);
   const when = el('select', { id: 'whatif-date' }, opts.map((o) => el('option', { value: o, selected: o === defWhen }, M.monthText(o))));
@@ -86,7 +89,7 @@ function whatIfBox(s) {
   const num = (i) => Math.max(0, Number(i.value) || 0);
   const update = () => {
     const extra = num(monthly), l = num(lump);
-    const plan = { balance: s.balance, rate: d.rate, payment: d.payment, extra, firstDay: s.firstAfter, lump: l, lumpDate: l ? when.value || s.firstAfter : null };
+    const plan = { balance: s.balance, rate: d.rate, payment: d.payment, extra, firstDay: s.firstAfter, lump: l, lumpDate: l ? when.value || opts[0] : null, today };
     const r = M.whatIf(plan);
     if (!r) { fill(out, el('p', { class: 'small' }, 'That wouldn’t pay it off.')); return; }
     const diff = monthsBetween(r.last, now.last); // + = sooner
