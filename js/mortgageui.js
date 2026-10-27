@@ -66,6 +66,9 @@ function reminderText(list) {
 }
 const cash = (v) => (Number(v) % 1 ? money(v) : pounds(v)); // £222, £533.29
 
+// v15.8: "£300 from Dec 2026" (· "£150 from Jun 2027")
+const planText = (changes) => changes.map((c) => `${cash(c.amount)} from ${M.monthText(c.from)}`).join(', then ');
+
 const row = (label, value, id, note) => el('div', { class: 'mrow', id }, el('span', { class: 'mrow-k' }, label), el('span', { class: 'mrow-v' }, value, note ? el('small', {}, note) : null));
 
 // v14.8: "What if" boxes in the Mortgage-free card. Try a different monthly
@@ -89,7 +92,10 @@ function whatIfBox(s) {
   const num = (i) => Math.max(0, Number(i.value) || 0);
   const update = () => {
     const extra = num(monthly), l = num(lump);
-    const plan = { balance: s.balance, rate: d.rate, payment: d.payment, extra, firstDay: s.firstAfter, lump: l, lumpDate: l ? when.value || opts[0] : null, today };
+    // v15.8: while the box shows today's amount, your saved changes apply
+    // too; type another amount and it's that from the next payment on.
+    const keepPlan = (s.changes || []).length > 0 && extra === Number(s.extra || 0);
+    const plan = { balance: s.balance, rate: d.rate, payment: d.payment, extra, firstDay: s.firstAfter, lump: l, lumpDate: l ? when.value || opts[0] : null, today, changes: keepPlan ? s.changes : [] };
     const r = M.whatIf(plan);
     if (!r) { fill(out, el('p', { class: 'small' }, 'That wouldn’t pay it off.')); return; }
     const diff = monthsBetween(r.last, now.last); // + = sooner
@@ -106,6 +112,7 @@ function whatIfBox(s) {
           el('small', { id: 'whatif-months' }, when2))),
         same ? null : el('div', { class: 'mrow', id: 'whatif-interest' }, el('span', { class: 'mrow-k' }, saved >= 0 ? 'Interest saved' : 'Extra interest'),
           el('span', { class: 'mrow-v' + (saved >= 0 ? ' good' : ' bad') }, pounds(Math.abs(saved)), el('small', {}, 'compared with now')))),
+      keepPlan ? el('p', { class: 'small muted whatif-plan-note', id: 'whatif-plan-note' }, `Includes your change: ${planText(s.changes)}.`) : null,
       warn.length ? el('p', { class: 'whatif-warn', id: 'whatif-warn' }, icon('alert', 16), el('span', {},
         warn.map((w) => `${w.year}: ${pounds(w.total)} overpaid, more than the usual 10% a year (about ${pounds(w.allowed)}).`).join(' '),
         ' Santander may charge an early repayment charge on the extra, so check with them first.')) : null,
@@ -113,7 +120,7 @@ function whatIfBox(s) {
         ['Balance now', money(s.balance)],
         ['Rate', `${d.rate}%`],
         ['Monthly payment', money(d.payment)],
-        ['Extra each month', `${cash(extra)} (now ${cash(s.extra || 0)})`],
+        ['Extra each month', `${cash(extra)} (now ${cash(s.extra || 0)})${keepPlan ? `, then ${planText(s.changes)}` : ''}`],
         l ? ['One-off', `${cash(l)} in ${longMonth(plan.lumpDate)}`] : null,
         ['Mortgage-free now', longMonth(now.last)],
         ['Interest from here', `${pounds(r.interest)} (now ${pounds(now.interest)})`],
@@ -131,11 +138,53 @@ function whatIfBox(s) {
     out);
 }
 
+// v15.8: "Monthly overpayment": what you overpay now, any changes you've
+// set from a date, and a small form to set one ("from Dec 2026 overpay
+// £300"). Saved on the set-up entry (mortgage.overpayChanges, optional).
+function overpayBox(s, saveSetup) {
+  const now = Number(s.extra || 0);
+  const all = s.allChanges || [];
+  const upcoming = new Set((s.changes || []).map((c) => c.from));
+  const box = el('div', { class: 'overpay-plan', id: 'overpay-plan' });
+  const rows = [row('Now', `${cash(now)} a month`, 'overpay-now', s.latest && s.latest.mortgage.fromMonthly ? 'from your last monthly payment' : s.latest ? `at ${niceDate(s.asAt)}` : null)];
+  for (const c of all) {
+    const done = !upcoming.has(c.from);
+    const del = done ? null : el('button', { type: 'button', class: 'btn link-btn small', 'data-from': c.from, 'aria-label': `Remove the change from ${longMonth(c.from)}`,
+      onclick: async () => { await saveSetup(M.withOverpayChange(s.setup, c, { remove: true }), 'Change removed'); } }, 'Remove');
+    rows.push(el('div', { class: 'mrow overpay-change' + (done ? ' done' : ''), 'data-from': c.from },
+      el('span', { class: 'mrow-k' }, `From ${longMonth(c.from)}`),
+      el('span', { class: 'mrow-v' }, `${cash(c.amount)} a month`, el('small', {}, done ? 'already in your payments' : niceDate(c.from)), del)));
+  }
+  // the form (closed until "Change" is tapped)
+  const today = todayISO();
+  let k0 = 0; while (M.addMonths(s.firstAfter, k0) < today && k0 < 1200) k0++;
+  const opts = Array.from({ length: 36 }, (_, k) => M.addMonths(s.firstAfter, k0 + k));
+  const when = el('select', { id: 'overpay-from' }, opts.map((o, i) => el('option', { value: o, selected: i === 0 }, M.monthText(o))));
+  const amt = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '1', id: 'overpay-amount', value: String(now) });
+  const msg = el('p', { class: 'small overpay-msg', id: 'overpay-msg', 'aria-live': 'polite' });
+  const form = el('div', { class: 'overpay-form', id: 'overpay-form', hidden: true },
+    el('div', { class: 'whatif-pair' },
+      el('label', { class: 'whatif-field' }, el('span', {}, 'From'), when),
+      el('label', { class: 'whatif-field' }, el('span', {}, 'Overpay each month (£)'), amt)),
+    el('p', { class: 'small muted' }, 'Payments before then stay as they are. Use 0 to stop overpaying.'),
+    msg,
+    el('div', { class: 'overpay-actions' },
+      el('button', { type: 'button', class: 'btn small', id: 'overpay-save', onclick: async () => {
+        const v = Number(amt.value);
+        if (amt.value === '' || !Number.isFinite(v) || v < 0 || v > 100000) { msg.textContent = 'Type the amount in pounds, e.g. 300 (0 to stop).'; amt.focus(); return; }
+        await saveSetup(M.withOverpayChange(s.setup, { from: when.value, amount: v }), 'Overpayment change saved');
+      } }, 'Save change'),
+      el('button', { type: 'button', class: 'btn secondary small', id: 'overpay-cancel', onclick: () => { form.hidden = true; open.hidden = false; } }, 'Cancel')));
+  const open = el('button', { type: 'button', class: 'btn link-btn quiet small', id: 'overpay-change', onclick: () => { form.hidden = false; open.hidden = true; amt.focus(); amt.select(); } }, 'Change from a date');
+  fill(box, el('h3', { class: 'whatif-title' }, 'Monthly overpayment', open), el('div', { class: 'mrows' }, rows), form);
+  return box;
+}
+
 // v15.2: the headline answer in a coloured box (green = ahead of plan).
 function freeHeadline(on, sh, pace, con, s) {
-  const best = pace && s.extra ? pace : con;
+  const best = pace && s.overpays ? pace : con;
   if (!best) return null;
-  const vs = on && sh ? sh.mortgageFree : con && pace && s.extra ? con.last : null;
+  const vs = on && sh ? sh.mortgageFree : con && pace && s.overpays ? con.last : null;
   const ahead = vs ? monthsBetween(best.last, vs) : 0;
   if (ahead > 0) return el('div', { class: 'result-box good', id: 'free-headline' }, el('div', { class: 'rb-head' }, icon('check', 18), el('span', {}, `Mortgage-free by ${longMonth(best.last)}`)),
     el('p', { class: 'rb-sub' }, `${monthsText(ahead)} sooner than ${on && sh ? 'without overpayments' : 'paying only the contractual payments'}`));
@@ -143,7 +192,7 @@ function freeHeadline(on, sh, pace, con, s) {
     el('p', { class: 'rb-sub' }, 'Paying the normal monthly payment'));
 }
 
-export function overview(everything) {
+export function overview(everything, { saveSetup = null } = {}) {
   const s = M.summary(everything);
   const wrap = el('div', { class: 'mortgage-overview', id: 'mortgage-overview' });
   if (!s) {
@@ -178,7 +227,7 @@ export function overview(everything) {
       el('h2', { class: 'card-title' }, 'Current deal'),
       el('div', { class: 'mrows' },
         row('Rate', `${d.rate}% ${d.rateType || 'fixed'}`, 'deal-rate'),
-        row('Monthly payment', money(d.payment), 'deal-payment', s.extra ? `+ ${cash(s.extra)} overpayment a month` : null),
+        row('Monthly payment', money(d.payment), 'deal-payment', s.overpays ? `+ ${cash(s.extra || 0)} overpayment a month${s.changes.length ? `, then ${planText(s.changes)}` : ''}` : null),
         d.end ? row('Deal ends', niceDate(d.end), 'deal-end', inTime(d.end)) : null,
         d.erc !== null ? row('Early repayment charge', money(d.erc), 'deal-erc', `at ${niceDate(s.asAt)}`)
           : s.knownErc ? row('Early repayment charge', money(s.knownErc.erc), 'deal-erc', `at ${niceDate(s.knownErc.date)}, the last one we have (online banking doesn’t show it)`) : null,
@@ -209,10 +258,10 @@ export function overview(everything) {
     const freeRows = [];
     if (on && sh) {
       freeRows.push(row('Without overpayments', longMonth(sh.mortgageFree), 'free-shadow', 'estimate'));
-      if (pace && s.extra) freeRows.push(row('At your current pace', longMonth(pace.last), 'free-pace', `${monthsText(monthsBetween(pace.last, sh.mortgageFree))} sooner`));
+      if (pace && s.overpays) freeRows.push(row(s.changes.length ? 'With your overpayments' : 'At your current pace', longMonth(pace.last), 'free-pace', `${monthsText(monthsBetween(pace.last, sh.mortgageFree))} sooner`));
       if (s.lifetimeSaved > 0) freeRows.push(el('p', { class: 'small muted', id: 'lifetime-saved' }, `At this pace, about ${pounds(s.lifetimeSaved)} less interest over the whole mortgage (estimate).`));
     } else {
-      if (pace && s.extra) freeRows.push(row('At your current pace', longMonth(pace.last), 'free-pace', `${money(d.payment)} + ${cash(s.extra)} a month`));
+      if (pace && s.overpays) freeRows.push(row(s.changes.length ? 'With your overpayments' : 'At your current pace', longMonth(pace.last), 'free-pace', `${money(d.payment)} + ${cash(s.extra || 0)} a month${s.changes.length ? `, then ${planText(s.changes)}` : ''}`));
       if (con) freeRows.push(row('Contractual payments only', longMonth(con.last), 'free-contractual', `${money(d.payment)} a month`));
       if (s.originalEnd) freeRows.push(row('Original term', longMonth(s.originalEnd), 'free-original'));
     }
@@ -221,6 +270,7 @@ export function overview(everything) {
       freeHeadline(on, sh, pace, con, s),
       el('div', { class: 'mrows' }, freeRows),
       infoNote(`Estimates from the ${niceDate(s.asAt)} balance, if the ${d.rate}% rate carried on.`, { id: 'free-note', cls: 'small muted', label: 'How these dates are worked out' }),
+      s.setup && saveSetup ? overpayBox(s, saveSetup) : null,
       pace ? whatIfBox(s) : null) : null;
 
     // v14.8: what went in each year (normal payments and overpayments)
@@ -246,6 +296,7 @@ export function overview(everything) {
         sh ? el('li', {}, `“Without overpayments” is an estimate: the same ${pounds(s.setup.mortgage.amount)} over ${monthsText(Number(s.setup.mortgage.termMonths) || 300)}, the same rates and dates, paying only the monthly payment. At each new deal the payment is worked out again on that balance over the rest of the term. Interest is the balance × rate ÷ 12 each month.`) : null,
         sh ? el('li', {}, 'A day or two charged at a different rate between deals is left out.') : null,
         anyEst ? el('li', {}, 'A year without a statement is estimated from the balances either side, so the interest saved depends on that estimate.') : null,
+        s.allChanges.length ? el('li', { id: 'notes-overpay-plan' }, 'A change to your monthly overpayment counts from its date on. Payments already made stay as they were: your statements and monthly payments are the real figures.') : null,
         el('li', {}, 'Mortgage-free dates assume today’s rate carries on and the payments stay the same. Your lender’s figures are the real ones.')));
 
     const setupHint = !s.setup ? el('a', { class: 'card mortgage-card mortgage-setup-hint', id: 'mortgage-setup-hint', href: '#/new/mortgage' },

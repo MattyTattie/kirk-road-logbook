@@ -746,7 +746,17 @@ async function renderList(type, year = 0) {
   // --- v15.0: monthly kWh from the EDF usage file, this year vs last ---
   if (type === 'meter' && !year) screen.push(await usageCard());
   // --- v14.7: Mortgage overview above its statements ---
-  if (type === 'mortgage' && !year) screen.push(mortUI.overview(everything));
+  // v15.8: the overpayment change is saved on the set-up entry (normal save + sync, Undo)
+  if (type === 'mortgage' && !year) screen.push(mortUI.overview(everything, { saveSetup: async (entry, msg) => {
+    const prevRec = await db.getEntry(entry.id);
+    const saved = { ...entry, updatedAt: new Date().toISOString() };
+    await db.saveEntry(saved);
+    await sync.recordSave(saved.id);
+    const y = window.scrollY;
+    await render();
+    window.scrollTo(0, y);
+    toast(msg || 'Saved', prevRec ? async () => { await restoreEntry(prevRec, 'Change undone'); await render(); window.scrollTo(0, y); } : null);
+  } }));
 
   // --- Search box and total ---
   const search = el('input', {

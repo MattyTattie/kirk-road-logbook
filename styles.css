@@ -1528,3 +1528,16 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
   .dash > #coming-up > .list > * { margin: 0; min-width: 0; }
   .dash > #coming-up .up-text, .dash > #coming-up .entry * { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 }
+
+/* v15.8: Monthly overpayment (change from a date) in the Mortgage-free card */
+.overpay-plan { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.overpay-plan .whatif-title .btn { margin-left: auto; width: auto; flex: none; }
+.overpay-change.done .mrow-v { color: var(--text-2); }
+.overpay-change .mrow-v .btn.link-btn { min-height: 32px; padding: 0 0 0 8px; font-size: 13px; width: auto; display: inline-flex; }
+.overpay-form { margin-top: 10px; background: var(--surface-2, rgba(127,127,127,.08)); border-radius: 12px; padding: 10px 12px; }
+.overpay-form[hidden] { display: none; }
+.overpay-actions { display: flex; gap: 10px; margin-top: 8px; }
+.overpay-actions .btn { flex: 1; }
+.overpay-msg { color: var(--bad); margin: 4px 0 0; }
+.overpay-msg:empty { display: none; }
+.whatif-plan-note { margin: 8px 0 0; }

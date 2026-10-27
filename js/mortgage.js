@@ -160,8 +160,11 @@ export function dealTimeline(entries) {
     out.push({ from: d.from, rate: Number(d.rate), payment: Number(d.payment) || null, end: d.end || null, rateType: d.rateType || 'fixed' });
   }
   out.sort((a, b) => a.from.localeCompare(b.from));
-  // the same rate carried on into a new statement year is not a new deal
-  return out.filter((d, i) => i === 0 || d.rate !== out[i - 1].rate);
+  // the same rate carried on into a new statement year is not a new deal.
+  // v15.8: unless it has a different monthly payment (a new deal at the
+  // same rate): that one is kept, so its payment counts from its date.
+  return out.filter((d, i) => i === 0 || d.rate !== out[i - 1].rate
+    || (Number(d.payment) > 0 && Number(out[i - 1].payment) > 0 && p(d.payment) !== p(out[i - 1].payment) && d.from !== out[i - 1].from));
 }
 const rateOn = (timeline, day) => { let r = timeline[0] ? timeline[0].rate : 0; for (const d of timeline) if (d.from <= day) r = d.rate; else break; return r; };
 
@@ -250,11 +253,48 @@ export function yearsTable(entries) {
 
 // Months to pay a balance off (and the last payment date) with a monthly
 // payment + overpayment at a rate. null if it never would.
-export function payoff(balance, ratePct, monthly, extra = 0, firstDay) {
-  let b = p(balance); const pay = p(monthly) + p(extra);
+// v15.8: `changes` = [{from, amount}] — the overpayment becomes `amount`
+// from that payment date on (see overpayPlan).
+export function payoff(balance, ratePct, monthly, extra = 0, firstDay, changes = []) {
+  let b = p(balance);
   let n = 0, interest = 0;
-  while (b > 0 && n < 1200) { const i = Math.round(b * ratePct / 1200); if (pay <= i) return null; interest += i; b -= Math.min(b, pay - i); n++; }
+  while (b > 0 && n < 1200) {
+    const pay = p(monthly) + p(changes.length && firstDay ? extraOn(changes, addMonths(firstDay, n), extra) : extra);
+    const i = Math.round(b * ratePct / 1200); if (pay <= i) return null; interest += i; b -= Math.min(b, pay - i); n++;
+  }
   return { months: n, last: firstDay ? addMonths(firstDay, n - 1) : null, interest: L(interest) };
+}
+
+// --------------------------------------------------------------------
+// v15.8: changing the monthly overpayment from a date. Saved on the set-up
+// entry as an extra (optional) list: mortgage.overpayChanges =
+// [{ from: 'YYYY-MM-DD', amount: 300, added: ISO time }]. Nothing already
+// paid changes (statements and monthly payments are the real history);
+// only payments AFTER the latest figures use it. A change dated on or
+// before the latest figures is already in them, so it's left out.
+// --------------------------------------------------------------------
+const goodDay = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.slice(0, 10));
+export function overpayChanges(entries) {
+  const setup = setupOf(entries);
+  const list = setup && Array.isArray(setup.mortgage.overpayChanges) ? setup.mortgage.overpayChanges : [];
+  const byDay = new Map();
+  for (const c of list) {
+    if (!c || !goodDay(c.from) || !hasNum(c.amount) || Number(c.amount) < 0 || Number(c.amount) > 1e6) continue;
+    byDay.set(c.from.slice(0, 10), { from: c.from.slice(0, 10), amount: L(p(c.amount)) }); // same day twice: the later one in the list wins
+  }
+  return [...byDay.values()].sort((a, b) => a.from.localeCompare(b.from));
+}
+// The overpayment on a payment day: the last change on or before it, else `base`.
+export function extraOn(changes, day, base = 0) { let x = Number(base) || 0; for (const c of changes) { if (c.from <= day) x = Number(c.amount) || 0; else break; } return x; }
+// The changes still to come after the latest figures (asAt).
+export const plannedChanges = (entries, asAt) => overpayChanges(entries).filter((c) => !asAt || c.from > asAt.slice(0, 10));
+// The setup entry with a change added (or one taken away): a new object, for saving.
+export function withOverpayChange(setup, change, { remove = false } = {}) {
+  const old = Array.isArray(setup.mortgage.overpayChanges) ? setup.mortgage.overpayChanges : [];
+  const rest = old.filter((c) => !c || c.from !== change.from);
+  const list = remove ? rest : [...rest, { from: change.from, amount: L(p(change.amount)), added: change.added || new Date().toISOString() }];
+  list.sort((a, b) => String(a.from).localeCompare(String(b.from)));
+  return { ...setup, mortgage: { ...setup.mortgage, overpayChanges: list } };
 }
 
 // --------------------------------------------------------------------
@@ -300,16 +340,20 @@ export function summary(entries) {
   }
   // projections from the latest balance (rate stays as now: an estimate)
   // the first payment after the statement date (same day of the month as the first payment)
-  const firstAfter = (() => { const d = setup && setup.mortgage.firstPayment ? Number(setup.mortgage.firstPayment.slice(8, 10)) : 3; return addMonths(iso(Number(asAt.slice(0, 4)), Number(asAt.slice(5, 7)), d), 1); })();
+  // v15.8: the first payment day AFTER the as-at date (a balance at the 1st
+  // with the payment on the 3rd no longer skips that month's payment)
+  const firstAfter = (() => { const d = setup && setup.mortgage.firstPayment ? Number(setup.mortgage.firstPayment.slice(8, 10)) : 3; const same = iso(Number(asAt.slice(0, 4)), Number(asAt.slice(5, 7)), d); return same > asAt.slice(0, 10) ? same : addMonths(same, 1); })();
   const extra = latest && hasNum(m.lastOverpay) ? Number(m.lastOverpay) : 0;
+  const changes = plannedChanges(entries, asAt); // v15.8
+  const overpays = extra > 0 || changes.some((c) => c.amount > 0);
   const contractual = payoff(balance, deal.rate, deal.payment, 0, firstAfter);
-  const pace = extra > 0 ? payoff(balance, deal.rate, deal.payment, extra, firstAfter) : contractual;
+  const pace = overpays ? payoff(balance, deal.rate, deal.payment, extra, firstAfter, changes) : contractual;
   const originalEnd = setup ? addMonths(setup.mortgage.firstPayment || addMonths(setup.date, 1), (Number(setup.mortgage.termMonths) || 300) - 1) : null;
   const knownErc = lastKnownErc(entries);
   return {
     knownErc, source: latest && latest.mortgage.partial ? (latest.mortgage.source || 'online banking') : latest ? 'latest statement' : null,
     setup, latest, asAt, balance, deal, svr, years, points, shadow,
-    extra, contractual, pace, originalEnd, firstAfter,
+    extra, changes, overpays, allChanges: overpayChanges(entries), contractual, pace, originalEnd, firstAfter,
     // the whole loan at this pace against the whole shadow loan (estimate)
     lifetimeSaved: shadow && pace && shadow.interestSaved !== null ? L(p(shadow.totalInterest) - p(shadow.realInterest) - p(pace.interest)) : null,
     // after the deal ends, on the rate after a deal: the balance then (contractual
@@ -501,15 +545,16 @@ export function yearRoundup(entries, year) {
 // "What if" (v14.8): pay off from the latest balance with a different
 // monthly overpayment and/or a one-off lump sum on a date. Nothing saved.
 // --------------------------------------------------------------------
-export function whatIf({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null, today = null }) {
+export function whatIf({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null, today = null, changes = [] }) {
   // v15.7: a one-off can't be paid in the past: dated before today, it goes
   // in at the first payment day from today.
   if (lumpDate && today && lumpDate < today) { let k = 0; while (addMonths(firstDay, k) < today && k < 1200) k++; lumpDate = addMonths(firstDay, k); }
-  let b = p(balance); const monthly = p(pay) + p(extra); const lp = p(lump);
+  let b = p(balance); const lp = p(lump);
   let n = 0, interest = 0, lumpDone = !(lp > 0);
   const byYear = {}; // overpayments per calendar year (pence)
   while (b > 0 && n < 1200) {
     const day = addMonths(firstDay, n);
+    const monthly = p(pay) + p(extraOn(changes, day, extra)); // v15.8: planned changes
     if (!lumpDone && lumpDate && lumpDate <= day) { const x = Math.min(b, lp); b -= x; lumpDone = true; byYear[lumpDate.slice(0, 4)] = (byYear[lumpDate.slice(0, 4)] || 0) + x; if (b <= 0) break; }
     const i = Math.round(b * rate / 1200);
     if (monthly <= i) return null;
@@ -526,17 +571,20 @@ export function whatIf({ balance, rate, payment: pay, extra = 0, firstDay, lump 
 // Years where overpayments would go over the yearly allowance (10% of the
 // balance at the start of the year, a usual Santander limit while early
 // repayment charges apply). alreadyThisYear = overpaid so far this year.
-export function overAllowance({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null, ercUntil = null, alreadyThisYear = 0, thisYear, pct = 10 }) {
-  const r = whatIf({ balance, rate, payment: pay, extra, firstDay, lump, lumpDate });
+export function overAllowance({ balance, rate, payment: pay, extra = 0, firstDay, lump = 0, lumpDate = null, ercUntil = null, alreadyThisYear = 0, thisYear, pct = 10, today = null, changes = [] }) {
+  // v15.8: a past-dated one-off moves to the next payment day here too (as whatIf)
+  if (lumpDate && today && lumpDate < today) { let k = 0; while (addMonths(firstDay, k) < today && k < 1200) k++; lumpDate = addMonths(firstDay, k); }
+  const r = whatIf({ balance, rate, payment: pay, extra, firstDay, lump, lumpDate, changes });
   if (!r) return [];
   const out = [];
   // balance at 1 Jan of each year, on the same plan
   const startBal = (yr) => {
     if (Number(yr) === Number(thisYear)) return null; // this year: worked from today's balance below
-    let b = p(balance); const monthly = p(pay) + p(extra); let lumpDone = !(p(lump) > 0);
+    let b = p(balance); let lumpDone = !(p(lump) > 0);
     for (let n = 0; n < 1200 && b > 0; n++) {
       const day = addMonths(firstDay, n);
       if (day >= `${yr}-01-01`) break;
+      const monthly = p(pay) + p(extraOn(changes, day, extra));
       if (!lumpDone && lumpDate && lumpDate <= day) { b -= Math.min(b, p(lump)); lumpDone = true; }
       const i = Math.round(b * rate / 1200); b -= Math.min(b, monthly - i);
     }
