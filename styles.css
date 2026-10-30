@@ -1545,3 +1545,26 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .whatif-pair { align-items: stretch; }
 .whatif-pair .whatif-field > span:first-child { flex: 1 1 auto; display: flex; align-items: flex-end; line-height: 1.3; }
 .whatif-pair .whatif-field input, .whatif-pair .whatif-field .tapsel { height: 48px; min-height: 48px; padding: 0 10px 0 12px; gap: 6px; border-radius: 10px; background: var(--surface-2, transparent); font-size: 16px; box-sizing: border-box; }
+
+/* ===== polish-intuitive (Oct 2026) ===== */
+.more-group { font-size: 13px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-2); margin: 22px 4px 8px; grid-column: 1 / -1; }
+.more-group:first-of-type { margin-top: 8px; }
+.backup-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.backup-half { display: flex; flex-direction: column; gap: 6px; }
+.backup-half .btn { width: 100%; white-space: normal; }
+.backup-half p { margin: 0; }
+.last-backup { font-weight: 700; font-size: 16px; }
+.last-backup.old { color: var(--warn, #b45309); }
+.sync-more summary { cursor: pointer; color: var(--brand); font-weight: 600; margin: 4px 0 8px; list-style: none; }
+.sync-more summary::-webkit-details-marker { display: none; }
+.sync-more[open] summary { margin-bottom: 4px; }
+.scan-choice.scan-big { padding-top: 22px; padding-bottom: 22px; }
+.scan-choice.reminder-choice { padding-top: 10px; padding-bottom: 10px; }
+.scan-choice.reminder-choice .scan-choice-icon { width: 36px; height: 36px; }
+.chooser-or { font-weight: 700; font-size: 14px; color: var(--text); }
+.customise-move .icon-btn { width: 44px; height: 44px; font-size: 20px; background: var(--surface-2); }
+.drag-handle { padding: 12px 10px; }
+.drag-handle i { opacity: .75; }
+.empty-hero + .tour-card { margin-top: 14px; }
+.scan-choice.reminder-choice { background: var(--surface); color: var(--text); min-height: 0; box-shadow: none; border: 1px solid var(--border, rgba(0,0,0,.1)); }
+.scan-choice.reminder-choice .scan-choice-icon { background: var(--surface-2); }

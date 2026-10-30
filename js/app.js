@@ -366,7 +366,7 @@ function renderWelcome() {
         { class: 'welcome-points' },
         point('receipt', 'teal', 'Snap it, file it', 'Photograph receipts and labels; they’re shrunk to save space.'),
         point('shield', 'violet', 'Never miss an expiry', 'Warranties and services due in the next 60 days are flagged.'),
-        point('lock', 'indigo', 'Private by design', 'Everything stays on this phone. No account, no cloud — works offline.')
+        point('lock', 'indigo', 'Private by design', 'Everything stays on this phone unless you turn on sharing with your own Google Drive. Works offline.')
       ),
       el('div', { class: 'welcome-actions' },
         el('button', { class: 'btn btn-lg', id: 'welcome-start', type: 'button', onclick: () => { markWelcomed(); location.replace('#/home'); } }, 'Get started'),
@@ -397,18 +397,18 @@ async function renderHome() {
     fill(app,
       el('div', { class: 'dash', id: 'dashboard' },
         head,
-        prefs.homeTidy() ? null : tourCard(), // v14: the tour lives under More (tidy home)
-        houseCard([]),
+        // polish: an empty home shows just the first step (and the quick tour on first open).
+        houseCard([], { ask: false }), // the weather question waits until there's an entry
         el('div', { class: 'empty empty-hero' },
           el('div', { class: 'empty-art' }, icon('home', 44)),
           el('h2', {}, 'Your logbook is empty'),
           el('p', {}, 'Add your first receipt, warranty, job, electricity bill or policy. It takes a few seconds.'),
           el('div', { class: 'stack' },
             el('a', { class: 'btn btn-lg', href: '#/new', id: 'empty-add' }, icon('plus', 20), 'Add first entry'),
-            el('a', { class: 'btn btn-lg secondary', href: '#/export' }, icon('upload', 20), 'Restore a backup')
+            el('a', { class: 'btn link-btn', href: '#/export', id: 'empty-restore' }, 'I have a backup file')
           )
         ),
-        el('div', { class: 'section-grid' }, prefs.orderedSections().map((s) => sectionTile(s, [], year)))
+        tourCard()
       )
     );
     return;
@@ -1367,7 +1367,7 @@ const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought
 function renderChooser() {
   fill(app,
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
-    el('a', { class: 'scan-choice', href: '#/scan', id: 'scan-choice' },
+    el('a', { class: 'scan-choice scan-big', href: '#/scan', id: 'scan-choice' },
       el('span', { class: 'scan-choice-icon' }, icon('scan', 26)),
       el('span', { class: 'scan-choice-text' },
         el('span', { class: 'choice-label' }, 'Scan receipt or bill'),
@@ -1379,7 +1379,7 @@ function renderChooser() {
         el('span', { class: 'choice-label' }, 'Add reminder'),
         el('span', { class: 'choice-blurb' }, 'Smoke alarm test, boiler service… one-off or repeating')),
       icon('chevron', 20)),
-    el('p', { class: 'chooser-or' }, 'or add by hand'),
+    el('p', { class: 'chooser-or' }, 'Or add by hand'),
     el(
       'div',
       { class: 'chooser' },
@@ -2107,25 +2107,25 @@ async function syncCard(cardHead) {
     btn.disabled = false;
     rerender();
   };
-  const help = el('ul', { class: 'sync-help' },
-    el('li', {}, 'Keeps one logbook on more than one phone: yours and anyone you want to share it with.'),
+  const help = el('details', { class: 'sync-more' }, el('summary', {}, 'How it works ›'), el('ul', { class: 'sync-help' },
     el('li', {}, 'Entries go in a small “hearthbook-sync.json” file in your “Hearthbook” Drive folder (the folder keeps its old name); photos are stored next to it as separate picture files. You share that folder. No other company or server is involved.'),
     el('li', {}, 'Each phone keeps its own full copy, so the app still works with no signal. Changes are swapped when you open the app, a few seconds after you save, and when you tap Sync now.'),
     el('li', {}, 'If two phones change the same entry before syncing, the most recent save wins.'),
-    el('li', {}, 'The app can only open its own files, nothing else in your Drive.'));
+    el('li', {}, 'The app can only open its own files, nothing else in your Drive.')));
+  const helpLine = el('p', { class: 'sync-oneline' }, 'Keeps one logbook on more than one phone: yours and anyone you want to share it with.');
   // A message stays for 10 seconds, even if the card redraws meanwhile.
   if (syncMsg && !syncMsg.until) syncMsg.until = Date.now() + 10000;
   if (syncMsg && syncMsg.until < Date.now()) syncMsg = null;
   const msg = syncMsg ? el('p', { class: 'sync-msg' + (syncMsg.bad ? ' bad' : ''), id: 'sync-msg', role: 'status' }, syncMsg.text) : null;
 
   if (st.state === 'unconfigured') {
-    add(head, el('p', {}, 'Off. Everything stays on this phone.'), help,
+    add(head, el('p', {}, 'Off. Everything stays on this phone.'), helpLine, help,
       el('p', { class: 'small muted', id: 'sync-unconfigured' }, 'Not set up in this copy of the app yet: it needs a free Google Cloud “client ID” first (HOW-IT-WORKS.md, section 9).'),
       el('button', { type: 'button', class: 'btn secondary', disabled: true }, 'Connect Google account'));
     return card;
   }
   if (st.state === 'off') {
-    add(head, el('p', {}, 'Off. Everything stays on this phone.'), help,
+    add(head, el('p', {}, 'Off. Everything stays on this phone.'), helpLine, help,
       el('button', { type: 'button', class: 'btn', id: 'sync-connect', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening Google…', async () => {
         await sync.connect();
         syncMsg = { text: sync.getStatus().state === 'nofolder' ? 'Signed in. Now start a shared logbook, or join one.' : 'Connected.' };
@@ -3314,6 +3314,7 @@ async function renderExport() {
     usage = `About ${(est.usage / 1048576).toFixed(1)} MB used on this phone.`;
   }
   const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
+  const backupOld = !!lastBackup && (Date.now() - new Date(lastBackup).getTime()) > 30 * 86400000;
 
   const fileInput = el('input', { type: 'file', accept: '.json,application/json', hidden: true, id: 'import-input' });
   fileInput.addEventListener('change', async () => {
@@ -3346,6 +3347,7 @@ async function renderExport() {
   fill(app,
     screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
     tidy ? tourCard() : null,
+    el('h2', { class: 'more-group', id: 'group-home' }, 'Your home'),
     el('a', { class: 'card more-row', href: '#/manuals', id: 'more-manuals' },
       el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
       el('span', { class: 'more-row-text' }, el('strong', {}, 'Manuals'), el('span', { class: 'small muted' }, `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides${mineManuals.length ? ` · ${mineManuals.length} of yours` : ''}`)),
@@ -3365,44 +3367,24 @@ async function renderExport() {
     tidy && recent.length ? el('section', { class: 'group', id: 'recent' },
       el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
       el('div', { class: 'list' }, recent.map(entryCard))) : null,
-    el(
-      'section',
-      { class: 'card' },
-      cardHead('backup', 'brand', 'Back up'),
-      el('p', {}, `${entries.length} entries, ${photoCount} photos. ${usage}`),
-      el('p', { id: 'last-backup', class: 'last-backup' + (lastBackup ? ' ok' : '') }, lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleString('en-GB')}` : 'No backup made yet.'),
-      el('p', { class: 'small muted' }, 'This downloads one file (with all photos inside) to your Downloads folder. Then copy it somewhere safe — email it to yourself or put it on Google Drive.'),
-      el(
-        'button',
-        {
-          class: 'btn',
-          id: 'export-btn',
-          onclick: async (ev) => {
-            const btn = ev.currentTarget;
-            btn.disabled = true;
-            btn.textContent = 'Preparing…';
-            try {
-              const r = await exportBackup();
-              toast(`Backup saved: ${r.filename}`);
-            } catch (err) {
-              alert('Backup failed: ' + err.message);
-            }
+    el('h2', { class: 'more-group', id: 'group-backup' }, 'Backup & sharing'),
+    el('section', { class: 'card', id: 'backup-card' },
+      cardHead('backup', 'brand', 'Backup file'),
+      el('p', { id: 'last-backup', class: 'last-backup' + (lastBackup ? ' ok' : '') + (backupOld ? ' old' : '') }, lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleString('en-GB')}${backupOld ? ' · time for a new one' : ''}` : 'Last backup: never'),
+      el('p', { class: 'small muted' }, `${entries.length} entries, ${photoCount} photos. ${usage}`),
+      el('div', { class: 'backup-pair' },
+        el('div', { class: 'backup-half' },
+          el('button', { class: 'btn', id: 'export-btn', onclick: async (ev) => {
+            const btn = ev.currentTarget; btn.disabled = true; btn.textContent = 'Preparing…';
+            try { const r = await exportBackup(); toast(`Backup saved: ${r.filename}`); } catch (err) { alert('Backup failed: ' + err.message); }
             renderExport();
-          },
-        },
-        icon('download', 20),
-        'Download backup file'
-      )
-    ),
+          } }, icon('download', 20), 'Save a backup'),
+          el('p', { class: 'small muted' }, 'One file, photos inside, to your Downloads. Keep a copy somewhere safe.')),
+        el('div', { class: 'backup-half', id: 'restore-card' },
+          el('button', { class: 'btn secondary', id: 'import-btn', onclick: () => fileInput.click() }, icon('upload', 20), 'Load a backup'),
+          el('p', { class: 'small muted' }, 'Adds a backup file from this app, from any version.'))),
+      fileInput),
     await syncCard(cardHead),
-    el(
-      'section',
-      { class: 'card' },
-      cardHead('upload', 'teal', 'Restore'),
-      el('p', { class: 'small muted' }, 'Load a backup file made by this app (e.g. on a new phone). Backups from earlier versions of the app work too.'),
-      el('button', { class: 'btn secondary', id: 'import-btn', onclick: () => fileInput.click() }, 'Choose backup file…'),
-      fileInput
-    ),
     el(
       'section',
       { class: 'card' },
@@ -3410,6 +3392,7 @@ async function renderExport() {
       el('p', { class: 'small muted' }, 'Opens a report of every entry with photos. Use Print → "Save as PDF" to keep or send a copy.'),
       el('a', { class: 'btn secondary', href: 'report.html', id: 'report-link' }, 'Open report')
     ),
+    el('h2', { class: 'more-group', id: 'group-look' }, 'Look & feel'),
     el(
       'section',
       { class: 'card' },
@@ -3426,6 +3409,7 @@ async function renderExport() {
         el('span', {}, el('strong', {}, 'Weather on the house picture'))),
       weatherPlaceBox(),
       el('p', { class: 'small muted', id: 'weather-privacy' }, 'Your area is set on this phone only. Your address is never sent.')),
+    el('h2', { class: 'more-group', id: 'group-sections' }, 'Reminders & home sections'),
     el('section', { class: 'card', id: 'reminders-card' }, cardHead('clock', 'rose', 'Reminders'),
       remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => renderExport() })),
     addTo(customiseCard(cardHead, applyNavPrefs),

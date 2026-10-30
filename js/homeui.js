@@ -71,7 +71,7 @@ export function placePicker({ idp = 'place', onDone = () => {}, onCancel = null,
     el('p', { class: 'small muted place-note' }, 'Kept on this phone only. Your address is never sent.'));
 }
 
-export function houseCard(everything) {
+export function houseCard(everything, { ask: askOn = true } = {}) {
   const card = el('section', { class: 'house-card', id: 'house', 'aria-label': 'Your house at a glance' });
   const body = el('div', { class: 'house-body' });
   addTo(card, body);
@@ -123,7 +123,7 @@ export function houseCard(everything) {
   draw();
   freshen();
   // One-time question (until answered or dismissed; More → Appearance any time).
-  if (weather.shouldAsk()) {
+  if (askOn && weather.shouldAsk()) {
     const ask = el('div', { class: 'place-ask', id: 'place-ask' },
       el('p', { class: 'place-ask-q' }, icon('sun', 18), el('span', {}, el('strong', {}, 'Show your local weather?'), ' Clouds, rain, snow and stars on the house picture.')));
     addTo(ask, placePicker({ idp: 'ask-place', onDone: () => { ask.remove(); draw(); freshen(); },
