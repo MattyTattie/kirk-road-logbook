@@ -49,7 +49,7 @@
 // same github.io origin keep theirs.)
 // v15.1 = Add reminder: standalone one-off or repeating reminders (stored as jobs with a reminder object).
 // v15.2 = tap-to-explain words + Words explained page, tap lists instead of drop-downs, green/red result boxes, More info folds, Undo after edits/deletes.
-const CACHE_NAME = 'hearthbook-v15.9';
+const CACHE_NAME = 'hearthbook-v15.10';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
