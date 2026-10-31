@@ -52,7 +52,7 @@ import * as db from './db.js';
 import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
-export const APP_VERSION = '15.10'; // shown in Sync details; keep in step with sw.js CACHE_NAME
+export const APP_VERSION = '15.11'; // shown in Sync details; keep in step with sw.js CACHE_NAME
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
@@ -66,6 +66,7 @@ const TOMBS_KEY = 'syncTombstones'; // meta store: { entryId: deletedAtISO }
 const CACHE_KEY = 'syncCache'; // meta store: last-seen Drive file (text only), to skip re-downloading
 const DIAG_KEY = 'syncDiag'; // meta store: troubleshooting details
 const UPLOADS_KEY = 'syncPhotoUploads'; // meta store (v13.8): { photoId: { driveId, size, at } } finished, checked photo uploads
+const EMBEDS_KEY = 'syncPhotoEmbeds'; // meta store (v15.11): { photoId: driveId } copies this phone put in the shared file, kept until the other person's phone has synced
 const TIDY_KEY = 'syncPhotoTidy'; // meta store (v13.8): when leftover duplicate photo files were last binned
 export const PHOTO_BATCH = 10; // rewrite the sync file after this many photos
 const PHOTO_TRIES = 3; // tries per photo before it's skipped for this sync
@@ -750,9 +751,13 @@ async function buildPhotosMap(used, remotePhotos, localBlobs, job, previousDrive
         || (previousDriveOnly && previousDriveOnly.has(id) && previousDriveOnly.get(id) === driveId)
         || Boolean(photoEmbeddedData(existing) && !photoDriveId(existing));
       let data = null;
-      if (!alreadyPublished) {
+      // v15.11: still waiting for the other phone to read our copy? Keep it.
+      const waitingFor = job.keepEmbeds && job.keepEmbeds.get(id) === driveId && photoEmbeddedData(existing);
+      if (waitingFor) data = photoEmbeddedData(existing);
+      else if (!alreadyPublished) {
         if (!blob && photoEmbeddedData(existing)) data = photoEmbeddedData(existing);
         else if (blob) data = await blobToDataURL(blob);
+        if (data && job.trackEmbeds) (job.newEmbeds = job.newEmbeds || {})[id] = driveId;
       }
       photos[id] = packDrivePhoto(driveId, { data });
       continue;
@@ -888,6 +893,18 @@ async function syncOnce(c, job = photoJob()) {
     job.deferred = 0;
     job.mapNow = null;
     const before = await drive.getMeta(c.files.index);
+    // v15.11: photo copies this phone put inside the shared file stay there
+    // until the OTHER person's phone has written the file (so it has read
+    // them). Drive tells us whether the last writer was us. If Drive doesn't
+    // say, behave as before (copies go after one sync).
+    const lmu = before.lastModifyingUser;
+    let keepEmbeds = new Map();
+    if (lmu && typeof lmu.me === 'boolean') {
+      if (lmu.me) keepEmbeds = new Map(Object.entries((await db.getMeta(EMBEDS_KEY)) || {}));
+      else await db.setMeta(EMBEDS_KEY, {});
+    }
+    job.keepEmbeds = keepEmbeds;
+    job.trackEmbeds = Boolean(lmu && typeof lmu.me === 'boolean');
     let fileSize = before.size != null ? Number(before.size) : null;
     // Unchanged since last time? Use our saved copy of the text and skip
     // re-downloading the shared file.
@@ -1004,7 +1021,7 @@ async function syncOnce(c, job = photoJob()) {
     // Strip embedded bytes once a Drive id is known on both sides of a sync.
     // Any photo that still carries embedded bytes alongside a Drive id should
     // be rewritten pointer-only so the shared file shrinks after migration.
-    const fatLeft = full && [...used].some((id) => photoEmbeddedData(remote.photos[id]) && photoDriveId(remote.photos[id]));
+    const fatLeft = full && [...used].some((id) => photoEmbeddedData(remote.photos[id]) && photoDriveId(remote.photos[id]) && keepEmbeds.get(id) !== photoDriveId(remote.photos[id]));
     const shouldWrite = p.remoteChanged || supplyable.length || unused.length || needsMigrate || fatLeft || (legacyLeft && (c.files.buckets || needsMigrate || full));
 
     if (shouldWrite) {
@@ -1052,6 +1069,14 @@ async function syncOnce(c, job = photoJob()) {
       lastWrite = written && written.version != null ? { fileId: c.files.index, version: written.version, photos } : null;
       job.mapNow = photos;
       await forgetPublishedUploads(job, photos);
+      if (job.trackEmbeds) {
+        // Remember only copies that are really in the file we just wrote.
+        const all = { ...Object.fromEntries(job.keepEmbeds || []), ...(job.newEmbeds || {}) };
+        const still = Object.fromEntries(Object.entries(all).filter(([id, did]) => photoDriveId(photos[id]) === did && photoEmbeddedData(photos[id])));
+        await db.setMeta(EMBEDS_KEY, still);
+        job.keepEmbeds = new Map(Object.entries(still));
+        job.newEmbeds = {};
+      }
       const driveOnly = Object.fromEntries(driveOnlyPhotoIds(photos));
       await db.setMeta(CACHE_KEY, {
         fileId: c.files.index,
@@ -1102,4 +1127,29 @@ export function ago(iso) {
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+// ---------- v15.11: photos the other phone added that haven't arrived ----------
+// How many of this entry's photos the shared file lists but this phone
+// doesn't have yet (0 when sync is off). Read from the last-synced copy.
+export async function missingPhotoCount(entry) {
+  const c = await getConfig();
+  if (!ready(c) || !entry) return 0;
+  const cache = await db.getMeta(CACHE_KEY);
+  const rec = cache && cache.index && cache.index.records && cache.index.records[entry.id];
+  if (!rec || !Array.isArray(rec.photos)) return 0;
+  const have = new Set((entry.photos || []).filter((x) => x && x.blob).map((x) => x.id));
+  return rec.photos.filter((ph) => ph && ph.id && !have.has(ph.id)).length;
+}
+// Does this phone still need to say yes to opening shared photos?
+export async function needsPhotoAccess() {
+  const c = await getConfig();
+  return Boolean(c && c.enabled) && drive.isConfigured() && !drive.hasPhotoAccess();
+}
+// From a tap: ask Google once (if needed), then sync to fetch the photos.
+export async function fetchMissingPhotos() {
+  if (await needsPhotoAccess()) {
+    try { await drive.askPhotoAccess(); } catch (err) { if (!(err instanceof drive.AuthError)) throw err; }
+  }
+  return syncNow({ interactive: true });
 }

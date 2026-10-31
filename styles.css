@@ -1568,3 +1568,11 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .empty-hero + .tour-card { margin-top: 14px; }
 .scan-choice.reminder-choice { background: var(--surface); color: var(--text); min-height: 0; box-shadow: none; border: 1px solid var(--border, rgba(0,0,0,.1)); }
 .scan-choice.reminder-choice .scan-choice-icon { background: var(--surface-2); }
+
+/* v15.11: photo not here yet / allow photos */
+.photo-missing-box { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 2px dashed var(--line, #ccd); border-radius: 12px; margin-bottom: 12px; }
+.photo-missing-box svg { flex: none; opacity: .6; }
+.photo-missing-box p { margin: 0; }
+.sync-photo-access { border: 1px solid var(--line, #ccd); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
+.sync-photo-access p { margin: 0 0 8px; }
+.sync-photo-access p:first-child { display: flex; gap: 8px; align-items: center; }

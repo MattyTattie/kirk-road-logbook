@@ -9,10 +9,19 @@
 // PERMISSION ("scope"): drive.file. The app can only see files it created
 // itself, or files you hand it in Google's own file picker. It can't see
 // anything else in your Drive. See HOW-IT-WORKS.md section 9 for why.
+//
+// v15.11: plus drive.readonly (look only, never change or delete), so this
+// phone can OPEN the photo files the other phone uploaded into the shared
+// "Hearthbook photos" folder. drive.file alone can't, which is why photos
+// went missing on the other phone. Asked for once, from a tap (see
+// askPhotoAccess); if you say no, everything else carries on as before.
 
 import { GOOGLE_CLIENT_ID, GOOGLE_API_KEY, GOOGLE_APP_ID } from './config.js';
 
 export const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export const READ_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
+const SCOPES_KEY = 'hearthbook.gscopes'; // what Google last said this phone may do
+
 const API = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const TOKEN_KEY = 'hearthbook.gtoken';
@@ -68,6 +77,7 @@ export const tokenLeft = () => { const t = readToken(); return t ? Math.max(0, t
 // Load Google's sign-in script early, so a quiet refresh after a tap is quick.
 export const warmUp = () => getTokenClient().catch(() => {});
 export function forgetToken() { try { localStorage.removeItem(TOKEN_KEY); } catch {} }
+export function forgetScopes() { try { localStorage.removeItem(SCOPES_KEY); } catch {} }
 // The last Google account used on this phone, kept as a sign-in hint
 // (survives the token running out; cleared by Disconnect).
 export const accountHint = () => { try { return localStorage.getItem(HINT_KEY) || ''; } catch { return ''; } };
@@ -86,8 +96,9 @@ async function getTokenClient() {
         if (!p) return;
         clearTimeout(p.timer);
         if (resp.error) return p.reject(new AuthError(resp.error_description || resp.error));
-        const t = { accessToken: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000 };
+        const t = { accessToken: resp.access_token, expiresAt: Date.now() + (Number(resp.expires_in) || 3600) * 1000, scope: resp.scope || '' };
         try { localStorage.setItem(TOKEN_KEY, JSON.stringify(t)); } catch {}
+        if (resp.scope) { try { localStorage.setItem(SCOPES_KEY, resp.scope); } catch {} }
         p.resolve(t.accessToken);
       },
       error_callback: (err) => {
@@ -114,7 +125,7 @@ function request(opts, timeoutMs = 0) {
 let refreshing = null;
 export function refreshSilently(email = accountHint()) {
   if (!refreshing) {
-    refreshing = request({ prompt: '', login_hint: email || undefined, hint: email || undefined }, 20_000)
+    refreshing = request({ prompt: '', scope: askScope(), login_hint: email || undefined, hint: email || undefined }, 20_000)
       .finally(() => { refreshing = null; });
   }
   return refreshing;
@@ -132,12 +143,28 @@ export async function getToken({ interactive = false, email = '', choose = false
     throw new AuthError();
   }
   // From a tap: no time limit (you may need to pick an account or agree).
-  return request(hint ? { prompt: '', login_hint: hint, hint } : { prompt: 'select_account' });
+  // A fresh sign-in (Connect) asks for both at once; a re-sign-in keeps
+  // whatever you agreed to before, so no surprise consent screen.
+  return request(hint ? { prompt: '', scope: askScope(), login_hint: hint, hint } : { prompt: 'select_account', scope: `${SCOPE} ${READ_SCOPE}` });
+}
+
+// ---------- v15.11: permission to open the other phone's photos ----------
+const grantedScopes = () => { try { return localStorage.getItem(SCOPES_KEY) || ''; } catch { return ''; } };
+export const hasPhotoAccess = () => grantedScopes().split(/\s+/).includes(READ_SCOPE);
+// Quiet refreshes ask only for what was already agreed (so Google never
+// pops a consent screen by surprise).
+const askScope = () => (hasPhotoAccess() ? `${SCOPE} ${READ_SCOPE}` : SCOPE);
+// From a tap: show Google's screen once to add "see your Drive files".
+// Resolves true if Google said yes.
+export async function askPhotoAccess(email = accountHint()) {
+  await request({ prompt: 'consent', scope: `${SCOPE} ${READ_SCOPE}`, include_granted_scopes: true, login_hint: email || undefined, hint: email || undefined });
+  return hasPhotoAccess();
 }
 
 export async function revoke() {
   const t = storedToken();
   forgetToken();
+  forgetScopes();
   rememberAccount('');
   try {
     if (t && window.google && window.google.accounts) window.google.accounts.oauth2.revoke(t.accessToken, () => {});
@@ -183,7 +210,7 @@ async function call(url, { method = 'GET', body, headers = {}, raw = false, time
 }
 
 const q = (s) => encodeURIComponent(s);
-const FIELDS = 'id,name,version,modifiedTime,createdTime,trashed,parents,mimeType,size,resourceKey,ownedByMe,capabilities(canEdit,canShare)';
+const FIELDS = 'id,name,version,modifiedTime,createdTime,trashed,parents,mimeType,size,resourceKey,ownedByMe,lastModifyingUser(me),capabilities(canEdit,canShare)';
 
 export function whoAmI() {
   return call(`${API}/about?fields=${q('user(displayName,emailAddress)')}`).then((r) => r.user);

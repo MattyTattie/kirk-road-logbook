@@ -540,6 +540,20 @@ key), whether the app could then open each file, and, after **Refresh
 details**, every Hearthbook file the app can open. A screenshot of it is
 enough to diagnose most problems.
 
+**v15.11: plus `drive.readonly` (look only).** `drive.file` couldn't open
+the photo files the other phone uploaded, so photos went missing on the
+other phone. Hearth now also asks for `drive.readonly`: it can look at
+files, never change or delete anything beyond what `drive.file` already
+allows. A fresh Connect asks for both. A phone already connected shows
+"Allow photos from the other phone" once; tapping Allow opens Google's
+screen. Saying no keeps everything else working. An entry whose photo
+hasn't arrived shows "Photo not on this phone yet" with a button to try
+again. A new photo's copy also stays inside the sync file until the other
+person's phone has synced. `drive.readonly` is a **restricted** scope:
+add it in Google Auth Platform → Data Access, keep both people as test
+users while in Testing, and each person sees Google's "this app isn't
+verified" screen once (tap Advanced → Go to Hearth).
+
 **Verification.** Because `drive.file` is non-sensitive, you never need
 Google's app review. In **Testing** mode only the people you add as test
 users can sign in (up to 100), and they see a short "this app is being

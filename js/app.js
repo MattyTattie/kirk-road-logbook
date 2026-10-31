@@ -2175,6 +2175,14 @@ async function syncCard(cardHead) {
     // v13: a gentle heads-up as the one shared file (photos included) grows.
     st.fileSize >= SIZE_WARN ? el('p', { class: 'sync-size-warn small', id: 'sync-size-warn', role: 'note' }, icon('alert', 16),
       `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB. Newer Hearth versions keep photos as separate Drive files so this stays small — tap Sync now to shrink it. It still syncs fine either way.`) : null,
+    // v15.11: one-time OK so this phone can open the other phone's photos.
+    (await sync.needsPhotoAccess()) ? el('div', { class: 'sync-photo-access', id: 'sync-photo-access', role: 'note' },
+      el('p', {}, icon('image', 18), el('strong', {}, 'Allow photos from the other phone')),
+      el('p', { class: 'small' }, 'One tap, once. Google asks if Hearth may see your Drive files. Hearth only looks at the photos in your shared Hearthbook folder and never changes anything else.'),
+      el('button', { type: 'button', class: 'btn', id: 'sync-photo-allow', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening Google…', async () => {
+        await sync.fetchMissingPhotos();
+        syncMsg = { text: (await sync.needsPhotoAccess()) ? 'Google didn’t give photo access. Everything else still syncs. You can try again any time.' : 'Done. Photos from the other phone will now come through.' };
+      }) }, 'Allow')) : null,
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
         ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')
@@ -2310,6 +2318,29 @@ function parseMoney(text) {
 // ---------------------------------------------------------------------
 // DETAIL: look at one entry
 // ---------------------------------------------------------------------
+// v15.11: a clear box instead of a blank where a photo should be.
+function missingPhotosCard(n, needAccess) {
+  const msg = el('p', { class: 'small muted', id: 'photo-missing-msg' });
+  const btn = el('button', { type: 'button', class: 'btn', id: 'photo-retry', onclick: async () => {
+    btn.disabled = true;
+    fill(msg, needAccess ? 'Google will ask once. Tap Allow.' : 'Fetching…');
+    try {
+      await sync.fetchMissingPhotos();
+      render();
+    } catch (err) {
+      btn.disabled = false;
+      fill(msg, (err && err.message) || 'That didn’t work. Try again in a minute.');
+    }
+  } }, icon('download', 18), needAccess ? 'Allow photos and try again' : 'Try again');
+  return el('section', { class: 'photos-card photo-missing', id: 'photo-missing' },
+    el('h2', { class: 'card-title' }, n === 1 ? 'Photo not on this phone yet' : `${n} photos not on this phone yet`),
+    el('div', { class: 'photo-missing-box' }, icon('image', 28),
+      el('p', {}, needAccess
+        ? 'Hearth needs your OK to open photos added on the other phone. Tap the button and choose Allow on Google’s screen. You only do this once.'
+        : 'Tap Sync now on the phone that added it, then tap Try again here.')),
+    btn, msg);
+}
+
 async function renderDetail(id) {
   const e = await db.getEntry(id);
   if (!e) {
@@ -2358,6 +2389,9 @@ async function renderDetail(id) {
   ].filter(([, value]) => value);
 
   const photos = e.photos || [];
+  // v15.11: photos the other phone added that haven't reached this phone.
+  let missing = 0, needAccess = false;
+  try { missing = await sync.missingPhotoCount(e); needAccess = missing > 0 && (await sync.needsPhotoAccess()); } catch {}
   // A warranty for one of the bundled appliances links to its manual(s).
   const appliance = e.type === 'warranty' ? manuals.manualFor(e) : null;
   // v13: and any manual you added yourself and linked to this entry.
@@ -2399,6 +2433,7 @@ async function renderDetail(id) {
             })()
           ))
       : null,
+    missing ? missingPhotosCard(missing, needAccess) : null,
     el(
       'div',
       { class: 'row detail-actions' },
