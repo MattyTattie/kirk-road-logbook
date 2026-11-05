@@ -69,9 +69,19 @@ export function blobToDataURL(blob) {
 }
 
 export async function dataURLToBlob(dataURL) {
-  // fetch() understands data: URLs, which is a neat shortcut.
-  const res = await fetch(dataURL);
-  return res.blob();
+  // v15.14: decoded by hand. fetch(data:) used to be the shortcut, but the
+  // page's security rules (CSP connect-src, v15.0) block it, so restoring a
+  // backup with photos failed with "Failed to fetch".
+  const comma = dataURL.indexOf(',');
+  if (!dataURL.startsWith('data:') || comma < 0) throw new Error('Not a picture');
+  const head = dataURL.slice(5, comma);
+  const type = head.split(';')[0] || 'application/octet-stream';
+  const body = dataURL.slice(comma + 1);
+  if (!/;base64/i.test(head)) return new Blob([decodeURIComponent(body)], { type });
+  const bin = atob(body);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type });
 }
 
 // ---- Drive photo refs (sync v3) ----
