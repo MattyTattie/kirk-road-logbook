@@ -9,9 +9,7 @@ const DAY = 86400000;
  * Is a backup actually overdue? (v14: the warning only shows then.)
  *   count:       entries in the logbook
  *   lastBackup:  ISO time of the last backup file, or null
- *   syncHealthy: Drive sync working (a copy is in Drive) → never overdue
- *   lastSync:    ISO time of the last good Drive sync, or null; within
- *                7 days counts as backed up (e.g. it only needs a tap to sign in)
+ *   syncHealthy / lastSync: kept for callers; sync is not a backup.
  *   oldestAdded: ISO time the oldest entry was added: a new logbook isn't
  *                nagged until it's a month old
  * → { due: boolean, days: days since the last backup or null }
@@ -19,9 +17,8 @@ const DAY = 86400000;
 export function backupDue({ count = 0, lastBackup = null, syncHealthy = false, lastSync = null, oldestAdded = null, limitDays = 30, now = new Date() } = {}) {
   const t = now.getTime();
   const days = lastBackup ? Math.floor((t - Date.parse(lastBackup)) / DAY) : null;
-  if (!count || syncHealthy) return { due: false, days };
-  if (lastSync && t - Date.parse(lastSync) < 7 * DAY) return { due: false, days };
-  if (days !== null) return { due: days > limitDays, days };
+  if (!count) return { due: false, days };
+  if (days !== null) return { due: days >= limitDays, days };
   const age = oldestAdded ? (t - Date.parse(oldestAdded)) / DAY : Infinity;
   return { due: !(age < limitDays), days };
 }

@@ -49,10 +49,11 @@
 // store, and backups are untouched.
 
 import * as db from './db.js';
+import { syncManuals } from './sharedmanuals.js';
 import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
-export const APP_VERSION = '15.14'; // shown in Sync details; keep in step with sw.js CACHE_NAME
+export const APP_VERSION = '15.15'; // shown in Sync details; keep in step with sw.js CACHE_NAME
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
@@ -106,6 +107,7 @@ export async function init() {
     started = true;
     addEventListener('online', () => schedule(500));
     addEventListener('offline', () => getConfig().then((k) => ready(k) && setStatus({ state: 'offline', message: '' })));
+    addEventListener('hearthbook:manualchange', () => noteChange());
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') schedule(1500); });
     // Quiet token refresh on your next tap (see gdrive.js "sign-in").
     document.addEventListener('click', refreshOnTap, true);
@@ -470,11 +472,12 @@ const photoFileName = (photoId) => `hearthbook-photo-${photoId}.jpg`;
 async function ensurePhotoFolder(c) {
   if (c.photoFolderId) {
     try {
-      await drive.getMeta(c.photoFolderId);
-      return c.photoFolderId;
+      const f = await drive.getMeta(c.photoFolderId);
+      if (!f.trashed && c.folder?.id && (f.parents || []).includes(c.folder.id)) return c.photoFolderId;
     } catch { /* recreate below */ }
   }
   const parent = c.folder && c.folder.id;
+  if (!parent) return null; // never save shared uploads in a private Drive root
   if (parent) {
     try {
       const kids = await drive.list(`'${parent}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'`);
@@ -614,6 +617,7 @@ async function uploadPhotoChecked(job, photoId, blob) {
     let made = null;
     try {
       const parent = await photoFolder(job);
+      if (!parent) throw new Error('Choose the shared Hearthbook folder in Manuals before uploading photos.');
       made = await drive.uploadNewBlob(name, parent, blob, (blob && blob.type) || 'image/jpeg', { hearthbook: 'photo', photoId: String(photoId) }, { timeoutMs: PHOTO_TIMEOUT });
       if (made && made.id && (made.size == null || made.unchecked)) made = await drive.getMeta(made.id);
       if (!made || !made.id) throw new Error('Google Drive did not confirm the photo upload.');
@@ -932,6 +936,9 @@ async function syncOnce(c, job = photoJob()) {
       full = true;
     };
 
+    if (!job.manuals) job.manuals = await syncManuals(c, remote.manualManifests || [], () => stillOn(c));
+    const manualManifests = job.manuals.ids;
+    const manualsChanged = JSON.stringify(manualManifests) !== JSON.stringify(remote.manualManifests || []);
     const local = await db.getEverything();
     const localTombs = (await db.getMeta(TOMBS_KEY)) || {};
     const p = plan(local, localTombs, remote);
@@ -1022,7 +1029,7 @@ async function syncOnce(c, job = photoJob()) {
     // Any photo that still carries embedded bytes alongside a Drive id should
     // be rewritten pointer-only so the shared file shrinks after migration.
     const fatLeft = full && [...used].some((id) => photoEmbeddedData(remote.photos[id]) && photoDriveId(remote.photos[id]) && keepEmbeds.get(id) !== photoDriveId(remote.photos[id]));
-    const shouldWrite = p.remoteChanged || supplyable.length || unused.length || needsMigrate || fatLeft || (legacyLeft && (c.files.buckets || needsMigrate || full));
+    const shouldWrite = manualsChanged || p.remoteChanged || supplyable.length || unused.length || needsMigrate || fatLeft || (legacyLeft && (c.files.buckets || needsMigrate || full));
 
     if (shouldWrite) {
       await download(); // need the current photos map to rewrite
@@ -1049,12 +1056,12 @@ async function syncOnce(c, job = photoJob()) {
       // v1 leftovers we still couldn't move (rare).
       const photoIndex = {};
       for (const [id, i] of Object.entries(remote.photoIndex)) if (used.has(id) && !photos[id]) photoIndex[id] = i;
-      const out = { format: 'hearthbook-sync', version: SYNC_VERSION, updatedAt: new Date().toISOString(), records: p.records, tombstones: p.tombstones, photos };
+      const out = { format: 'hearthbook-sync', version: SYNC_VERSION, updatedAt: new Date().toISOString(), records: p.records, tombstones: p.tombstones, photos, ...(manualManifests.length ? { manualManifests } : {}) };
       if (Object.keys(photoIndex).length) out.photoIndex = photoIndex;
       if (c.photoFolderId) out.photoFolderId = c.photoFolderId;
       // Nothing would actually change (e.g. the only photo left to move
       // failed again)? Then don't rewrite the file.
-      const photosOnly = !p.remoteChanged && !supplyable.length && !unused.length && !legacyLeft && !Object.keys(photoIndex).length;
+      const photosOnly = !manualsChanged && !p.remoteChanged && !supplyable.length && !unused.length && !legacyLeft && !Object.keys(photoIndex).length;
       if (photosOnly && samePhotos(remote.photos, photos)) {
         job.mapNow = remote.photos;
       } else {
@@ -1081,7 +1088,7 @@ async function syncOnce(c, job = photoJob()) {
       await db.setMeta(CACHE_KEY, {
         fileId: c.files.index,
         version: written && written.version,
-        index: { records: out.records, tombstones: out.tombstones, photoIndex: out.photoIndex || {}, version: SYNC_VERSION, photoFolderId: out.photoFolderId },
+        index: { records: out.records, tombstones: out.tombstones, photoIndex: out.photoIndex || {}, version: SYNC_VERSION, photoFolderId: out.photoFolderId, manualManifests: out.manualManifests || [] },
         photoIds: Object.keys(photos),
         driveOnlyPhotos: driveOnly,
       });
@@ -1093,7 +1100,7 @@ async function syncOnce(c, job = photoJob()) {
       await db.setMeta(CACHE_KEY, {
         fileId: c.files.index,
         version: before.version,
-        index: { records: remote.records, tombstones: remote.tombstones, photoIndex: remote.photoIndex, version: remote.version, photoFolderId: remote.photoFolderId },
+        index: { records: remote.records, tombstones: remote.tombstones, photoIndex: remote.photoIndex, version: remote.version, photoFolderId: remote.photoFolderId, manualManifests: remote.manualManifests || [] },
         photoIds: remote.photoIds,
         driveOnlyPhotos: driveOnly,
       });
@@ -1114,7 +1121,7 @@ async function syncOnce(c, job = photoJob()) {
     for (const id of gone) await db.deleteEntry(id);
     await db.setMeta(TOMBS_KEY, tombs);
     const waiting = [...used].filter((id) => !localBlobs.has(id) && !keep.some((k) => (k.photos || []).some((x) => x.id === id))).length;
-    return { pulled: keep.length + gone.length, pushed: p.pushed, photosWaiting: waiting, fileSize };
+    return { pulled: keep.length + gone.length + (job.manuals.pulled || 0), pushed: p.pushed, photosWaiting: waiting, fileSize };
   }
   throw new Error('Google Drive kept changing while syncing. It will try again shortly.');
 }

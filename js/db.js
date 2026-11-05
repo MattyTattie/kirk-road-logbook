@@ -67,8 +67,8 @@ async function run(storeName, mode, action) {
     // We resolve when the whole transaction has finished ("complete"),
     // which means the data really has been written to storage.
     tx.oncomplete = () => resolve(result);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    tx.onerror = () => reject(storageError(tx.error));
+    tx.onabort = () => reject(storageError(tx.error || new Error('Transaction aborted')));
   });
 }
 
@@ -105,25 +105,29 @@ export async function saveManyEntries(entries) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('entries', 'readwrite');
     const store = tx.objectStore('entries');
-    for (const e of entries) store.put(e);
+    try { for (const e of entries) store.put(e); }
+    catch (err) { tx.abort(); reject(storageError(err)); return; }
     tx.oncomplete = () => resolve(entries.length);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    tx.onerror = () => reject(storageError(tx.error));
+    tx.onabort = () => reject(storageError(tx.error || new Error('Transaction aborted')));
   });
 }
 
 // Save entries AND one meta value in ONE transaction (restore while sync is
 // on: the entries plus the updated tombstone list, all or nothing).
-export async function saveEntriesAndMeta(entries, key, value) {
+export async function saveEntriesAndMeta(entries, key, value, metaValues = {}) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['entries', 'meta'], 'readwrite');
     const store = tx.objectStore('entries');
-    for (const e of entries) store.put(e);
-    tx.objectStore('meta').put(value, key);
+    try {
+      for (const e of entries) store.put(e);
+      tx.objectStore('meta').put(value, key);
+      for (const [k, v] of Object.entries(metaValues)) tx.objectStore('meta').put(v, k);
+    } catch (err) { tx.abort(); reject(storageError(err)); return; }
     tx.oncomplete = () => resolve(entries.length);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    tx.onerror = () => reject(storageError(tx.error));
+    tx.onabort = () => reject(storageError(tx.error || new Error('Transaction aborted')));
   });
 }
 
@@ -159,4 +163,27 @@ export async function requestPersistentStorage() {
 export function newId() {
   if (crypto.randomUUID) return crypto.randomUUID();
   return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+// Atomically save related meta values (manual list, files and delete markers).
+export async function saveMetaValues(values) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('meta', 'readwrite');
+    try { for (const [key, value] of Object.entries(values)) tx.objectStore('meta').put(value, key); }
+    catch (err) { tx.abort(); reject(storageError(err)); return; }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(storageError(tx.error));
+    tx.onabort = () => reject(storageError(tx.error || new Error('Transaction aborted')));
+  });
+}
+
+export function isStorageError(err) {
+  return Boolean(err && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED' || err.name === 'StorageFullError' || /quota|disk.*full|storage.*full/i.test(err.message || '')));
+}
+export function storageError(err) {
+  if (!isStorageError(err)) return err || new Error('The data could not be saved.');
+  const e = new Error('Not saved: this phone has run out of storage. Free some space in phone settings, then try again. Do not clear Hearth or Chrome data. Your previous saved items are still there.');
+  e.name = 'StorageFullError';
+  return e;
 }

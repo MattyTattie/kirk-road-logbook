@@ -50,6 +50,8 @@ import * as manuals from './manuals.js';
 import * as native from './native.js';
 import * as rooms from './rooms.js';
 import * as userManuals from './usermanuals.js';
+import { saveBackupToDrive } from './drivebackup.js';
+import { allowSharedFolder } from './sharedmanuals.js';
 import { yearReview, reviewYears } from './review.js';
 import { backupDue, sizeLabel } from './homelogic.js';
 import * as lookup from './manuallookup.js';
@@ -315,10 +317,11 @@ function screenHead(title, { back, sub, id, action } = {}) {
 // while Drive sync is working or synced in the last 7 days, not for a logbook
 // less than a month old, and otherwise after 30 days without a backup file.
 async function backupReminder(everything) {
-  const count = everything.length;
+  const ownManuals = await userManuals.list();
+  const count = everything.length + ownManuals.length;
   if (count === 0) return null;
   const lastBackup = await db.getMeta('lastBackup');
-  const oldestAdded = everything.map((e) => e.createdAt || '').filter(Boolean).sort()[0] || null;
+  const oldestAdded = [...everything.map((e) => e.createdAt || ''), ...ownManuals.map((m) => m.addedAt || '')].filter(Boolean).sort()[0] || null;
   const { due, days } = backupDue({ count, lastBackup, syncHealthy: await sync.isHealthy(), lastSync: (await sync.getConfig()).lastSync || null, oldestAdded, limitDays: BACKUP_REMINDER_DAYS });
   if (!due) return null;
   return el(
@@ -327,7 +330,7 @@ async function backupReminder(everything) {
     el('span', { class: 'banner-icon' }, icon('alert', 20)),
     el('div', { class: 'banner-body' },
       el('p', { class: 'banner-title' }, days === null ? 'No backup yet' : `Last backup was ${days} days ago.`),
-      el('p', { class: 'small' }, ['off', 'unconfigured'].includes(sync.getStatus().state) ? 'Your logbook only lives on this phone.' : 'Google Drive sync isn’t up to date, so keep a backup file too.')
+      el('p', { class: 'small' }, ['off', 'unconfigured'].includes(sync.getStatus().state) ? 'Your logbook only lives on this phone.' : 'Drive sync shares changes, including deletes. Save a separate backup every month.')
     ),
     el('a', { class: 'btn small-btn', href: '#/export' }, 'Back up')
   );
@@ -1942,7 +1945,7 @@ async function renderForm(type, id) {
         const blob = await compressImage(source);
         photos.push({ id: db.newId(), blob });
       } catch (err) {
-        alert(err.message);
+        alert(db.storageError(err).message);
       }
     }
     busy.hidden = true;
@@ -2062,7 +2065,7 @@ async function renderForm(type, id) {
     if (mortF) { saved.cost = null; if (saved.mortgage.kind === 'statement' || saved.mortgage.kind === 'setup') saved.mortgage.dealEnd = saved.dueDate || null; }
     if (!saved.currency || saved.currency === 'GBP' || ins || mortF) delete saved.currency; // pounds = no field (as before)
     const prevRec = id ? await db.getEntry(id) : null; // v15.2: for Undo
-    await db.saveEntry(saved);
+    try { await db.saveEntry(saved); } catch (err) { showError(db.storageError(err).message); return; }
     sync.recordSave(saved.id); // tell sync (does nothing if sync is off)
     toast('Saved', prevRec ? async () => { await restoreEntry(prevRec, 'Change undone'); if (location.hash === `#/view/${saved.id}`) render(); else location.hash = `#/view/${saved.id}`; } : null);
     // replace() instead of a normal link, so pressing Back afterwards
@@ -2735,7 +2738,7 @@ async function renderManuals(focus = '') {
     el('div', { class: 'manual-head' },
       el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')),
       el('div', {}, el('h3', { class: 'manual-name' }, m.name),
-        el('p', { class: 'manual-model small muted' }, [userManuals.sizeText(m.size), m.pages ? `${m.pages} page${m.pages === 1 ? '' : 's'}` : '', 'on this phone only'].filter(Boolean).join(' · '))),
+        el('p', { class: 'manual-model small muted' }, [userManuals.sizeText(m.size), m.pages ? `${m.pages} page${m.pages === 1 ? '' : 's'}` : '', m.driveId ? 'On Drive · available offline' : 'Waiting for Drive sync'].filter(Boolean).join(' · '))),
       el('a', { class: 'btn link-btn quiet small', href: `#/editmanual/${encodeURIComponent(m.id)}`, 'aria-label': `Edit ${m.name}` }, icon('pencil', 14), 'Edit')),
     roomChips(m.rooms),
     m.notes ? el('p', { class: 'manual-notes small' }, m.notes) : null,
@@ -2743,7 +2746,7 @@ async function renderManuals(focus = '') {
     el('div', { class: 'manual-files' }, el('a', { class: 'manual-file saved', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id }, icon('file', 18), el('span', {}, 'Open'), el('span', { class: 'small muted' }, 'saved in the app'), icon('chevron', 16))));
 
   fill(app,
-    screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, kept on this phone' }),
+    screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, shared through your Drive' }),
     el('section', { class: 'group manuals-group', id: 'your-manuals' },
       el('div', { class: 'group-head' }, el('h2', {}, 'Your manuals'), el('a', { class: 'link', href: '#/addmanual', id: 'add-manual' }, icon('plus', 14), 'Add a manual')),
       el('a', { class: 'card more-row', href: '#/findmanual', id: 'find-manual' },
@@ -2752,8 +2755,11 @@ async function renderManuals(focus = '') {
         icon('chevron', 18)),
       mine.length ? el('div', { class: 'manual-list' }, mine.map(mineCard))
         : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it from your phone, or share it to Hearth from your email or browser.'),
-      el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add are kept on this phone only: they aren’t in Drive sync or backup files (PDFs are too big for the one shared file). Add them on the other phone too if needed.')),
+      el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add are included in backups. With Drive sync on, both phones get the PDF, notes and room tags. Keep Hearth open until syncing finishes.')),
     el('div', { class: 'manuals-offline' }, status, saveAll),
+    (await sync.getConfig()).enabled ? el('button', { class: 'btn secondary', id: 'manual-folder-access', onclick: async () => {
+      try { await allowSharedFolder(await sync.getConfig()); await sync.fetchMissingPhotos(); render(); } catch (err) { alert(db.storageError(err).message); }
+    } }, 'Allow saving to the shared Drive folder') : null,
     ...groups.map((g) => el('section', { class: 'group manuals-group' },
       el('div', { class: 'group-head' }, el('h2', {}, g.name)),
       el('div', { class: 'manual-list' }, g.items.map(builtinCard))))
@@ -2794,7 +2800,7 @@ async function renderManualViewer(file) {
     const rec = await userManuals.get(id);
     data = rec ? await userManuals.getFile(id) : null;
     if (!rec || !data) {
-      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
+      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual’s PDF is not on this phone yet. Go to More and tap Sync now; allow access to shared files if asked.')));
       return;
     }
     title = rec.name; label = `${userManuals.sizeText(rec.size)} · on this phone`; notes = rec.notes; back = '#/manuals'; fileName = rec.fileName || `${rec.name}.pdf`;
@@ -2930,7 +2936,7 @@ async function renderManualLookup() {
 async function renderManualForm(id, arg) {
   const editing = id ? await userManuals.get(id) : null;
   if (id && !editing) {
-    fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t on this phone.')));
+    fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual’s PDF is not on this phone yet. Go to More and tap Sync now; allow access to shared files if asked.')));
     return;
   }
   let file = !id && arg === 'shared' ? pendingManualFile : null;
@@ -2986,13 +2992,13 @@ async function renderManualForm(id, arg) {
     el('div', { class: 'field' }, el('span', { class: 'label' }, 'Rooms (optional)'), roomToggles(allRooms, selRooms, null, 'manual-room-toggles')),
     taggable.length ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'For which entries? (optional)'), filter, linkList,
       el('span', { class: 'hint' }, 'A linked entry shows a Manual button.')) : null,
-    el('p', { class: 'small muted', id: 'manual-where-note' }, 'Kept on this phone only (not in Drive sync or backup files).'),
+    el('p', { class: 'small muted', id: 'manual-where-note' }, 'Included in backups. With Drive sync on, this PDF and its details are shared with the other phone.'),
     errorBox,
     el('div', { class: 'row sticky-actions' },
       el('button', { type: 'button', class: 'btn secondary', onclick: () => (history.length > 1 ? history.back() : location.replace('#/manuals')) }, 'Cancel'),
       saveBtn),
     editing ? el('button', { type: 'button', class: 'btn danger-soft', id: 'manual-delete', onclick: async () => {
-      if (!confirm(`Delete the manual "${editing.name}" from this phone? Entries linked to it are not affected.`)) return;
+      if (!confirm(`Delete the manual "${editing.name}" from both phones after syncing? The PDF stays in Drive for recovery. Entries linked to it are not affected.`)) return;
       await userManuals.remove(editing.id);
       toast('Manual deleted');
       location.replace('#/manuals');
@@ -3019,7 +3025,7 @@ async function renderManualForm(id, arg) {
       toast('Manual saved');
       location.replace('#/manuals');
     } catch (err) {
-      show(err.message || String(err));
+      show(db.storageError(err).message || String(err));
     } finally { saveBtn.disabled = false; saveBtn.textContent = 'Save manual'; }
   });
   fill(app, form);
@@ -3065,7 +3071,7 @@ async function renderRooms() {
     el('section', { class: 'card' },
       el('div', { class: 'field' }, el('span', { class: 'label' }, 'Add a room'),
         el('div', { class: 'sync-invite' }, input, el('button', { type: 'button', class: 'btn secondary', id: 'room-add', onclick: addRoom }, icon('plus', 18), 'Add')))),
-    el('p', { class: 'small muted footnote' }, 'Room names are kept on this phone. A room tag on an entry travels with it (sync and backups). Deleting a room only removes the tag: nothing is deleted.')
+    el('p', { class: 'small muted footnote' }, 'Room names and manual tags are included in Drive sync and backups. Deleting a room only removes the tag: nothing is deleted.')
   );
 }
 
@@ -3403,7 +3409,7 @@ async function renderExport() {
       toast(`Restored ${n} entries`);
       location.hash = '#/list/all';
     } catch (err) {
-      alert(err.message);
+      alert(db.storageError(err).message);
     }
   });
 
@@ -3444,18 +3450,31 @@ async function renderExport() {
     el('section', { class: 'card', id: 'backup-card' },
       cardHead('backup', 'brand', 'Backup file'),
       el('p', { id: 'last-backup', class: 'last-backup' + (lastBackup ? ' ok' : '') + (backupOld ? ' old' : '') }, lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleString('en-GB')}${backupOld ? ' · time for a new one' : ''}` : 'Last backup: never'),
-      el('p', { class: 'small muted' }, `${entries.length} entries, ${photoCount} photos. ${usage}`),
+      el('p', { class: 'small muted' }, `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}, ${photoCount} photo${photoCount === 1 ? '' : 's'}, ${mineManuals.length} manual${mineManuals.length === 1 ? '' : 's'}. ${usage}`),
       el('div', { class: 'backup-pair' },
         el('div', { class: 'backup-half' },
           el('button', { class: 'btn', id: 'export-btn', onclick: async (ev) => {
             const btn = ev.currentTarget; btn.disabled = true; btn.textContent = 'Preparing…';
-            try { const r = await exportBackup(); toast(`Backup saved: ${r.filename}`); } catch (err) { alert('Backup failed: ' + err.message); }
+            try { const r = await exportBackup(); toast(`Backup download started: ${r.filename}. Check Downloads.`); } catch (err) { alert('Backup failed: ' + err.message); }
             renderExport();
           } }, icon('download', 20), 'Save a backup'),
-          el('p', { class: 'small muted' }, 'One file, photos inside, to your Downloads. Keep a copy somewhere safe.')),
+          el('p', { class: 'small muted' }, 'One file with entries, photos and your manuals, to Downloads. Check it finished downloading.')),
         el('div', { class: 'backup-half', id: 'restore-card' },
           el('button', { class: 'btn secondary', id: 'import-btn', onclick: () => fileInput.click() }, icon('upload', 20), 'Load a backup'),
           el('p', { class: 'small muted' }, 'Adds a backup file from this app, from any version.'))),
+      el('p', { class: 'small muted', id: 'monthly-backup-note' }, 'Save a separate backup every month. Hearth reminds you here and on Home after 30 days, even when Drive sync is working.'),
+      el('button', { class: 'btn secondary', id: 'drive-backup-btn', onclick: async (ev) => {
+        const btn = ev.currentTarget; btn.disabled = true; btn.textContent = 'Saving to Drive…';
+        try {
+          const r = await saveBackupToDrive(await sync.getConfig());
+          toast(r.warning || `Backup saved to Drive: ${r.filename}`);
+        } catch (err) { alert('Backup not saved: ' + db.storageError(err).message); }
+        renderExport();
+      } }, icon('backup', 20), 'Save backup to Drive'),
+      el('p', { class: 'small muted', id: 'drive-backup-note' }, 'Saves a dated file in Hearthbook backups in your shared Drive folder. Keeps the newest 3 app-made backups it can manage; never removes your own files.'),
+      (await sync.getConfig()).enabled ? el('button', { class: 'btn link-btn small', id: 'backup-folder-access', onclick: async () => {
+        try { await allowSharedFolder(await sync.getConfig()); toast('Shared folder allowed. You can now save a backup.'); } catch (err) { alert(db.storageError(err).message); }
+      } }, 'Allow saving to the shared folder') : null,
       fileInput),
     await syncCard(cardHead),
     el(
@@ -3865,3 +3884,13 @@ async function renderUsageImport() {
       pickBtn, input),
     out);
 }
+
+// Every save toast follows an awaited committed transaction. Catch quota
+// rejections from secondary controls as well, without claiming success.
+addEventListener('unhandledrejection', (event) => {
+  const err = event.reason;
+  if (db.isStorageError(err)) {
+    event.preventDefault();
+    alert(db.storageError(err).message);
+  }
+});

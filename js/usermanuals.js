@@ -6,21 +6,20 @@
 // name, and can link it to entries (e.g. the dishwasher's warranty) and to
 // rooms. It's saved inside the app's own storage, so it opens offline.
 //
-// WHERE IT LIVES: on THIS phone only, in the existing "meta" store
-// (key "userManuals" = the list, "userManualFile:<id>" = the PDF itself).
-// No new database, no change to entries, backups or the sync file.
-//
-// WHY NOT SYNCED: the sync file is ONE JSON file that every phone reads
-// and rewrites in full. PDFs are big (often 1–10 MB each), which would
-// push that file far past Google's 5 MB simple-upload size, and an older
-// copy of the app on the other phone would drop anything it doesn't know
-// about when it writes the file back. So each phone keeps its own; the
-// screen says so. (A future option: one Drive file per manual.)
+// v15.15: local offline copies plus separate PDFs in the shared Drive folder.
+// sharedmanuals.js handles pointers and last-write-wins delete markers.
+// Backups carry the PDFs too. The existing meta keys and DB stay unchanged.
 
 import * as db from './db.js';
 
-const LIST_KEY = 'userManuals';
-const fileKey = (id) => `userManualFile:${id}`;
+export const LIST_KEY = 'userManuals';
+export const fileKey = (id) => `userManualFile:${id}`;
+export const TOMBS_KEY = 'userManualTombstones';
+const notifyManualChange = () => dispatchEvent(new CustomEvent('hearthbook:manualchange'));
+export const manualStamp = (m) => m.updatedAt || m.addedAt || '1970-01-01T00:00:00.000Z';
+export function validRecord(m) {
+  return Boolean(m && typeof m.id === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(m.id) && !['__proto__','constructor','prototype'].includes(m.id) && typeof m.name === 'string' && Number.isFinite(Number(m.size)) && Number(m.size) > 0 && Number(m.size) <= MAX_BYTES && (!m.rooms || (Array.isArray(m.rooms) && m.rooms.every((r) => typeof r === 'string'))) && (!m.entryIds || (Array.isArray(m.entryIds) && m.entryIds.every((id) => typeof id === 'string'))));
+}
 export const MAX_BYTES = 60 * 1024 * 1024; // a sane limit per PDF
 
 export async function list() { return (await db.getMeta(LIST_KEY)) || []; }
@@ -41,25 +40,28 @@ export async function add(file, { name, notes = '', rooms = [], entryIds = [], p
   const id = db.newId();
   const blob = file.type === 'application/pdf' ? file : new Blob([file], { type: 'application/pdf' });
   const rec = { id, name: String(name || nameFromFile(file.name)).trim().slice(0, 80), notes: String(notes || '').slice(0, 2000), rooms, entryIds, size: file.size, pages, fileName: file.name || `${id}.pdf`, addedAt: new Date().toISOString() };
-  await db.setMeta(fileKey(id), blob); // the PDF first; the list only points at it once it's saved
-  await db.setMeta(LIST_KEY, [...(await list()), rec]);
+  await db.saveMetaValues({ [fileKey(id)]: blob, [LIST_KEY]: [...(await list()), rec] });
+  notifyManualChange();
   return rec;
 }
 export async function update(id, patch) {
   const all = await list();
   const i = all.findIndex((m) => m.id === id);
   if (i < 0) return null;
-  all[i] = { ...all[i], ...patch, id };
+  all[i] = { ...all[i], ...patch, id, updatedAt: new Date().toISOString() };
   await db.setMeta(LIST_KEY, all);
+  notifyManualChange();
   return all[i];
 }
 export async function updateMany(changed) {
   const byId = new Map(changed.map((m) => [m.id, m]));
-  await db.setMeta(LIST_KEY, (await list()).map((m) => byId.get(m.id) || m));
+  await db.setMeta(LIST_KEY, (await list()).map((m) => byId.has(m.id) ? { ...byId.get(m.id), updatedAt: new Date().toISOString() } : m));
+  notifyManualChange();
 }
 export async function remove(id) {
-  await db.setMeta(LIST_KEY, (await list()).filter((m) => m.id !== id));
-  await db.setMeta(fileKey(id), null);
+  const tombs = { ...((await db.getMeta(TOMBS_KEY)) || {}), [id]: new Date().toISOString() };
+  await db.saveMetaValues({ [LIST_KEY]: (await list()).filter((m) => m.id !== id), [fileKey(id)]: null, [TOMBS_KEY]: tombs });
+  notifyManualChange();
 }
 
 /** Manuals linked to an entry. */

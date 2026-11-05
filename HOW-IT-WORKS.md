@@ -964,3 +964,41 @@ line `#daily-use-note`). kWh use the same per-day spread as the bars, so
 
 ## v15.3: mortgage monthly payments
 Add → Mortgage → "Monthly payment": type the capital repayment, interest due and total direct debit from the lender's app. Hearth takes the normal payment for the deal off the total to get the overpayment, and brings the balance down by capital + overpayment from the last statement (or online-banking figure). The Mortgage page, charts, mortgage-free date, "so far" year, Mortgage paid, Include mortgage and Year in review all follow. When the annual statement for that year is added, it takes over and the monthly ones stop counting (no double counting). In the Mortgage list they fold under their year. Sums: mortgage.js (statementsOf / activeMonthly / contractualOn).
+
+
+## v15.15 — shared uploaded manuals and separate backups
+User-added PDFs stay cached in IndexedDB's existing meta store and upload to a
+“Hearthbook manuals” subfolder inside the shared Hearthbook folder. Each uploader
+owns one small `hearthbook-manuals-<device>.json` manifest in the shared root;
+all manifests merge by manual ID and updatedAt, with a delete winning ties.
+The main version-3 sync JSON has optional `manualManifests` pointers only.
+This companion layout is intentional: old apps rewrite the main sync file and
+would erase an unknown top-level manual list. The files remain discoverable
+with the already-used drive.readonly scope. Write access remains drive.file:
+a joined phone explicitly selects the existing shared folder in Google Picker
+before it uploads. Failure never quietly creates a private-root upload.
+
+The PDF, name, notes, rooms and linked entries are shared. Room names and built-in
+manual room overrides are now shared/backed up too. Display and location settings
+remain per phone. Entry photos (including PDF bill pages), usage imports and all
+normal records already sync. Source bill PDFs and source CSV text were not stored;
+this release does not invent copies of originals that have already been discarded.
+
+Backups remain `kirk-road-logbook-backup`, version 1. New optional `manuals` contains
+PDF data URLs; `roomSettings` contains timestamped household room overrides.
+Old backups still load. Imports validate all data first and commit entries,
+manuals and metadata atomically. Data URLs decode locally, never via fetch(data:).
+Restoring a manual gives it a fresh timestamp and clears its tombstone.
+
+A monthly in-app reminder asks for a separate backup even if sync is healthy.
+“Save backup to Drive” builds the same complete backup, writes a dated JSON into
+“Hearthbook backups”, verifies it by reading it back, and only then bins stale
+files tagged `appProperties.hearthbook=backup-v15`. The newest three manageable
+copies remain; untagged user files and another account's files are never binned.
+The existing scopes cannot manage another account's private-created files, so
+that account may have its own shared backup subfolder/copies. Nothing runs as an
+automated external routine; save is an explicit button tap.
+
+The browser is asked for persistent storage at startup. It can say no. Transaction
+failures, including full storage, never trigger a Saved toast; a plain error tells
+the user to free device storage without clearing Hearth/Chrome data.

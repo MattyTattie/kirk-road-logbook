@@ -87,6 +87,45 @@ export { same as sameRoom };
 // ---------- stored on this phone ----------
 import * as db from './db.js';
 export async function getStored() { return (await db.getMeta(ROOMS_KEY)) || null; }
-export async function setStored(list) { await db.setMeta(ROOMS_KEY, list.map(cleanName).filter(Boolean)); }
+export async function setStored(list) {
+  const value = list.map(cleanName).filter(Boolean);
+  const settings = { ...(await getShared()), roomList: { value, updatedAt: new Date().toISOString() } };
+  await db.saveMetaValues({ [ROOMS_KEY]: value, [SHARED_ROOMS_KEY]: settings });
+  dispatchEvent(new CustomEvent('hearthbook:manualchange'));
+}
 export async function getManualRooms() { return (await db.getMeta(MANUAL_ROOMS_KEY)) || {}; }
-export async function setManualRooms(map) { await db.setMeta(MANUAL_ROOMS_KEY, map); }
+export async function setManualRooms(map) {
+  const settings = await getShared(), previous = await getManualRooms();
+  for (const [id, value] of Object.entries(map)) if (JSON.stringify(value) !== JSON.stringify(previous[id])) settings['manual:' + id] = { value, updatedAt: new Date().toISOString() };
+  await db.saveMetaValues({ [MANUAL_ROOMS_KEY]: map, [SHARED_ROOMS_KEY]: settings });
+  dispatchEvent(new CustomEvent('hearthbook:manualchange'));
+}
+
+// v15.15: user-created rooms and built-in manual tags are household content,
+// unlike display preferences/weather, which deliberately stay per phone.
+export const SHARED_ROOMS_KEY = 'sharedRoomSettings';
+export async function getShared() {
+  const settings = { ...((await db.getMeta(SHARED_ROOMS_KEY)) || {}) };
+  const oldRooms = await getStored(), oldMap = await getManualRooms();
+  const old = '1970-01-01T00:00:00.000Z';
+  if (oldRooms && !settings.roomList) settings.roomList = { value: oldRooms, updatedAt: old };
+  for (const [id, value] of Object.entries(oldMap)) if (!settings['manual:' + id]) settings['manual:' + id] = { value, updatedAt: old };
+  return settings;
+}
+export function mergeShared(sources) {
+  const out = {};
+  for (const source of sources) for (const [key, rec] of Object.entries(source || {})) {
+    if (key !== 'roomList' && !key.startsWith('manual:')) continue;
+    if (!rec || !Array.isArray(rec.value) || !rec.value.every((x) => typeof x === 'string') || !Number.isFinite(Date.parse(rec.updatedAt))) continue;
+    if (!out[key] || rec.updatedAt > out[key].updatedAt) out[key] = { value: rec.value.map(cleanName).filter(Boolean), updatedAt: rec.updatedAt };
+  }
+  return out;
+}
+export function sharedMeta(settings) {
+  const values = { [SHARED_ROOMS_KEY]: settings };
+  if (settings.roomList) values[ROOMS_KEY] = settings.roomList.value;
+  const map = {};
+  for (const [key, rec] of Object.entries(settings)) if (key.startsWith('manual:')) map[key.slice(7)] = rec.value;
+  if (Object.keys(map).length) values[MANUAL_ROOMS_KEY] = map;
+  return values;
+}

@@ -210,7 +210,7 @@ async function call(url, { method = 'GET', body, headers = {}, raw = false, time
 }
 
 const q = (s) => encodeURIComponent(s);
-const FIELDS = 'id,name,version,modifiedTime,createdTime,trashed,parents,mimeType,size,resourceKey,ownedByMe,lastModifyingUser(me),capabilities(canEdit,canShare)';
+const FIELDS = 'id,name,version,modifiedTime,createdTime,trashed,parents,mimeType,size,resourceKey,ownedByMe,lastModifyingUser(me),appProperties,capabilities(canEdit,canShare)';
 
 export function whoAmI() {
   return call(`${API}/about?fields=${q('user(displayName,emailAddress)')}`).then((r) => r.user);
@@ -417,7 +417,7 @@ export function shareFolder(folderId, email) {
 // ---------- Google Picker ----------
 // The person joining picks the shared Hearthbook files once; that is what
 // gives this app (and only this app) access to them under drive.file.
-export async function pickFiles({ query = 'hearthbook-sync', title = 'Select the hearthbook-sync.json file', multiselect = true } = {}) {
+export async function pickFiles({ query = 'hearthbook-sync', title = 'Select the hearthbook-sync.json file', multiselect = true, foldersOnly = false } = {}) {
   const token = await getToken();
   await loadScript('https://apis.google.com/js/api.js');
   await new Promise((resolve, reject) => window.gapi.load('picker', { callback: resolve, onerror: reject }));
@@ -427,8 +427,9 @@ export async function pickFiles({ query = 'hearthbook-sync', title = 'Select the
     const view = new P.DocsView(P.ViewId.DOCS)
       .setQuery(query)
       .setMode(P.DocsViewMode.LIST)
-      .setIncludeFolders(false)
-      .setSelectFolderEnabled(false);
+      .setIncludeFolders(foldersOnly)
+      .setSelectFolderEnabled(foldersOnly);
+    if (foldersOnly) view.setMimeTypes('application/vnd.google-apps.folder');
     let builder = new P.PickerBuilder()
       .setAppId(GOOGLE_APP_ID)
       .setOAuthToken(token)
