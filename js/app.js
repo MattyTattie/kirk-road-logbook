@@ -2436,7 +2436,7 @@ async function renderDetail(id) {
             (() => {
               const urls = photos.map((p) => photoURL(p.blob));
               // v14.7: statement pages open together, to scroll through
-              return urls.map((url, i) => el('img', { src: url, alt: `${isMort ? 'Page' : 'Photo'} ${i + 1} of ${e.title}`, onclick: () => (isMort && urls.length > 1 ? showPages(urls, i, e.title) : showFullPhoto(url)) }));
+              return urls.map((url, i) => el('img', { src: url, alt: `${isMort ? 'Page' : 'Photo'} ${i + 1} of ${e.title}`, onclick: () => (isMort && urls.length > 1 ? showPages(urls, i, e.title) : showFullPhoto(urls, i)) }));
             })()
           ))
       : null,
@@ -2502,8 +2502,13 @@ function showPages(urls, start, title) {
 
 // Tap a photo to see it full screen. v15.5: zoom with pinch, double-tap,
 // the mouse wheel or the +/− buttons; drag to move around when zoomed.
-function showFullPhoto(url) {
-  const img = el('img', { src: url, alt: 'Photo', class: 'zoom-img', draggable: 'false' });
+// v15.13: an entry with several photos: swipe left/right (or the arrows,
+// or the arrow keys) to go through them, with "2 / 3" at the top.
+function showFullPhoto(urls, start = 0) {
+  if (!Array.isArray(urls)) urls = [urls];
+  let at = Math.max(0, Math.min(urls.length - 1, start));
+  const many = urls.length > 1;
+  const img = el('img', { src: urls[at], alt: many ? `Photo ${at + 1} of ${urls.length}` : 'Photo', class: 'zoom-img', draggable: 'false' });
   const stage = el('div', { class: 'zoom-stage' }, img);
   const overlay = el('div', { class: 'overlay overlay-zoom', role: 'dialog', 'aria-label': 'Photo', id: 'photo-viewer' }, stage);
   let scale = 1, x = 0, y = 0;
@@ -2525,13 +2530,28 @@ function showFullPhoto(url) {
     scale = next; apply();
   };
   const pointers = new Map();
-  let pinch = null, drag = null, moved = false, lastTap = 0;
+  let pinch = null, drag = null, moved = false, lastTap = 0, swipe = null, pinched = false;
+  const counter = many ? el('div', { class: 'photo-count', id: 'photo-count', 'aria-live': 'polite' }) : null;
+  const goTo = (n) => {
+    if (!many || n < 0 || n >= urls.length || n === at) return;
+    at = n; scale = 1; x = 0; y = 0;
+    img.src = urls[at]; img.alt = `Photo ${at + 1} of ${urls.length}`;
+    apply(); showAt();
+  };
+  const showAt = () => {
+    if (!many) return;
+    counter.textContent = `${at + 1} / ${urls.length}`;
+    prevBtn.hidden = at === 0; nextBtn.hidden = at === urls.length - 1;
+    overlay.dataset.at = String(at + 1);
+  };
   stage.addEventListener('pointerdown', (ev) => {
     if (ev.target !== img) return;
     try { img.setPointerCapture(ev.pointerId); } catch {}
     pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     moved = false;
+    if (pointers.size === 1) { swipe = { x: ev.clientX, y: ev.clientY }; pinched = false; }
     if (pointers.size === 2) {
+      pinched = true;
       const [a, b] = [...pointers.values()];
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: scale };
       drag = null;
@@ -2550,6 +2570,12 @@ function showFullPhoto(url) {
     }
   });
   const up = (ev) => {
+    // A sideways swipe at normal size: next / previous photo.
+    if (many && swipe && !pinched && scale <= 1.01 && pointers.size === 1 && ev.type === 'pointerup') {
+      const dx = ev.clientX - swipe.x, dy = ev.clientY - swipe.y;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { moved = true; goTo(at + (dx < 0 ? 1 : -1)); }
+    }
+    if (pointers.size <= 1) swipe = null;
     pointers.delete(ev.pointerId);
     if (pointers.size < 2) pinch = null;
     if (pointers.size === 1) { const [p] = [...pointers.values()]; drag = { x: p.x, y: p.y, ox: x, oy: y }; }
@@ -2571,11 +2597,16 @@ function showFullPhoto(url) {
     if (ev.key === '+' || ev.key === '=') zoomTo(scale * 1.5);
     else if (ev.key === '-' || ev.key === '_') zoomTo(scale / 1.5);
     else if (ev.key === '0') zoomTo(1);
+    else if (ev.key === 'ArrowRight') goTo(at + 1);
+    else if (ev.key === 'ArrowLeft') goTo(at - 1);
   };
   addEventListener('keydown', keys);
   const close = viewerHistory(overlay, () => removeEventListener('keydown', keys));
   // The dark background closes it; the photo itself doesn't.
   overlay.addEventListener('click', (ev) => { if (ev.target === overlay || ev.target === stage) close(); });
+  const prevBtn = el('button', { type: 'button', class: 'photo-nav prev', id: 'photo-prev', 'aria-label': 'Previous photo', onclick: (ev) => { ev.stopPropagation(); goTo(at - 1); } }, '‹');
+  const nextBtn = el('button', { type: 'button', class: 'photo-nav next', id: 'photo-next', 'aria-label': 'Next photo', onclick: (ev) => { ev.stopPropagation(); goTo(at + 1); } }, '›');
+  if (many) { overlay.append(counter, prevBtn, nextBtn); showAt(); }
   overlay.append(
     el('div', { class: 'zoom-btns', role: 'group', 'aria-label': 'Zoom' },
       el('button', { type: 'button', class: 'zoom-btn', id: 'zoom-out', 'aria-label': 'Zoom out', onclick: (ev) => { ev.stopPropagation(); zoomTo(scale / 1.5); } }, '−'),
