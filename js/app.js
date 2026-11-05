@@ -1494,8 +1494,13 @@ async function renderScan(arg) {
       }
       const parsed = parse.parseDocument(read.text);
       // Keep a copy of the picture with the entry, like a normal photo.
-      const source = isPdf ? await canvasToBlob(read.canvas) : file;
-      const photos = [{ id: db.newId(), blob: await compressImage(source) }];
+      // v15.12: a PDF keeps every page (up to 10), not just page 1.
+      const photos = [];
+      if (isPdf) {
+        let canvases = [read.canvas];
+        try { canvases = (await scan.renderPdfPages(file, { onProgress: (f, msg) => progress(0.9 + f * 0.1, msg) })).canvases; } catch (err) { console.warn('pages', err); }
+        for (const c of canvases) photos.push({ id: db.newId(), blob: await compressImage(await canvasToBlob(c)) });
+      } else photos.push({ id: db.newId(), blob: await compressImage(file) });
       scan.releaseOcr(); // free the OCR engine's memory
       if (cancelled) return;
       // Not an energy bill? Sort it into Receipt, Warranty or Job from the
@@ -1921,7 +1926,7 @@ async function renderForm(type, id) {
     for (const file of fileList) {
       try {
         let source = file;
-        // A PDF (policy document, bill): keep a picture of its first page.
+        // A PDF (policy document, bill): keep a picture of each page.
         if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')) {
           busy.textContent = 'Reading PDF…';
           const scan = await import('./scan.js');
@@ -1929,7 +1934,9 @@ async function renderForm(type, id) {
             for (const c of (await scan.readStatementPages(file)).canvases) photos.push({ id: db.newId(), blob: await compressImage(await canvasToBlob(c)) });
             continue;
           }
-          source = await canvasToBlob((await scan.renderPdfFirstPage(file)).canvas);
+          // v15.12: every page (up to 10), not just the first.
+          for (const c of (await scan.renderPdfPages(file)).canvases) photos.push({ id: db.newId(), blob: await compressImage(await canvasToBlob(c)) });
+          continue;
         }
         busy.textContent = 'Shrinking photo…';
         const blob = await compressImage(source);

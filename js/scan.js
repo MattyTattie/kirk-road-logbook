@@ -66,6 +66,35 @@ export async function renderPdfFirstPage(file, { width = 1600 } = {}) {
   }
 }
 
+// v15.12: every page of a PDF as pictures (a bill used to keep only page 1).
+// At most `max` pages so a huge PDF can't run the phone out of memory.
+export async function renderPdfPages(file, { width = 1400, max = 10, onProgress = () => {} } = {}) {
+  const pdfjs = await loadPdfjs();
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false, useSystemFonts: true }).promise;
+  try {
+    const count = Math.min(doc.numPages, max);
+    const canvases = [];
+    for (let n = 1; n <= count; n++) {
+      onProgress(n / (count + 1), `Keeping page ${n} of ${count}…`);
+      const page = await doc.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: width / base.width });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(viewport.width);
+      canvas.height = Math.round(viewport.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      canvases.push(canvas);
+      page.cleanup();
+    }
+    return { canvases, pages: doc.numPages };
+  } finally {
+    doc.destroy();
+  }
+}
+
 // v14.7: an annual mortgage statement runs over several pages ("Page 1 of 5")
 // with a long guide after them. Read the text of the statement pages and
 // draw each of them as a picture (kept with the entry). At most 8 pages.
