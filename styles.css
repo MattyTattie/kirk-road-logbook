@@ -958,13 +958,16 @@ a.hero-chip:active { transform: scale(0.97); }
 .manual-file:active { transform: scale(0.99); }
 .manual-card .card-title { display: flex; align-items: center; gap: 6px; }
 .manual-btn { justify-content: center; }
-.pdf-screen { margin: -4px -8px 0; }
-.pdf-bar { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 8px; background: var(--bg); border-bottom: 1px solid var(--line); }
-.pdf-bar .back { margin: 0; }
-.pdf-title { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
-.pdf-title strong, .pdf-title span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pdf-tools { display: flex; gap: 6px; }
-.pdf-zoom { min-width: 40px; padding: 6px 8px; }
+.pdf-screen { margin: -4px -8px 0; padding-top: calc(64px + env(safe-area-inset-top, 0px)); padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+/* v15.16: same sticky close + zoom pattern as the bill photo viewer */
+.pdf-chrome { position: fixed; inset: 0; z-index: 100; pointer-events: none; }
+.pdf-chrome > * { pointer-events: auto; }
+.pdf-chrome .overlay-close { position: absolute; top: max(14px, env(safe-area-inset-top)); right: 14px; background: rgba(0, 0, 0, 0.6); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35); color: #fff; }
+.pdf-chrome .zoom-btns { position: absolute; right: 14px; bottom: max(18px, env(safe-area-inset-bottom)); }
+.pdf-chrome .pdf-title-pill { position: absolute; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); max-width: min(70vw, 420px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (min-width: 1024px) {
+  .pdf-chrome { left: var(--side-w, 220px); }
+}
 .pdf-notes { margin: 10px 8px 0; }
 .pdf-status { margin: 16px 8px; color: var(--text-2); }
 .pdf-status.warn { color: var(--soon); }
@@ -998,6 +1001,12 @@ a.hero-chip:active { transform: scale(0.97); }
 .manuals-offline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 14px; }
 .manuals-offline .manuals-status { margin: 0; flex: 1 1 100%; }
 .manual-file.saved .ico:first-child { color: var(--good); }
+.manual-file-row { display: grid; gap: 4px; }
+.manual-file-row .manual-file { width: 100%; box-sizing: border-box; }
+.manual-file-row .manual-remove-offline,
+.user-manual .manual-files > .btn.link-btn { justify-self: start; min-height: 36px; padding: 0 4px; font-size: 13px; }
+.user-manual .manual-files { gap: 4px; }
+
 .manual-file-box p { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; word-break: break-all; }
 .pdf-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 8px 0; }
 .tag-list { display: grid; gap: 6px; margin-top: 8px; max-height: 60vh; overflow-y: auto; }
@@ -1577,6 +1586,27 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .photo-missing-box { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border: 2px dashed var(--line, #ccd); border-radius: 12px; margin-bottom: 12px; }
 .photo-missing-box svg { flex: none; opacity: .6; }
 .photo-missing-box p { margin: 0; }
-.sync-photo-access { border: 1px solid var(--line, #ccd); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
-.sync-photo-access p { margin: 0 0 8px; }
-.sync-photo-access p:first-child { display: flex; gap: 8px; align-items: center; }
+.sync-folder-access, .sync-photo-access { border: 1px solid var(--line, #ccd); border-radius: 12px; padding: 12px 14px; margin: 12px 0; }
+.sync-folder-access p, .sync-photo-access p { margin: 0 0 8px; }
+.sync-folder-access p:first-child, .sync-photo-access p:first-child { display: flex; gap: 8px; align-items: center; }
+
+/* v15.16: manuals on Mac — your manuals full width, clearer offline actions */
+@media (min-width: 1024px) {
+  #your-manuals { grid-column: 1 / -1; }
+  #your-manuals .manual-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .manuals-offline { margin: 8px 0 18px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
+  .manuals-offline .btn { min-height: 40px; }
+  .manual-file-row { grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
+  .manual-file-row .manual-file { grid-column: 1; }
+  .manual-file-row .manual-remove-offline { grid-column: 2; justify-self: end; }
+  .manuals-group .group-head { margin-bottom: 8px; }
+}
+
+/* v15.16: shared-folder allow sits with Drive sync */
+.sync-folder-access { margin: 10px 0; padding: 12px; border-radius: 14px; background: var(--surface-2); border: 1px solid var(--line); }
+.sync-folder-access .btn { margin-top: 8px; width: 100%; }
+.sync-folder-needed { color: var(--soon); margin: 6px 0 0; }
+
+/* v15.16: PDF chrome matches photo viewer; hide bottom nav while open */
+body.pdf-open .bottom-nav { display: none; }
+body.pdf-open main { padding-bottom: 40px; }

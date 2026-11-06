@@ -146,11 +146,13 @@ export async function showPdf(url, box, { onStatus = () => {}, onPage = () => {}
     doc,
     pages: doc.numPages,
     zoom(f) {
+      const y = window.scrollY;
       zoom = Math.max(1, Math.min(3, f));
       box.style.setProperty('--pdf-zoom', String(zoom));
       box.classList.toggle('zoomed', zoom > 1);
       // Redraw what's on screen at the new size (others redraw when scrolled to).
-      requestAnimationFrame(() => sharpen());
+      // Keep the current place — do not jump back to the top.
+      requestAnimationFrame(() => { sharpen(); window.scrollTo(0, y); });
       return zoom;
     },
     sharpen,

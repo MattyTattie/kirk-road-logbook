@@ -13,6 +13,7 @@ import { reviveRestored, TOMBSTONES_KEY, CACHE_META_KEY, missingPhotoCount } fro
 import { blobToDataURL, dataURLToBlob } from './photos.js';
 import { APP_NAME, APP_SLUG } from './config.js';
 import * as manuals from './usermanuals.js';
+import { loadBlob as loadManualBlob } from './sharedmanuals.js';
 import * as rooms from './rooms.js';
 import { todayISO } from './utils.js';
 
@@ -39,8 +40,11 @@ export async function buildBackup() {
 
   const manualFiles = [];
   for (const m of await manuals.list()) {
-    const blob = await manuals.getFile(m.id);
-    if (!blob) throw new Error(`The PDF for “${m.name}” is not on this phone yet. Sync before saving a backup.`);
+    // v15.16: local offline copy is optional; fetch from Drive when needed so
+    // a backup still includes every PDF rather than quietly skipping one.
+    let blob;
+    try { blob = await loadManualBlob(m.id); }
+    catch (err) { throw new Error(err?.message || `The PDF for “${m.name}” is not on this phone yet. Sync before saving a backup.`); }
     manualFiles.push({ ...m, data: await blobToDataURL(blob) });
   }
   const backup = {

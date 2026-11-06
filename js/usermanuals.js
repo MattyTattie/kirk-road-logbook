@@ -6,9 +6,12 @@
 // name, and can link it to entries (e.g. the dishwasher's warranty) and to
 // rooms. It's saved inside the app's own storage, so it opens offline.
 //
-// v15.15: local offline copies plus separate PDFs in the shared Drive folder.
-// sharedmanuals.js handles pointers and last-write-wins delete markers.
-// Backups carry the PDFs too. The existing meta keys and DB stay unchanged.
+// v15.15: separate PDFs in the shared Drive folder; metadata syncs.
+// v15.16: local PDF copies are optional. Sync shares the listing + Drive
+// pointer; opening (or “Save on this phone”) fetches the PDF. “Remove from
+// this phone” drops only the local copy. sharedmanuals.js handles pointers
+// and last-write-wins delete markers. Backups still carry PDF bytes (fetched
+// from Drive when needed). Meta keys and DB stay unchanged.
 
 import * as db from './db.js';
 
@@ -25,6 +28,19 @@ export const MAX_BYTES = 60 * 1024 * 1024; // a sane limit per PDF
 export async function list() { return (await db.getMeta(LIST_KEY)) || []; }
 export async function get(id) { return (await list()).find((m) => m.id === id) || null; }
 export async function getFile(id) { return (await db.getMeta(fileKey(id))) || null; }
+export async function hasFile(id) { return Boolean(await getFile(id)); }
+/** Keep a local offline copy (optional). Does not change shared Drive / metadata. */
+export async function saveFile(id, blob) {
+  if (!id || !blob || !blob.size) throw new Error('That file is empty.');
+  if (blob.size > MAX_BYTES) throw new Error(`That PDF is too big to keep in the app (limit ${MAX_BYTES / 1048576} MB).`);
+  await db.setMeta(fileKey(id), blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' }));
+  notifyManualChange();
+}
+/** Drop the local offline copy only. The listing and Drive PDF stay. */
+export async function clearFile(id) {
+  await db.setMeta(fileKey(id), null);
+  notifyManualChange();
+}
 
 export const isPdfName = (name) => /\.pdf$/i.test(name || '');
 export async function looksLikePdf(file) {

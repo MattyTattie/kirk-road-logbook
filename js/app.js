@@ -51,7 +51,7 @@ import * as native from './native.js';
 import * as rooms from './rooms.js';
 import * as userManuals from './usermanuals.js';
 import { saveBackupToDrive } from './drivebackup.js';
-import { allowSharedFolder } from './sharedmanuals.js';
+import { allowSharedFolder, loadBlob as loadManualBlob, saveOnThisPhone } from './sharedmanuals.js';
 import { yearReview, reviewYears } from './review.js';
 import { backupDue, sizeLabel } from './homelogic.js';
 import * as lookup from './manuallookup.js';
@@ -154,7 +154,7 @@ async function render() {
 async function drawScreen(parts, viaTransition) {
   releasePhotoURLs();
   const [page, arg] = parts;
-  if (pdfView && page !== 'manual') { try { pdfView.destroy(); } catch {} pdfView = null; }
+  if (page !== 'manual') { clearPdfChrome(); if (pdfView) { try { pdfView.destroy(); } catch {} pdfView = null; } }
   if (!holdScroll) window.scrollTo(0, 0);
   setChrome(page, arg);
   try {
@@ -2193,6 +2193,18 @@ async function syncCard(cardHead) {
         await sync.fetchMissingPhotos();
         syncMsg = { text: (await sync.needsPhotoAccess()) ? 'Google didn’t give photo access. Everything else still syncs. You can try again any time.' : 'Done. Photos from the other phone will now come through.' };
       }) }, 'Allow')) : null,
+    // v15.16: shared-folder write grant lives next to Drive sync (not on Manuals).
+    el('div', { class: 'sync-folder-access', id: 'sync-folder-access', role: 'note' },
+      el('p', {}, icon('backup', 18), el('strong', {}, 'Allow saving to the shared Drive folder')),
+      el('p', { class: 'small' }, 'Needed once so manuals and Drive backups can write into your existing Hearthbook folder. Pick that folder — don’t make a new one.'),
+      (st.state === 'error' && /Allow saving/i.test(st.message || '')
+        ? el('p', { class: 'small sync-folder-needed', id: 'sync-folder-needed', role: 'status' }, 'Sync is waiting on this. Your manuals and entries are still safe on this device.')
+        : null),
+      el('button', { type: 'button', class: 'btn secondary', id: 'sync-folder-allow', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening Google…', async () => {
+        await allowSharedFolder(await sync.getConfig());
+        syncMsg = { text: 'Shared folder allowed. Tap Sync now to finish uploading.' };
+        try { await sync.syncNow({ interactive: true }); } catch {}
+      }) }, 'Allow saving to the shared Drive folder')),
     el('div', { class: 'sync-actions' },
       st.state === 'signin'
         ? el('button', { type: 'button', class: 'btn', id: 'sync-signin', onclick: (ev) => busyBtn(ev.currentTarget, 'Connecting…', () => sync.syncNow({ interactive: true })) }, 'Continue syncing')
@@ -2636,12 +2648,16 @@ addEventListener('keydown', (ev) => {
 // MANUALS (More → Manuals): every appliance guide, plus your own
 // ---------------------------------------------------------------------
 // v13: the built-in PDFs (about 59 MB) are no longer all downloaded the
-// first time this screen opens. Each one is saved on this phone the first
+// first time this screen opens. Each one is saved on this device the first
 // time you open it, and "Save all for offline" downloads the lot (it asks
 // first, and remembers your answer).
+// v15.16: user manuals show from Drive without keeping every PDF locally.
+// Opening fetches for this session; "Save on this device" keeps an offline
+// copy. Built-in green (offline) copies can be cleared one-by-one or all.
 const OFFLINE_KEY = 'hearthbook.manualsOffline';
 const BUILTIN_MB = 59;
 const offlineChosen = () => { try { return localStorage.getItem(OFFLINE_KEY) === 'yes'; } catch { return false; } };
+const builtinUrl = (file) => new URL(manuals.DIR + file, location.href).href;
 async function manualsSaved() {
   const saved = new Set();
   try {
@@ -2655,6 +2671,25 @@ async function manualsSaved() {
 function warmManuals() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-manuals', files: manuals.ALL_FILES })).catch(() => {});
+}
+async function clearBuiltinOffline(file) {
+  if (!('caches' in window)) return;
+  try {
+    const cache = await caches.open(manuals.MANUALS_CACHE);
+    // Match both the stored path shape (manuals/…) and the absolute URL.
+    await cache.delete(builtinUrl(file));
+    await cache.delete(new URL(manuals.DIR + file, location.href).pathname);
+    for (const f of manuals.ALL_FILES) {
+      if (f.slice(manuals.DIR.length) !== file) continue;
+      await cache.delete(new URL(f, location.href).href);
+      await cache.delete(f);
+    }
+  } catch {}
+}
+async function clearAllBuiltinOffline() {
+  try { localStorage.removeItem(OFFLINE_KEY); } catch {}
+  if (!('caches' in window)) return;
+  try { await caches.delete(manuals.MANUALS_CACHE); } catch {}
 }
 
 // Room chips you can switch on and off (manuals: one or more rooms).
@@ -2675,31 +2710,48 @@ const roomChips = (list) => (list && list.length ? el('p', { class: 'room-tags' 
 
 async function renderManuals(focus = '') {
   if (offlineChosen()) warmManuals();
-  const [mine, overrides, entries, stored] = [await userManuals.list(), await rooms.getManualRooms(), await db.getAllEntries(), await rooms.getStored()];
+  const [mine, overrides, entries, stored, localFlags] = [
+    await userManuals.list(), await rooms.getManualRooms(), await db.getAllEntries(), await rooms.getStored(),
+    Object.fromEntries(await Promise.all((await userManuals.list()).map(async (m) => [m.id, await userManuals.hasFile(m.id)]))),
+  ];
   const allRooms = rooms.roomList(stored, entries, [...manuals.APPLIANCES.flatMap((a) => rooms.manualRoomsOf(a, overrides)), ...mine.flatMap((m) => m.rooms || [])]);
-  const status = el('p', { class: 'manuals-status small', id: 'manuals-status', role: 'status' }, 'Checking what’s saved on this phone…');
+  const status = el('p', { class: 'manuals-status small', id: 'manuals-status', role: 'status' }, 'Checking what’s saved on this device…');
   const saveAll = el('button', { type: 'button', class: 'btn secondary small', id: 'manuals-save-all', hidden: true, onclick: () => {
     if (!confirm(`Download all ${manuals.ALL_FILES.length} built-in guides now, so they open without signal?\n\nAbout ${BUILTIN_MB} MB, best on Wi-Fi.`)) return;
     try { localStorage.setItem(OFFLINE_KEY, 'yes'); } catch {}
     warmManuals();
     saveAll.hidden = true;
+    clearAll.hidden = false;
     poll();
   } }, icon('download', 16), `Save all for offline (about ${BUILTIN_MB} MB)`);
+  const clearAll = el('button', { type: 'button', class: 'btn secondary small', id: 'manuals-clear-offline', hidden: true, onclick: async () => {
+    if (!confirm('Clear offline copies of the built-in guides on this device?\n\nThey stay in Hearth and open again with signal. Your own manuals are not affected.')) return;
+    await clearAllBuiltinOffline();
+    toast('Offline guides cleared');
+    render();
+  } }, icon('trash', 16), 'Clear offline guides');
   const showStatus = async () => {
     const { done, total, saved } = await manualsSaved();
-    const all = done === total;
+    const all = done === total && total > 0;
     status.classList.toggle('ok', all);
     fill(status, icon(all ? 'check' : 'download', 16),
-      all ? `All ${total} guides are saved on this phone and open without signal.`
+      all ? `All ${total} guides are saved on this device and open without signal.`
         : offlineChosen() && navigator.onLine !== false ? `Saving for offline use: ${done} of ${total}…`
-        : navigator.onLine === false ? `${done} of ${total} guides saved on this phone. The others need signal the first time.`
-        : `${done} of ${total} guides saved on this phone. Each one is saved the first time you open it.`);
+        : navigator.onLine === false ? `${done} of ${total} guides saved on this device. The others need signal the first time.`
+        : done ? `${done} of ${total} guides saved on this device. Each one is saved the first time you open it.`
+        : `Built-in guides open with signal. Save ones you need offline, or save all (~${BUILTIN_MB} MB).`);
     saveAll.hidden = all || offlineChosen();
-    document.querySelectorAll('.manual-file[data-file]').forEach((a) => {
-      const on = saved.has(a.dataset.file);
-      a.classList.toggle('saved', on);
-      const w = a.querySelector('.manual-where');
-      if (w) w.textContent = on ? ' · on this phone' : '';
+    clearAll.hidden = done === 0;
+    document.querySelectorAll('.manual-file-row[data-file]').forEach((row) => {
+      const on = saved.has(row.dataset.file);
+      const a = row.querySelector('.manual-file');
+      if (a) {
+        a.classList.toggle('saved', on);
+        const w = a.querySelector('.manual-where');
+        if (w) w.textContent = on ? ' · on this device' : '';
+      }
+      const rm = row.querySelector('.manual-remove-offline');
+      if (rm) rm.hidden = !on;
     });
     return all || !offlineChosen();
   };
@@ -2730,20 +2782,53 @@ async function renderManuals(focus = '') {
       tagBox, editor,
       a.about ? el('p', { class: 'manual-about small' }, a.about) : null,
       a.notes ? el('p', { class: 'manual-notes small' }, el('strong', {}, 'Handy notes: '), a.notes) : null,
-      el('div', { class: 'manual-files' }, a.files.map((f) => el('a', { class: 'manual-file', href: `#/manual/${encodeURIComponent(f.file)}`, 'data-file': f.file },
-        icon('file', 18), el('span', {}, f.label), el('span', { class: 'small muted' }, `${f.pages} page${f.pages === 1 ? '' : 's'}`, el('span', { class: 'manual-where' }, '')), icon('chevron', 16)))));
+      el('div', { class: 'manual-files' }, a.files.map((f) => el('div', { class: 'manual-file-row', 'data-file': f.file },
+        el('a', { class: 'manual-file', href: `#/manual/${encodeURIComponent(f.file)}`, 'data-file': f.file },
+          icon('file', 18), el('span', {}, f.label), el('span', { class: 'small muted' }, `${f.pages} page${f.pages === 1 ? '' : 's'}`, el('span', { class: 'manual-where' }, '')), icon('chevron', 16)),
+        el('button', { type: 'button', class: 'btn link-btn quiet small manual-remove-offline', hidden: true, 'data-file': f.file, 'aria-label': `Remove ${f.label} from this device`, onclick: async (ev) => {
+          ev.preventDefault();
+          if (!confirm(`Remove the offline copy of “${f.label}” from this device?\n\nIt stays in Hearth and opens again with signal.`)) return;
+          await clearBuiltinOffline(f.file);
+          try { localStorage.removeItem(OFFLINE_KEY); } catch {}
+          toast('Removed from this device');
+          showStatus();
+        } }, 'Remove from this device')))));
   };
   const linkedTitles = (m) => (m.entryIds || []).map((id) => entries.find((e) => e.id === id)).filter(Boolean);
-  const mineCard = (m) => el('article', { class: 'card manual-item user-manual', id: `user-manual-${m.id}`, 'data-user-manual': m.id },
-    el('div', { class: 'manual-head' },
-      el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')),
-      el('div', {}, el('h3', { class: 'manual-name' }, m.name),
-        el('p', { class: 'manual-model small muted' }, [userManuals.sizeText(m.size), m.pages ? `${m.pages} page${m.pages === 1 ? '' : 's'}` : '', m.driveId ? 'On Drive · available offline' : 'Waiting for Drive sync'].filter(Boolean).join(' · '))),
-      el('a', { class: 'btn link-btn quiet small', href: `#/editmanual/${encodeURIComponent(m.id)}`, 'aria-label': `Edit ${m.name}` }, icon('pencil', 14), 'Edit')),
-    roomChips(m.rooms),
-    m.notes ? el('p', { class: 'manual-notes small' }, m.notes) : null,
-    linkedTitles(m).length ? el('p', { class: 'small muted' }, 'For: ', linkedTitles(m).map((e, i) => [i ? ', ' : '', el('a', { href: `#/view/${e.id}` }, e.title)])) : null,
-    el('div', { class: 'manual-files' }, el('a', { class: 'manual-file saved', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id }, icon('file', 18), el('span', {}, 'Open'), el('span', { class: 'small muted' }, 'saved in the app'), icon('chevron', 16))));
+  const whereLine = (m, local) => {
+    if (m.driveId && local) return 'On Drive · on this device';
+    if (m.driveId) return 'On Drive · opens with signal';
+    if (local) return 'On this device · waiting for Drive sync';
+    return 'Waiting for Drive sync';
+  };
+  const mineCard = (m) => {
+    const local = Boolean(localFlags[m.id]);
+    return el('article', { class: 'card manual-item user-manual', id: `user-manual-${m.id}`, 'data-user-manual': m.id, 'data-local': local ? '1' : '0', 'data-drive': m.driveId ? '1' : '0' },
+      el('div', { class: 'manual-head' },
+        el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')),
+        el('div', {}, el('h3', { class: 'manual-name' }, m.name),
+          el('p', { class: 'manual-model small muted', 'data-where': '1' }, [userManuals.sizeText(m.size), m.pages ? `${m.pages} page${m.pages === 1 ? '' : 's'}` : '', whereLine(m, local)].filter(Boolean).join(' · '))),
+        el('a', { class: 'btn link-btn quiet small', href: `#/editmanual/${encodeURIComponent(m.id)}`, 'aria-label': `Edit ${m.name}` }, icon('pencil', 14), 'Edit')),
+      roomChips(m.rooms),
+      m.notes ? el('p', { class: 'manual-notes small' }, m.notes) : null,
+      linkedTitles(m).length ? el('p', { class: 'small muted' }, 'For: ', linkedTitles(m).map((e, i) => [i ? ', ' : '', el('a', { href: `#/view/${e.id}` }, e.title)])) : null,
+      el('div', { class: 'manual-files' },
+        el('a', { class: 'manual-file' + (local ? ' saved' : ''), href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id },
+          icon('file', 18), el('span', {}, 'Open'), el('span', { class: 'small muted' }, local ? 'on this device' : (m.driveId ? 'from Drive' : 'waiting for sync')), icon('chevron', 16)),
+        local
+          ? el('button', { type: 'button', class: 'btn link-btn quiet small', id: `manual-remove-local-${m.id}`, onclick: async () => {
+              if (!m.driveId && !confirm(`Remove “${m.name}” from this device?\n\nIt is not on Drive yet, so you would need the PDF again to open it.`)) return;
+              else if (m.driveId && !confirm(`Remove the offline copy of “${m.name}” from this device?\n\nIt stays on Drive and still shows in Manuals.`)) return;
+              await userManuals.clearFile(m.id);
+              toast('Removed from this device');
+              render();
+            } }, 'Remove from this device')
+          : (m.driveId ? el('button', { type: 'button', class: 'btn link-btn quiet small', id: `manual-save-local-${m.id}`, onclick: async (ev) => {
+              const b = ev.currentTarget; b.disabled = true; b.textContent = 'Saving…';
+              try { await saveOnThisPhone(m.id); toast('Saved on this device'); render(); }
+              catch (err) { alert(db.storageError(err).message); b.disabled = false; b.textContent = 'Save on this device'; }
+            } }, 'Save on this device') : null)));
+  };
 
   fill(app,
     screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, shared through your Drive' }),
@@ -2754,12 +2839,9 @@ async function renderManuals(focus = '') {
         el('span', { class: 'more-row-text' }, el('strong', {}, 'Find a manual from a label'), el('span', { class: 'small muted' }, 'Photograph the model sticker; Hearth checks what it has, or searches the web')),
         icon('chevron', 18)),
       mine.length ? el('div', { class: 'manual-list' }, mine.map(mineCard))
-        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it from your phone, or share it to Hearth from your email or browser.'),
-      el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add are included in backups. With Drive sync on, both phones get the PDF, notes and room tags. Keep Hearth open until syncing finishes.')),
-    el('div', { class: 'manuals-offline' }, status, saveAll),
-    (await sync.getConfig()).enabled ? el('button', { class: 'btn secondary', id: 'manual-folder-access', onclick: async () => {
-      try { await allowSharedFolder(await sync.getConfig()); await sync.fetchMissingPhotos(); render(); } catch (err) { alert(db.storageError(err).message); }
-    } }, 'Allow saving to the shared Drive folder') : null,
+        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it here, or share it to Hearth from your email or browser.'),
+      el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add show on both devices through Drive. Opening uses Drive (or a copy saved on this device). Offline copies are optional. Keep Hearth open until syncing finishes.')),
+    el('div', { class: 'manuals-offline' }, status, saveAll, clearAll),
     ...groups.map((g) => el('section', { class: 'group manuals-group' },
       el('div', { class: 'group-head' }, el('h2', {}, g.name)),
       el('div', { class: 'manual-list' }, g.items.map(builtinCard))))
@@ -2775,7 +2857,7 @@ async function renderManuals(focus = '') {
 async function openElsewhere(getBlob, fileName, title) {
   let blob;
   try { blob = await getBlob(); } catch { blob = null; }
-  if (!blob) { alert('This manual isn’t saved on this phone yet. Open it once while you have signal.'); return; }
+  if (!blob) { alert('This manual isn’t available on this device yet. Open it once while you have signal.'); return; }
   const file = new File([blob], fileName || 'manual.pdf', { type: 'application/pdf' });
   if (navigator.canShare && navigator.share) {
     try {
@@ -2792,18 +2874,32 @@ async function openElsewhere(getBlob, fileName, title) {
 }
 
 let pdfView = null;
+let pdfChromeEl = null;
+function clearPdfChrome() { if (pdfChromeEl) { try { pdfChromeEl.remove(); } catch {} pdfChromeEl = null; } try { document.body.classList.remove('pdf-open'); } catch {} }
 async function renderManualViewer(file) {
   if (pdfView) { try { pdfView.destroy(); } catch {} pdfView = null; }
-  let title, label, notes, back, url = null, data = null, fileName;
+  let title, label, notes, back, url = null, data = null, fileName, userId = null, localCopy = false;
   if (file.startsWith('u:')) {
     const id = file.slice(2);
     const rec = await userManuals.get(id);
-    data = rec ? await userManuals.getFile(id) : null;
-    if (!rec || !data) {
-      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual’s PDF is not on this phone yet. Go to More and tap Sync now; allow access to shared files if asked.')));
+    if (!rec) {
+      fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearth. Sync, then try again.')));
       return;
     }
-    title = rec.name; label = `${userManuals.sizeText(rec.size)} · on this phone`; notes = rec.notes; back = '#/manuals'; fileName = rec.fileName || `${rec.name}.pdf`;
+    userId = id;
+    data = await userManuals.getFile(id);
+    localCopy = Boolean(data);
+    if (!data) {
+      // Session open from Drive — do not auto-save; “Save on this device” keeps it.
+      try { data = await loadManualBlob(id); }
+      catch (err) {
+        fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, err?.message || 'That manual’s PDF isn’t available yet. Sync, then try again.')));
+        return;
+      }
+    }
+    title = rec.name;
+    label = `${userManuals.sizeText(rec.size)} · ${localCopy ? 'on this device' : (rec.driveId ? 'from Drive' : 'on this device')}`;
+    notes = rec.notes; back = '#/manuals'; fileName = rec.fileName || `${rec.name}.pdf`;
   } else {
     const found = manuals.findFile(file);
     if (!found) {
@@ -2818,7 +2914,7 @@ async function renderManualViewer(file) {
   const status = el('p', { class: 'pdf-status', id: 'pdf-status', role: 'status' }, 'Opening…');
   const counter = el('span', { class: 'pdf-counter', id: 'pdf-counter' }, '');
   let zoom = 1;
-  const zoomBtn = (d, lbl, glyph) => el('button', { type: 'button', class: 'btn small-btn secondary pdf-zoom', 'aria-label': lbl, onclick: () => { if (pdfView) zoom = pdfView.zoom(zoom + d); } }, icon(glyph, 18));
+  const doZoom = (next) => { if (pdfView) zoom = pdfView.zoom(next); };
   const openBtn = el('button', { type: 'button', class: 'btn secondary small-btn', id: 'pdf-open-elsewhere', onclick: async (ev) => {
     const b = ev.currentTarget; b.disabled = true;
     try { await openElsewhere(getBlob, fileName, title); } finally { b.disabled = false; }
@@ -2826,16 +2922,39 @@ async function renderManualViewer(file) {
   const saveLink = data
     ? el('a', { class: 'btn link-btn quiet', href: photoURL(data), download: fileName, id: 'pdf-download' }, icon('download', 16), 'Save a copy')
     : el('a', { class: 'btn link-btn quiet', href: url, download: fileName, id: 'pdf-download' }, icon('download', 16), 'Save a copy');
+  const keepLocal = (userId && !localCopy)
+    ? el('button', { type: 'button', class: 'btn secondary small-btn', id: 'pdf-save-local', onclick: async (ev) => {
+        const b = ev.currentTarget; b.disabled = true; b.textContent = 'Saving…';
+        try { await saveOnThisPhone(userId); toast('Saved on this device'); location.replace(`#/manual/u:${encodeURIComponent(userId)}`); }
+        catch (err) { alert(db.storageError(err).message); b.disabled = false; b.textContent = 'Save on this device'; }
+      } }, icon('download', 16), 'Save on this device')
+    : null;
+  const dropLocal = (userId && localCopy)
+    ? el('button', { type: 'button', class: 'btn link-btn quiet', id: 'pdf-remove-local', onclick: async () => {
+        if (!confirm('Remove the offline copy from this device?\n\nIt stays on Drive and still shows in Manuals.')) return;
+        await userManuals.clearFile(userId);
+        toast('Removed from this device');
+        location.replace(`#/manual/u:${encodeURIComponent(userId)}`);
+      } }, 'Remove from this device')
+    : null;
+  // Same sticky close + zoom controls as the bill photo viewer (showFullPhoto).
+  // Portaled to body so they stay on the viewport while pages scroll.
+  clearPdfChrome();
+  const goBack = () => { if (history.length > 1) history.back(); else location.hash = back; };
+  pdfChromeEl = el('div', { class: 'pdf-chrome', id: 'pdf-chrome', 'aria-label': 'Manual viewer controls' },
+    el('div', { class: 'photo-count pdf-title-pill', id: 'pdf-title-pill' }, title),
+    el('div', { class: 'zoom-btns', role: 'group', 'aria-label': 'Zoom' },
+      el('button', { type: 'button', class: 'zoom-btn', id: 'pdf-zoom-out', 'aria-label': 'Zoom out', onclick: (ev) => { ev.stopPropagation(); doZoom(zoom - 0.5); } }, '−'),
+      el('button', { type: 'button', class: 'zoom-btn', id: 'pdf-zoom-in', 'aria-label': 'Zoom in', onclick: (ev) => { ev.stopPropagation(); doZoom(zoom + 0.5); } }, '+')),
+    el('button', { class: 'overlay-close', type: 'button', 'aria-label': 'Close manual', id: 'pdf-close', onclick: (ev) => { ev.stopPropagation(); goBack(); } }, icon('x', 22)));
+  document.body.appendChild(pdfChromeEl);
+  document.body.classList.add('pdf-open');
   fill(app,
     el('div', { class: 'pdf-screen', id: 'manual-viewer', 'data-file': file },
-      el('header', { class: 'pdf-bar' },
-        el('a', { class: 'back', href: back, onclick: (ev) => { if (history.length > 1) { ev.preventDefault(); history.back(); } } }, icon('back', 20), 'Manuals'),
-        el('div', { class: 'pdf-title' }, el('strong', {}, title), el('span', { class: 'small muted' }, label)),
-        el('div', { class: 'pdf-tools' }, zoomBtn(-0.5, 'Zoom out', 'minus'), zoomBtn(0.5, 'Zoom in', 'plus'))),
       notes ? el('p', { class: 'pdf-notes small' }, Array.isArray(notes) ? [el('strong', {}, notes[0]), notes[1]] : notes) : null,
-      el('div', { class: 'pdf-actions' }, openBtn, saveLink),
+      el('div', { class: 'pdf-actions' }, openBtn, saveLink, keepLocal, dropLocal),
       status, pages,
-      el('div', { class: 'pdf-foot' }, counter, el('span', { class: 'small muted' }, 'Pinch to zoom: pages sharpen when you stop.')))
+      el('div', { class: 'pdf-foot' }, counter, el('span', { class: 'small muted' }, 'Pinch to zoom: pages sharpen when you stop. Close and zoom stay on screen.')))
   );
   try {
     const { showPdf } = await import('./pdfview.js');
@@ -2850,7 +2969,7 @@ async function renderManualViewer(file) {
     status.hidden = false;
     status.classList.add('warn');
     status.textContent = navigator.onLine === false || String(err.message) === 'offline'
-      ? 'This manual isn’t saved on this phone yet. Open it once while you have signal (or tap “Save all for offline” in Manuals).'
+      ? 'This manual isn’t saved on this device yet. Open it once while you have signal (or tap “Save all for offline” in Manuals).'
       : 'This manual couldn’t be shown here. Try “Open in another app”.';
   }
 }
@@ -2936,9 +3055,10 @@ async function renderManualLookup() {
 async function renderManualForm(id, arg) {
   const editing = id ? await userManuals.get(id) : null;
   if (id && !editing) {
-    fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual’s PDF is not on this phone yet. Go to More and tap Sync now; allow access to shared files if asked.')));
+    fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearth. Sync, then try again.')));
     return;
   }
+  const editingLocal = editing ? await userManuals.hasFile(editing.id) : false;
   let file = !id && arg === 'shared' ? pendingManualFile : null;
   pendingManualFile = null;
   const fromLookup = !id && arg === 'lookup' ? pendingLookup : null; // v14
@@ -2984,7 +3104,7 @@ async function renderManualForm(id, arg) {
       el('a', { class: 'back', href: '#/manuals', onclick: (ev) => { ev.preventDefault(); history.length > 1 ? history.back() : location.replace('#/manuals'); } }, icon('back', 20), 'Manuals'),
       el('div', { class: 'form-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('book')), el('h1', { class: 'screen-title' }, editing ? 'Edit manual' : 'Add a manual'))),
     editing
-      ? el('p', { class: 'small muted' }, `${userManuals.sizeText(editing.size)}${editing.pages ? ` · ${editing.pages} pages` : ''} · saved on this phone`)
+      ? el('p', { class: 'small muted' }, `${userManuals.sizeText(editing.size)}${editing.pages ? ` · ${editing.pages} pages` : ''} · ${editingLocal ? 'on this device' : (editing.driveId ? 'on Drive' : 'waiting for Drive sync')}`)
       : el('div', { class: 'field' }, el('span', { class: 'label' }, 'PDF'), fileBox, fileInput,
           fromLookup ? el('span', { class: 'hint', id: 'manual-from-lookup' }, 'Choose the PDF you just downloaded (usually in Downloads), check the name, then tap Save manual. Nothing is saved until then.') : null),
     el('label', { class: 'field' }, el('span', { class: 'label' }, 'Name *'), nameInput),
@@ -2992,7 +3112,8 @@ async function renderManualForm(id, arg) {
     el('div', { class: 'field' }, el('span', { class: 'label' }, 'Rooms (optional)'), roomToggles(allRooms, selRooms, null, 'manual-room-toggles')),
     taggable.length ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'For which entries? (optional)'), filter, linkList,
       el('span', { class: 'hint' }, 'A linked entry shows a Manual button.')) : null,
-    el('p', { class: 'small muted', id: 'manual-where-note' }, 'Included in backups. With Drive sync on, this PDF and its details are shared with the other phone.'),
+    el('p', { class: 'small muted', id: 'manual-where-note' }, 'Saved on this device first. Included in backups. With Drive sync on, the PDF and details are shared — offline copies on each device are optional.'),
+    (await sync.getConfig()).enabled ? el('p', { class: 'small muted', id: 'manual-folder-note' }, 'If sync asks to allow the shared Hearthbook folder, that’s under More → Backup & sharing, next to Drive sync. Your PDF stays saved here either way.') : null,
     errorBox,
     el('div', { class: 'row sticky-actions' },
       el('button', { type: 'button', class: 'btn secondary', onclick: () => (history.length > 1 ? history.back() : location.replace('#/manuals')) }, 'Cancel'),
@@ -3105,7 +3226,7 @@ async function renderRoom(name) {
   const manualRows = [
     ...own.map((m) => el('a', { class: 'entry manual-hit', href: `#/manual/u:${encodeURIComponent(m.id)}`, 'data-user-manual': m.id },
       el('div', { class: 'thumb placeholder', 'data-tone': 'teal' }, icon('book', 24)),
-      el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, m.name), el('div', { class: 'entry-sub' }, 'Your manual · on this phone')))),
+      el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, m.name), el('div', { class: 'entry-sub' }, 'Your manual')))),
     ...builtIn.map((a) => el('a', { class: 'entry manual-hit', href: a.files.length === 1 ? `#/manual/${encodeURIComponent(a.files[0].file)}` : `#/manuals/${a.id}`, 'data-appliance': a.id },
       el('div', { class: 'thumb placeholder', 'data-tone': 'slate' }, icon('book', 24)),
       el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, `${a.name} manual${a.files.length > 1 ? 's' : ''}`), el('div', { class: 'entry-sub' }, a.model)))),
@@ -3472,9 +3593,7 @@ async function renderExport() {
         renderExport();
       } }, icon('backup', 20), 'Save backup to Drive'),
       el('p', { class: 'small muted', id: 'drive-backup-note' }, 'Saves a dated file in Hearthbook backups in your shared Drive folder. Keeps the newest 3 app-made backups it can manage; never removes your own files.'),
-      (await sync.getConfig()).enabled ? el('button', { class: 'btn link-btn small', id: 'backup-folder-access', onclick: async () => {
-        try { await allowSharedFolder(await sync.getConfig()); toast('Shared folder allowed. You can now save a backup.'); } catch (err) { alert(db.storageError(err).message); }
-      } }, 'Allow saving to the shared folder') : null,
+      (await sync.getConfig()).enabled ? el('p', { class: 'small muted', id: 'backup-folder-hint' }, 'If Drive says it can’t save, use “Allow saving to the shared Drive folder” on the Drive sync card below.') : null,
       fileInput),
     await syncCard(cardHead),
     el(
@@ -3727,12 +3846,12 @@ async function usageCard() {
   const head = el('div', { class: 'card-head' },
     el('div', { class: 'card-head-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('chart')),
       el('div', {}, el('h2', { class: 'card-title', id: 'usage-title' }, 'Electricity use by month'),
-        el('p', { class: 'card-sub', id: 'usage-sub' }, keys.length ? `From your EDF usage file · ${usage.monthLabel(keys[0])} – ${usage.monthLabel(keys[keys.length - 1])}` : 'From the usage file you download from EDF'))),
+        el('p', { class: 'card-sub', id: 'usage-sub' }, keys.length ? `From your usage file · ${usage.monthLabel(keys[0])} – ${usage.monthLabel(keys[keys.length - 1])}` : 'From a usage CSV you download from your electricity supplier'))),
     keys.length ? el('a', { class: 'btn small-btn secondary', href: '#/usage', id: 'usage-import-again' }, icon('upload', 16), 'Import') : null);
   if (!keys.length) {
     return fill(card, head,
-      el('p', { class: 'small muted' }, 'Download your usage from your EDF account as a CSV file (monthly, daily or half-hourly), then pick it here. Hearth adds up the kWh for each month and shows this year against last year. The file is read on this phone only.'),
-      el('a', { class: 'btn secondary', href: '#/usage', id: 'usage-import' }, icon('upload', 18), 'Import EDF usage file'));
+      el('p', { class: 'small muted' }, 'Download your usage from your electricity account as a CSV file (monthly, daily or half-hourly), then pick it here. Hearth adds up the kWh for each month and shows this year against last year. The file is read on this device only.'),
+      el('a', { class: 'btn secondary', href: '#/usage', id: 'usage-import' }, icon('upload', 18), 'Import usage'));
   }
   const years = usage.yearsIn(months);
   if (!state.usageYear || !years.includes(state.usageYear)) state.usageYear = years[years.length - 1];
@@ -3784,9 +3903,9 @@ async function usageCard() {
   return fill(card, head, body,
     el('p', { class: 'small muted usage-foot', id: 'usage-foot' },
       last && last.at ? `Last imported ${new Date(last.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}. ` : '',
-      'These are EDF’s figures from the usage file; your bills above stay as they are. ',
+      'These are figures from the usage file; your bills above stay as they are. ',
       el('button', { type: 'button', class: 'link-btn usage-remove', id: 'usage-remove', onclick: async () => {
-        if (!confirm('Remove the imported EDF usage months? Your bills aren’t touched. You can import the file again any time.')) return;
+        if (!confirm('Remove the imported usage months? Your bills aren’t touched. You can import the file again any time.')) return;
         await db.deleteEntry(usage.USAGE_ID);
         sync.recordDelete(usage.USAGE_ID);
         toast('Usage months removed');
@@ -3800,7 +3919,7 @@ async function renderUsageImport() {
   const saved = usage.savedMonths(entry);
   const input = el('input', { type: 'file', id: 'usage-file', accept: '.csv,text/csv,text/plain,application/vnd.ms-excel', multiple: true, hidden: true });
   const out = el('div', { id: 'usage-preview', 'aria-live': 'polite' });
-  const pickBtn = el('button', { type: 'button', class: 'btn', id: 'usage-pick', onclick: () => input.click() }, icon('upload', 18), 'Choose EDF usage file');
+  const pickBtn = el('button', { type: 'button', class: 'btn', id: 'usage-pick', onclick: () => input.click() }, icon('upload', 18), 'Choose usage file');
   input.addEventListener('change', async () => {
     const files = [...input.files];
     input.value = '';
@@ -3808,8 +3927,8 @@ async function renderUsageImport() {
     const parsed = [], problems = [];
     for (const f of files) {
       try {
-        if (f.size > 25 * 1024 * 1024) throw new usage.UsageFileError('That file is too big to be an EDF usage download.');
-        if (/\.(xlsx|xls|pdf|json|zip)$/i.test(f.name)) throw new usage.UsageFileError(`“${f.name}” isn’t a CSV file. On the EDF website, pick CSV when you download your usage.`);
+        if (f.size > 25 * 1024 * 1024) throw new usage.UsageFileError('That file is too big to be a usage download.');
+        if (/\.(xlsx|xls|pdf|json|zip)$/i.test(f.name)) throw new usage.UsageFileError(`“${f.name}” isn’t a CSV file. When you download your usage, pick CSV (not Excel or PDF).`);
         parsed.push({ name: f.name, p: usage.parseUsageCSV(await f.text()) });
       } catch (err) {
         problems.push({ name: f.name, message: err instanceof usage.UsageFileError ? err.message : 'That file could not be read.' });
@@ -3842,14 +3961,14 @@ async function renderUsageImport() {
       all.fuel === 'gas' ? el('p', { class: 'warn-text small', id: 'usage-gas' }, 'This looks like a gas file. Hearth will show it as electricity, so only save it if that’s right.') : null,
       el('div', { class: 'usage-facts' },
         el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Months found'), el('strong', { class: 'stat-value', id: 'usage-months-found' }, String(keys.length)), el('span', { class: 'small muted' }, `${usage.monthLabel(all.from)} – ${usage.monthLabel(all.to)}`)),
-        el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Total'), el('strong', { class: 'stat-value', id: 'usage-total' }, `${kwh0(total)} kWh`), el('span', { class: 'small muted' }, costs.length ? `${money(totalCost)} on EDF’s figures` : 'no cost in the file')),
+        el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Total'), el('strong', { class: 'stat-value', id: 'usage-total' }, `${kwh0(total)} kWh`), el('span', { class: 'small muted' }, costs.length ? `${money(totalCost)} on the file’s figures` : 'no cost in the file')),
         el('div', { class: 'stat-card' }, el('span', { class: 'stat-label' }, 'Will save'), el('strong', { class: 'stat-value', id: 'usage-to-save' }, `${toSave} month${toSave === 1 ? '' : 's'}`),
           el('span', { class: 'small muted', id: 'usage-overlap' }, [plan.added.length ? `${plan.added.length} new` : '', plan.updated.length ? `${plan.updated.length} updated` : '', plan.same.length ? `${plan.same.length} already saved` : '', plan.kept.length ? `${plan.kept.length} kept` : ''].filter(Boolean).join(' · ')))),
       el('ul', { class: 'usage-notes small' },
         el('li', {}, `Read as ${kinds} (${all.rows.toLocaleString('en-GB')} row${all.rows === 1 ? '' : 's'})${all.kinds.includes('halfhourly') || all.kinds.includes('daily') ? ', added up into calendar months' : ''}.`),
         plan.same.length || plan.updated.length || plan.kept.length ? el('li', { id: 'usage-overlap-note' }, `Overlaps what’s saved: ${plan.same.length ? `${plan.same.length} month${plan.same.length === 1 ? '' : 's'} the same (skipped, no duplicates)` : ''}${plan.same.length && (plan.updated.length || plan.kept.length) ? '; ' : ''}${plan.updated.length ? `${plan.updated.map((k) => usage.monthLabel(k)).join(', ')} will be updated from this file` : ''}${plan.kept.length ? `${plan.updated.length ? '; ' : ''}${plan.kept.map((k) => usage.monthLabel(k)).join(', ')} kept (what’s saved covers more of the month)` : ''}.`) : el('li', { id: 'usage-overlap-note' }, 'Nothing saved yet overlaps these months.'),
         partial.length ? el('li', {}, `${partial.map((k) => usage.monthLabel(k)).join(', ')} ${partial.length === 1 ? 'is' : 'are'} only part of the month (so far), so ${partial.length === 1 ? 'it isn’t' : 'they aren’t'} compared with last year.`) : null,
-        all.skippedEmpty.length ? el('li', { id: 'usage-skipped' }, `${all.skippedEmpty.length} month${all.skippedEmpty.length === 1 ? '' : 's'} with 0 kWh left out (${usage.monthLabel(all.skippedEmpty[0])}${all.skippedEmpty.length > 1 ? ` – ${usage.monthLabel(all.skippedEmpty[all.skippedEmpty.length - 1])}` : ''}), probably before your EDF supply started.`) : null,
+        all.skippedEmpty.length ? el('li', { id: 'usage-skipped' }, `${all.skippedEmpty.length} month${all.skippedEmpty.length === 1 ? '' : 's'} with 0 kWh left out (${usage.monthLabel(all.skippedEmpty[0])}${all.skippedEmpty.length > 1 ? ` – ${usage.monthLabel(all.skippedEmpty[all.skippedEmpty.length - 1])}` : ''}), probably before your supply started.`) : null,
         alsoBills.length ? el('li', { id: 'usage-bills-note' }, `Your bills also cover ${alsoBills.length} of these months. They stay exactly as they are; the file’s figures are shown separately.`) : null,
         all.badRows ? el('li', {}, `${all.badRows} row${all.badRows === 1 ? '' : 's'} without a date or kWh skipped.`) : null),
       el('table', { class: 'mtable usage-table', id: 'usage-preview-table' },
@@ -3874,10 +3993,10 @@ async function renderUsageImport() {
         el('button', { type: 'button', class: 'btn secondary', id: 'usage-other', onclick: () => input.click() }, 'Pick a different file'))));
   };
   fill(app,
-    screenHead('Import EDF usage', { back: { href: '#/list/meter', label: 'Electricity' }, sub: 'Monthly kWh from the usage file you download from EDF' }),
+    screenHead('Import usage', { back: { href: '#/list/meter', label: 'Electricity' }, sub: 'Monthly kWh from a usage CSV from your electricity supplier' }),
     el('section', { class: 'card usage-how', id: 'usage-how' },
       el('ol', { class: 'usage-steps small' },
-        el('li', {}, 'On the EDF website or app, go to your usage and choose to download it.'),
+        el('li', {}, 'On your electricity account (website or app), go to your usage and choose to download it.'),
         el('li', {}, 'Pick CSV. Monthly, daily or half-hourly all work (half-hourly is added up into days and months).'),
         el('li', {}, 'Choose the file here. You can pick several files at once, e.g. one per year.')),
       el('p', { class: 'small muted' }, 'The file is read on this device only. Months already saved aren’t duplicated; you’ll see what changes before anything is saved.'),

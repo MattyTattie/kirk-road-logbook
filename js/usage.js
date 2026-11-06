@@ -226,7 +226,7 @@ function firstSlotIsHalfPast(recs) {
   return Boolean(first && first.w.hh === 0 && first.w.mm === 30);
 }
 const sortObj = (o) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
-const notRecognised = () => new UsageFileError('Hearth didn’t recognise that file. It needs an EDF usage download saved as a CSV file: one column with the date or month (like “Timestamp” or “Date”) and one with kWh (like “Electricity consumption (kWh)”). Bills, PDFs and spreadsheets (.xlsx) won’t work here.');
+const notRecognised = () => new UsageFileError('Hearth didn’t recognise that file. It needs a usage download saved as a CSV file: one column with the date or month (like “Timestamp” or “Date”) and one with kWh (like “Electricity consumption (kWh)”). Bills, PDFs and spreadsheets (.xlsx) won’t work here.');
 
 // Several files picked together: one set of months (the more complete
 // figure wins when two files cover the same month).
@@ -293,13 +293,13 @@ export function usageEntry(existing, months, meta, nowIso = new Date().toISOStri
     ...(existing || {}),
     id: USAGE_ID,
     type: USAGE_TYPE,
-    title: 'Electricity usage (EDF file)',
-    supplier: 'EDF',
-    notes: 'Monthly kWh from EDF usage downloads. Shown on the Electricity page (Hearth 15 or newer).',
+    title: 'Electricity usage (imported file)',
+    supplier: (meta && meta.supplier) || 'Electricity',
+    notes: 'Monthly kWh from a usage CSV download. Shown on the Electricity page (Hearth 15 or newer).',
     date: last ? `${last}-${pad(daysInMonth(last))}` : nowIso.slice(0, 10),
     createdAt: (existing && existing.createdAt) || nowIso,
     updatedAt: nowIso,
-    usage: { version: 1, fuel: 'electricity', supplier: 'EDF', months, imports },
+    usage: { version: 1, fuel: 'electricity', supplier: (meta && meta.supplier) || 'electricity', months, imports },
   };
 }
 

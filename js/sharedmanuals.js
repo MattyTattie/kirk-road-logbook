@@ -5,6 +5,11 @@
 // these files: drive.readonly discovers them again. No extra Drive scope.
 // PDFs are immutable; edits only change their metadata. Deleted PDFs are
 // retained in Drive for recovery, while tombstones hide them on both phones.
+//
+// v15.16 — sync shares metadata + Drive pointers only. Other phones do NOT
+// auto-download every PDF. Opening (or “Save on this device”) fetches once;
+// “Remove from this device” drops the optional local copy. Backups still
+// include PDF bytes, fetching from Drive when the local copy is missing.
 import * as db from './db.js';
 import * as drive from './gdrive.js';
 import * as manuals from './usermanuals.js';
@@ -76,7 +81,7 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
     let f = own;
     if (!f) {
       try { f = await drive.createFolder('Hearthbook manuals', parent); }
-      catch (err) { if (err instanceof drive.AuthError) throw err; throw new Error('Tap “Allow saving to the shared Drive folder” in Manuals, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this phone.'); }
+      catch (err) { if (err instanceof drive.AuthError) throw err; throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this device.'); }
     }
     state.folder = f.id;
     await db.setMeta(STATE, state);
@@ -115,7 +120,7 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
     let written;
     try { written = state.manifest ? await drive.writeJSON(state.manifest, payload) : await drive.createJSON(name, parent, payload); }
     catch (err) {
-      if (!state.manifest && err instanceof drive.NotFoundError) throw new Error('Tap “Allow saving to the shared Drive folder” in Manuals, choose the existing Hearthbook folder, then Sync now again. Your saved records are still on this phone.');
+      if (!state.manifest && err instanceof drive.NotFoundError) throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, choose the existing Hearthbook folder, then Sync now again. Your saved records are still on this device.');
       throw err;
     }
     state.manifest = written.id || state.manifest;
@@ -124,16 +129,10 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
   }
   ids.add(state.manifest);
 
-  // Fetch first, then apply atomically. Missing permission/signal leaves
-  // the previous local cache alone and gives a retryable sync error.
-  const blobs = {};
-  for (const [id, m] of Object.entries(merged.records)) {
-    if (await manuals.getFile(id)) continue;
-    const downloaded = await drive.readBlob(m.driveId);
-    const blob = new Blob([downloaded], { type: 'application/pdf' });
-    if (blob.size !== Number(m.size) || !(await manuals.looksLikePdf(blob))) throw new Error(`“${m.name}” did not download completely. Try syncing again.`);
-    blobs[manuals.fileKey(id)] = blob;
-  }
+  // v15.16: apply metadata only. Do not auto-download every PDF — that was
+  // filling both phones. Opening / Save on this phone fetches on demand.
+  // Existing local copies stay put until the user removes them or a delete
+  // tombstone clears them.
   if (!(await stillOn())) throw new Error('Sync was switched off.');
   // Re-read: edits, deletes and restores during a network request must win.
   const fresh = await localSource();
@@ -143,9 +142,32 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
   const before = json(fresh);
   const freshSettings = await rooms.getShared();
   const finalSettings = rooms.mergeShared([roomSettings, freshSettings]);
+  const blobs = {};
   for (const id of Object.keys(final.tombstones)) blobs[manuals.fileKey(id)] = null;
   await db.saveMetaValues({ ...rooms.sharedMeta(finalSettings), ...blobs, [manuals.LIST_KEY]: Object.values(final.records), [manuals.TOMBS_KEY]: final.tombstones });
   return { ids: [...ids].filter(Boolean).sort(), pulled: before === json(final) && json(freshSettings) === json(finalSettings) ? 0 : 1 };
+}
+
+/** Load a user-manual PDF: local copy first, else Drive. Does not save. */
+export async function loadBlob(id) {
+  const local = await manuals.getFile(id);
+  if (local) return local;
+  const m = await manuals.get(id);
+  if (!m) throw new Error('That manual is not in Hearth.');
+  if (!m.driveId) throw new Error(`“${m.name}” is not on Drive yet. Keep Hearth open until syncing finishes, then try again.`);
+  const downloaded = await drive.readBlob(m.driveId);
+  const blob = new Blob([downloaded], { type: 'application/pdf' });
+  if (blob.size !== Number(m.size) || !(await manuals.looksLikePdf(blob))) throw new Error(`“${m.name}” did not download completely. Try again.`);
+  return blob;
+}
+
+/** Optional offline copy on this phone only. */
+export async function saveOnThisPhone(id) {
+  const existing = await manuals.getFile(id);
+  if (existing) return existing;
+  const blob = await loadBlob(id);
+  await manuals.saveFile(id, blob);
+  return blob;
 }
 
 // Explicit user gesture, Google Picker grants drive.file access to the
