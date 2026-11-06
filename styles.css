@@ -1590,15 +1590,23 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .sync-folder-access p, .sync-photo-access p { margin: 0 0 8px; }
 .sync-folder-access p:first-child, .sync-photo-access p:first-child { display: flex; gap: 8px; align-items: center; }
 
-/* v15.16: manuals on Mac — your manuals full width, clearer offline actions */
+/* v15.17: compact manual cards; optional offline action sits below Open. */
+.manual-item { min-width: 0; }
+.manual-item p { margin-bottom: 6px; }
+.manual-item .manual-about, .manual-item .manual-notes { margin: 6px 0 0; }
+.manual-item .room-tags { margin: 6px 0 0; }
+.manual-file-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.manual-file-row > .manual-file { min-width: 0; }
+.manual-file-row > .btn, .user-manual .manual-files > .btn.link-btn {
+  grid-column: 1; width: 100%; box-sizing: border-box;
+  justify-self: stretch; justify-content: center; min-height: 40px; padding: 8px 12px;
+}
 @media (min-width: 1024px) {
-  #your-manuals { grid-column: 1 / -1; }
-  #your-manuals .manual-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .manuals-offline { margin: 8px 0 18px; padding: 10px 12px; border-radius: 14px; background: var(--surface-2); }
+  /* Independent card heights: a short card no longer leaves a row-sized hole. */
+  .manual-list, #your-manuals .manual-list { display: block; columns: 2; column-gap: 10px; }
+  .manual-list > .manual-item { break-inside: avoid; margin: 0 0 10px; }
+  .manuals-offline { margin: 8px 0 14px; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); }
   .manuals-offline .btn { min-height: 40px; }
-  .manual-file-row { grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
-  .manual-file-row .manual-file { grid-column: 1; }
-  .manual-file-row .manual-remove-offline { grid-column: 2; justify-self: end; }
   .manuals-group .group-head { margin-bottom: 8px; }
 }
 
@@ -1608,5 +1616,14 @@ details.more-info .mi-rows span:nth-child(2n) { text-align: right; font-variant-
 .sync-folder-needed { color: var(--soon); margin: 6px 0 0; }
 
 /* v15.16: PDF chrome matches photo viewer; hide bottom nav while open */
-body.pdf-open .bottom-nav { display: none; }
+body.pdf-open .bottom-nav, body.pdf-open .topbar { display: none; }
 body.pdf-open main { padding-bottom: 40px; }
+
+/* A manual is a full-screen viewer, not a page squeezed beside the Mac sidebar. */
+@media (min-width: 1024px) {
+  body.pdf-open .bottom-nav { display: none; }
+  body.pdf-open main { margin: 0; width: 100%; padding-inline: 24px; }
+  body.pdf-open .pdf-screen { max-width: 1000px; margin-inline: auto; }
+  body.pdf-open .pdf-chrome { left: 0; }
+  body.pdf-open .topbar { margin-left: 0; }
+}

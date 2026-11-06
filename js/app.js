@@ -2648,8 +2648,8 @@ addEventListener('keydown', (ev) => {
 // MANUALS (More → Manuals): every appliance guide, plus your own
 // ---------------------------------------------------------------------
 // v13: the built-in PDFs (about 59 MB) are no longer all downloaded the
-// first time this screen opens. Each one is saved on this device the first
-// time you open it, and "Save all for offline" downloads the lot (it asks
+// first time this screen opens. Viewing is temporary; only explicit Save
+// keeps a copy. "Save all for offline" downloads the lot (it asks
 // first, and remembers your answer).
 // v15.16: user manuals show from Drive without keeping every PDF locally.
 // Opening fetches for this session; "Save on this device" keeps an offline
@@ -2738,7 +2738,7 @@ async function renderManuals(focus = '') {
       all ? `All ${total} guides are saved on this device and open without signal.`
         : offlineChosen() && navigator.onLine !== false ? `Saving for offline use: ${done} of ${total}…`
         : navigator.onLine === false ? `${done} of ${total} guides saved on this device. The others need signal the first time.`
-        : done ? `${done} of ${total} guides saved on this device. Each one is saved the first time you open it.`
+        : done ? `${done} of ${total} guides saved on this device. Opening others does not save them.`
         : `Built-in guides open with signal. Save ones you need offline, or save all (~${BUILTIN_MB} MB).`);
     saveAll.hidden = all || offlineChosen();
     clearAll.hidden = done === 0;
@@ -2752,6 +2752,8 @@ async function renderManuals(focus = '') {
       }
       const rm = row.querySelector('.manual-remove-offline');
       if (rm) rm.hidden = !on;
+      const keep = row.querySelector('.manual-save-offline');
+      if (keep) keep.hidden = on;
     });
     return all || !offlineChosen();
   };
@@ -2785,6 +2787,17 @@ async function renderManuals(focus = '') {
       el('div', { class: 'manual-files' }, a.files.map((f) => el('div', { class: 'manual-file-row', 'data-file': f.file },
         el('a', { class: 'manual-file', href: `#/manual/${encodeURIComponent(f.file)}`, 'data-file': f.file },
           icon('file', 18), el('span', {}, f.label), el('span', { class: 'small muted' }, `${f.pages} page${f.pages === 1 ? '' : 's'}`, el('span', { class: 'manual-where' }, '')), icon('chevron', 16)),
+        el('button', { type: 'button', class: 'btn secondary small manual-save-offline', 'data-file': f.file, onclick: async (ev) => {
+          const b = ev.currentTarget; b.disabled = true; b.textContent = 'Saving…';
+          try {
+            const response = await fetch(builtinUrl(f.file), { cache: 'no-store' });
+            if (!response.ok) throw new Error('Connect to save this guide on your device.');
+            const cache = await caches.open(manuals.MANUALS_CACHE);
+            await cache.put(builtinUrl(f.file), response);
+            toast('Saved on this device'); await showStatus();
+          } catch (err) { alert(db.storageError(err).message); }
+          finally { b.disabled = false; b.textContent = 'Save on this device'; }
+        } }, 'Save on this device'),
         el('button', { type: 'button', class: 'btn link-btn quiet small manual-remove-offline', hidden: true, 'data-file': f.file, 'aria-label': `Remove ${f.label} from this device`, onclick: async (ev) => {
           ev.preventDefault();
           if (!confirm(`Remove the offline copy of “${f.label}” from this device?\n\nIt stays in Hearth and opens again with signal.`)) return;
@@ -2925,7 +2938,7 @@ async function renderManualViewer(file) {
   const keepLocal = (userId && !localCopy)
     ? el('button', { type: 'button', class: 'btn secondary small-btn', id: 'pdf-save-local', onclick: async (ev) => {
         const b = ev.currentTarget; b.disabled = true; b.textContent = 'Saving…';
-        try { await saveOnThisPhone(userId); toast('Saved on this device'); location.replace(`#/manual/u:${encodeURIComponent(userId)}`); }
+        try { await saveOnThisPhone(userId); toast('Saved on this device'); render(); }
         catch (err) { alert(db.storageError(err).message); b.disabled = false; b.textContent = 'Save on this device'; }
       } }, icon('download', 16), 'Save on this device')
     : null;
@@ -2934,7 +2947,7 @@ async function renderManualViewer(file) {
         if (!confirm('Remove the offline copy from this device?\n\nIt stays on Drive and still shows in Manuals.')) return;
         await userManuals.clearFile(userId);
         toast('Removed from this device');
-        location.replace(`#/manual/u:${encodeURIComponent(userId)}`);
+        render();
       } }, 'Remove from this device')
     : null;
   // Same sticky close + zoom controls as the bill photo viewer (showFullPhoto).
@@ -2969,7 +2982,7 @@ async function renderManualViewer(file) {
     status.hidden = false;
     status.classList.add('warn');
     status.textContent = navigator.onLine === false || String(err.message) === 'offline'
-      ? 'This manual isn’t saved on this device yet. Open it once while you have signal (or tap “Save all for offline” in Manuals).'
+      ? 'This manual isn’t saved on this device. Connect to view it, or use “Save on this device” in Manuals for offline use.'
       : 'This manual couldn’t be shown here. Try “Open in another app”.';
   }
 }

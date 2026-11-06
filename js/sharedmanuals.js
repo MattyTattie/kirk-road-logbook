@@ -7,8 +7,8 @@
 // retained in Drive for recovery, while tombstones hide them on both phones.
 //
 // v15.16 — sync shares metadata + Drive pointers only. Other phones do NOT
-// auto-download every PDF. Opening (or “Save on this device”) fetches once;
-// “Remove from this device” drops the optional local copy. Backups still
+// auto-download every PDF. Opening only fetches temporary viewing bytes;
+// only “Save on this device” keeps them. Remove drops the optional copy. Backups still
 // include PDF bytes, fetching from Drive when the local copy is missing.
 import * as db from './db.js';
 import * as drive from './gdrive.js';

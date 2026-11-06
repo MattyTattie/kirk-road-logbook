@@ -182,7 +182,7 @@ function rkHeader() {
   return pairs.length ? { 'X-Goog-Drive-Resource-Keys': pairs.join(',') } : {};
 }
 
-async function call(url, { method = 'GET', body, headers = {}, raw = false, timeoutMs = 0 } = {}) {
+async function call(url, { method = 'GET', body, headers = {}, raw = false, timeoutMs = 0, cache = 'default' } = {}) {
   const token = await getToken();
   let res;
   // v13.8: photo uploads pass a time limit, so a stalled request fails (and
@@ -190,7 +190,7 @@ async function call(url, { method = 'GET', body, headers = {}, raw = false, time
   const ctl = timeoutMs && typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : 0;
   try {
-    res = await fetch(url, { method, body, headers: { Authorization: `Bearer ${token}`, ...rkHeader(), ...headers }, ...(ctl ? { signal: ctl.signal } : {}) });
+    res = await fetch(url, { method, body, cache, headers: { Authorization: `Bearer ${token}`, ...rkHeader(), ...headers }, ...(ctl ? { signal: ctl.signal } : {}) });
   } catch {
     throw new OfflineError(ctl && ctl.signal.aborted ? 'Google Drive took too long to answer.' : undefined);
   } finally {
@@ -403,7 +403,7 @@ export function trash(id) {
   });
 }
 export async function readBlob(id) {
-  const res = await call(`${API}/files/${id}?alt=media&supportsAllDrives=true`, { raw: true });
+  const res = await call(`${API}/files/${id}?alt=media&supportsAllDrives=true`, { raw: true, cache: 'no-store' });
   return res.blob();
 }
 // Give someone edit access to the shared folder (Google emails them).

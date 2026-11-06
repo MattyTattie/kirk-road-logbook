@@ -2,10 +2,9 @@
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
 // The PDFs live in the app's manuals/ folder. They're big (about 59 MB
-// together), so they are NOT downloaded when the app installs: the first
-// time you open More → Manuals, the service worker (sw.js "warm-manuals")
-// saves them all for offline use. A manual you open before that is saved
-// as you open it.
+// together), so they are NOT downloaded when the app installs. Viewing
+// only loads temporary bytes; explicit Save on this device / Save all
+// keeps offline copies in the manual cache.
 //
 // PDFs open inside Hearthbook (the viewer in app.js draws the pages with
 // the bundled pdf.js), because the installed Android app can't show a PDF

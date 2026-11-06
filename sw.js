@@ -49,7 +49,7 @@
 // same github.io origin keep theirs.)
 // v15.1 = Add reminder: standalone one-off or repeating reminders (stored as jobs with a reminder object).
 // v15.2 = tap-to-explain words + Words explained page, tap lists instead of drop-downs, green/red result boxes, More info folds, Undo after edits/deletes.
-const CACHE_NAME = 'hearthbook-v15.16';
+const CACHE_NAME = 'hearthbook-v15.17';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -190,8 +190,8 @@ self.addEventListener('message', (event) => {
 
 // 2c) When you tap "Save all for offline" in Manuals (v13: it asks first,
 //     ~59 MB), the page sends 'warm-manuals' with the list of PDFs; we save
-//     the ones not already saved, one at a time. Otherwise each manual is
-//     saved the first time you open it (serveManual below).
+//     the ones not already saved, one at a time. Otherwise viewing is
+//     temporary only; serveManual never saves a new offline copy.
 //     (The pdf.js reader used to show them comes along too.) If the
 //     phone goes offline half way, the rest are fetched next time.
 let manualsWarming = null;
@@ -223,7 +223,7 @@ self.addEventListener('fetch', (event) => {
   // Only handle simple GET requests for our own files.
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
   // Manuals: from their own cache; a manual opened before the cache was
-  // filled is saved as it's opened.
+  // filled is viewed for this session only.
   if (isManual(request.url)) {
     event.respondWith(serveManual(request));
     return;
@@ -258,11 +258,10 @@ async function serveManual(request) {
   const cached = await cache.match(url.href);
   if (cached) return cached;
   try {
-    const response = await fetch(url.href);
-    if (response.status === 200) await cache.put(url.href, response.clone());
-    return response;
+    // Viewing must never create an offline copy (including HTTP cache).
+    return await fetch(url.href, { cache: 'no-store' });
   } catch (err) {
-    return new Response('This manual hasn’t been saved on this phone yet. Open Manuals once while online.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    return new Response('This guide is not saved on this device. Connect to view it, or use Save on this device in Manuals.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   }
 }
 
