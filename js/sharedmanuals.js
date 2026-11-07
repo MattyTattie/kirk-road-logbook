@@ -48,6 +48,11 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
   if (state.parent !== parent) state = { parent, device: db.newId(), uploads: {} };
   state.uploads ||= {};
   const files = parent ? await drive.list(`'${quoted(parent)}' in parents and trashed = false and name contains '${PREFIX}'`) : [];
+  // v15.18: the Drive tidy moves these files into the Manuals folder(s).
+  if (parent) {
+    const subs = (await drive.list(`'${quoted(parent)}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'`)).filter((f) => f.name === 'Manuals' || f.name === 'Hearthbook manuals');
+    for (const sub of subs) for (const f of await drive.list(`'${quoted(sub.id)}' in parents and trashed = false and name contains '${PREFIX}'`)) if (!files.some((x) => x.id === f.id)) files.push(f);
+  }
   const ids = new Set([...files.filter((f) => f.name.startsWith(PREFIX) && f.name.endsWith('.json')).map((f) => f.id), ...hints]);
   const sources = [];
   for (const id of ids) {
@@ -62,7 +67,10 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
   const roomSettings = rooms.mergeShared([await rooms.getShared(), remoteSettings]);
   const local = await localSource();
   let merged = mergeManuals([local, ...sources]);
-  const hasData = Object.keys(merged.records).length || Object.keys(merged.tombstones).length || Object.keys(roomSettings).length;
+  // v15.18: removed built-in guides (optional field, older apps ignore it).
+  const remoteHides = manuals.mergeHides(sources.map((s) => s.builtinHidden));
+  const hides = manuals.mergeHides([await manuals.builtinHides(), remoteHides]);
+  const hasData = Object.keys(merged.records).length || Object.keys(merged.tombstones).length || Object.keys(roomSettings).length || Object.keys(hides).length;
   if (!hasData) return { ids: [...ids], pulled: 0 };
   if (!parent) throw new Error('Choose the shared Hearthbook folder in Manuals before syncing PDFs.');
   await db.setMeta(STATE, state); // stable device id before any remote create
@@ -74,13 +82,13 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
       const f = await drive.getMeta(state.folder);
       if ((f.parents || []).includes(parent) && !f.trashed) return f.id;
     }
-    const found = await drive.list(`'${quoted(parent)}' in parents and trashed = false and name = 'Hearthbook manuals'`);
+    const found = [...await drive.list(`'${quoted(parent)}' in parents and trashed = false and name = 'Manuals'`), ...await drive.list(`'${quoted(parent)}' in parents and trashed = false and name = 'Hearthbook manuals'`)];
     // Only reuse an app-writable folder (owned by this account). Read-only
     // access to somebody else's folder isn't permission to create children.
     const own = found.find((f) => f.ownedByMe);
     let f = own;
     if (!f) {
-      try { f = await drive.createFolder('Hearthbook manuals', parent); }
+      try { f = await drive.createFolder('Manuals', parent); }
       catch (err) { if (err instanceof drive.AuthError) throw err; throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this device.'); }
     }
     state.folder = f.id;
@@ -111,11 +119,11 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
 
   // Write our own manifest, not another account's file (drive.file remains
   // the sole write scope). Version-3 sync only receives optional id hints.
-  const payload = { format: FORMAT, version: 1, ...merged, roomSettings };
+  const payload = { format: FORMAT, version: 1, ...merged, roomSettings, ...(Object.keys(hides).length ? { builtinHidden: hides } : {}) };
   const name = PREFIX + state.device + '.json';
   // Recover a completed create if the phone stopped before saving its id.
   if (!state.manifest) state.manifest = files.find((f) => f.name === name && f.ownedByMe)?.id;
-  if ((json(merged) !== json(remoteOnly) || json(roomSettings) !== json(remoteSettings)) && json(payload) !== state.last) {
+  if ((json(merged) !== json(remoteOnly) || json(roomSettings) !== json(remoteSettings) || json(hides) !== json(remoteHides)) && json(payload) !== state.last) {
     if (!(await stillOn())) throw new Error('Sync was switched off.');
     let written;
     try { written = state.manifest ? await drive.writeJSON(state.manifest, payload) : await drive.createJSON(name, parent, payload); }
@@ -144,8 +152,41 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
   const finalSettings = rooms.mergeShared([roomSettings, freshSettings]);
   const blobs = {};
   for (const id of Object.keys(final.tombstones)) blobs[manuals.fileKey(id)] = null;
-  await db.saveMetaValues({ ...rooms.sharedMeta(finalSettings), ...blobs, [manuals.LIST_KEY]: Object.values(final.records), [manuals.TOMBS_KEY]: final.tombstones });
-  return { ids: [...ids].filter(Boolean).sort(), pulled: before === json(final) && json(freshSettings) === json(finalSettings) ? 0 : 1 };
+  const freshHides = await manuals.builtinHides();
+  const finalHides = manuals.mergeHides([hides, freshHides]);
+  await db.saveMetaValues({ ...rooms.sharedMeta(finalSettings), ...blobs, [manuals.LIST_KEY]: Object.values(final.records), [manuals.TOMBS_KEY]: final.tombstones, [manuals.BUILTIN_HIDE_KEY]: finalHides });
+  const newlyHidden = manuals.hiddenIds(finalHides).filter((id) => !manuals.hiddenIds(freshHides).includes(id));
+  // v15.18: bin (Drive trash, 30 days to restore) the PDFs of removed
+  // manuals. Only files this account owns can be binned with drive.file; the
+  // phone that uploaded a PDF bins it when it sees the delete marker.
+  const binned = await binRemoved(final.tombstones, state, final.records);
+  return { ids: [...ids].filter(Boolean).sort(), newlyHidden, binned, pulled: before === json(final) && json(freshSettings) === json(finalSettings) && json(freshHides) === json(finalHides) ? 0 : 1 };
+}
+
+async function binRemoved(tombstones, state, records) {
+  const pending = { ...((await db.getMeta(manuals.TRASH_KEY)) || {}) };
+  let binned = 0, changed = false;
+  for (const id of Object.keys(tombstones)) {
+    if (records[id]) continue; // brought back since
+    const targets = [...new Set([state.uploads?.[id], pending[id]].filter(Boolean))];
+    if (!targets.length) continue;
+    let left = false;
+    for (const fid of targets) {
+      try {
+        const f = await drive.getMeta(fid);
+        if (f.trashed) continue;
+        if (!f.ownedByMe) continue; // the other phone's upload: it bins its own
+        if (f.appProperties?.hearthbook !== 'manual' || (f.appProperties.manualId && f.appProperties.manualId !== id)) continue; // never touch anything else
+        await drive.trash(fid); binned++;
+      } catch (e) {
+        if (e instanceof drive.AuthError) throw e;
+        if (!(e instanceof drive.NotFoundError)) left = true; // try again next sync
+      }
+    }
+    if (!left) { if (state.uploads?.[id]) { delete state.uploads[id]; changed = true; } if (pending[id]) { delete pending[id]; changed = true; } }
+  }
+  if (changed) await db.saveMetaValues({ [STATE]: state, [manuals.TRASH_KEY]: pending });
+  return binned;
 }
 
 /** Load a user-manual PDF: local copy first, else Drive. Does not save. */

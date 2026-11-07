@@ -20,7 +20,7 @@
 export const MANUALS_CACHE = 'hearthbook-manuals-v1';
 export const DIR = 'manuals/';
 
-export const APPLIANCES = [
+export const ALL_APPLIANCES = [
   {
     id: 'oven', name: 'AEG oven', model: 'BPX535061B', group: 'Kitchen', rooms: ['Kitchen'],
     match: ['BPX535061B', 'BPX535061'],
@@ -187,7 +187,18 @@ export const APPLIANCES = [
   },
 ];
 
-export const ALL_FILES = APPLIANCES.flatMap((a) => a.files.map((f) => DIR + f.file));
+// v15.18: built-in manuals can be removed (hidden on both phones through the
+// shared manuals manifest). APPLIANCES / ALL_FILES stay live arrays of the
+// ones still shown, so every existing caller simply stops seeing removed ones.
+export const APPLIANCES = ALL_APPLIANCES.slice();
+export const ALL_FILES = [];
+export function applyHidden(ids = []) {
+  const off = new Set(ids);
+  APPLIANCES.splice(0, APPLIANCES.length, ...ALL_APPLIANCES.filter((a) => !off.has(a.id)));
+  ALL_FILES.splice(0, ALL_FILES.length, ...APPLIANCES.flatMap((a) => a.files.map((f) => DIR + f.file)));
+}
+applyHidden();
+export const builtinById = (id) => ALL_APPLIANCES.find((a) => a.id === id) || null;
 export const fileUrl = (file) => DIR + file;
 export const findFile = (file) => {
   for (const a of APPLIANCES) for (const f of a.files) if (f.file === file) return { appliance: a, file: f };

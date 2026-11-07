@@ -23,10 +23,11 @@ export async function saveBackupToDrive(c) {
     try { const f = await drive.getMeta(saved.id); if (!f.trashed && f.parents?.includes(parent)) folder = f; } catch (err) { if (err instanceof drive.AuthError) throw err; }
   }
   if (!folder) {
-    const candidates = await drive.list(`'${quote(parent)}' in parents and trashed = false and name = 'Hearthbook backups'`);
+    // v15.18: the Drive tidy renames 'Hearthbook backups' to 'Backups' (same id).
+    const candidates = [...await drive.list(`'${quote(parent)}' in parents and trashed = false and name = 'Backups'`), ...await drive.list(`'${quote(parent)}' in parents and trashed = false and name = 'Hearthbook backups'`)];
     folder = candidates.find((f) => f.ownedByMe && f.mimeType === 'application/vnd.google-apps.folder');
     if (!folder) {
-      try { folder = await drive.createFolder('Hearthbook backups', parent); }
+      try { folder = await drive.createFolder('Backups', parent); }
       catch (err) { throw new Error('Tap “Allow saving to the shared folder”, choose the existing Hearthbook folder, then try again. No backup was saved.'); }
     }
     await db.setMeta('driveBackupFolder', { id: folder.id, parent });

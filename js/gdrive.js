@@ -402,6 +402,14 @@ export function trash(id) {
     body: JSON.stringify({ trashed: true }),
   });
 }
+// v15.18: rename and/or move a file this app made (ids never change).
+export function updateFile(id, patch = {}, { addParents = '', removeParents = [] } = {}) {
+  const extra = (addParents ? `&addParents=${encodeURIComponent(addParents)}` : '') + (removeParents.length ? `&removeParents=${encodeURIComponent(removeParents.join(','))}` : '');
+  return call(`${API}/files/${id}?fields=${q('id,name,parents,trashed')}&supportsAllDrives=true${extra}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, timeoutMs: META_TIMEOUT,
+    body: JSON.stringify(patch),
+  });
+}
 export async function readBlob(id) {
   const res = await call(`${API}/files/${id}?alt=media&supportsAllDrives=true`, { raw: true, cache: 'no-store' });
   return res.blob();

@@ -330,7 +330,11 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
   grid.addEventListener('pointermove', (ev) => {
     if (press && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 10) { clearTimeout(press.timer); press = null; }
     if (!dragging) return;
-    const over = document.elementsFromPoint(ev.clientX, ev.clientY).map((n) => n.closest && n.closest('.section-tile')).find((n) => n && n !== dragging && grid.contains(n));
+    // v15.18: over the bottom bar (or top bar) keep the last good place; tiles
+    // showing through underneath the bar must not move the tile again.
+    const stack = document.elementsFromPoint(ev.clientX, ev.clientY);
+    if (stack.some((n) => n.closest && n.closest('.bottom-nav, .topbar'))) return;
+    const over = stack.map((n) => n.closest && n.closest('.section-tile')).find((n) => n && n !== dragging && grid.contains(n));
     if (!over) return;
     const tiles = [...grid.querySelectorAll('.section-tile')];
     if (tiles.indexOf(over) > tiles.indexOf(dragging)) over.after(dragging); else over.before(dragging);
@@ -348,6 +352,10 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     haptic();
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 400);
+    // v15.18: letting go over the bottom bar must not also tap a tab.
+    const swallow = (e) => { if (e.target.closest && e.target.closest('.bottom-nav')) { e.preventDefault(); e.stopPropagation(); } };
+    document.addEventListener('click', swallow, true);
+    setTimeout(() => document.removeEventListener('click', swallow, true), 400);
     onChange();
   };
   grid.addEventListener('pointerup', endDrag);
@@ -420,6 +428,28 @@ export function customiseCard(cardHead, onChange = () => {}) {
 // ---------------------------------------------------------------------
 // Settings: reminders (notifications) + house picture options.
 // ---------------------------------------------------------------------
+// v15.18: "Show N dates" — the dates the reminders cover (title, date, type),
+// folded until tapped.
+function datesToggle(getEntries) {
+  const box = el('div', { class: 'reminder-dates', id: 'reminders-dates', hidden: true });
+  const btn = el('button', { type: 'button', class: 'btn link-btn quiet small how-toggle', id: 'reminders-dates-toggle', 'aria-expanded': 'false', 'aria-controls': 'reminders-dates', hidden: true }, 'Show dates');
+  let n = 0;
+  const label = () => (box.hidden ? `Show ${n} date${n === 1 ? '' : 's'}` : `Hide ${n === 1 ? 'date' : 'dates'}`);
+  btn.addEventListener('click', () => { box.hidden = !box.hidden; btn.setAttribute('aria-expanded', String(!box.hidden)); btn.textContent = label(); });
+  Promise.resolve(getEntries ? getEntries() : []).then((entries) => {
+    const items = native.payload(entries || []).items;
+    n = items.length;
+    if (!n) return;
+    const fmt = (d) => new Date(d + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const kind = { renews: 'Insurance renewal', expires: 'Warranty ends', 'is due': 'Job due', 'deal ends': 'Mortgage deal ends' };
+    fill(box, el('ul', { class: 'reminder-date-list' }, items.map((x) => el('li', { 'data-id': x.i },
+      el('a', { href: `#/view/${encodeURIComponent(x.i)}` }, el('strong', {}, x.t)),
+      el('span', { class: 'small muted' }, `${fmt(x.d)} · ${kind[x.w] || x.w || 'Date'}`)))));
+    btn.hidden = false; btn.textContent = label();
+  }).catch(() => {});
+  return [btn, box];
+}
+
 export function remindersBlock({ compact = false, getEntries, rerender = () => {} } = {}) {
   // Installed Android app (app-v13+): the app's native part checks every
   // morning, even when Hearthbook is closed. We hand it the dates (native.js).
@@ -446,7 +476,7 @@ export function remindersBlock({ compact = false, getEntries, rerender = () => {
       btns.push(el('button', { type: 'button', class: 'btn', id: 'reminders-enable', onclick: async () => { haptic(); const r = await reminders.enable(); if (r === 'granted') await reminders.check(getEntries); rerender(); } }, icon('clock', 20), 'Remind me on this phone'));
     }
   }
-  return el('div', { class: 'reminders-block' }, status, note, el('div', { class: 'stack' }, btns));
+  return el('div', { class: 'reminders-block' }, status, el('div', { class: 'stack' }, btns), ...datesToggle(getEntries), note);
 }
 
 // The Android app version: hand the dates to the app straight from the tap
@@ -480,5 +510,5 @@ function appRemindersBlock({ compact, getEntries, rerender }) {
          setTimeout(rerender, 600);
        } }, 'Turn off')]
     : [el('button', { type: 'button', class: 'btn', id: 'reminders-enable', onclick: turnOn }, icon('clock', 20), 'Remind me on this phone')];
-  return el('div', { class: 'reminders-block' }, status, note, el('div', { class: 'stack' }, btns));
+  return el('div', { class: 'reminders-block' }, status, el('div', { class: 'stack' }, btns), ...datesToggle(getEntries), note);
 }

@@ -76,8 +76,37 @@ export async function updateMany(changed) {
 }
 export async function remove(id) {
   const tombs = { ...((await db.getMeta(TOMBS_KEY)) || {}), [id]: new Date().toISOString() };
-  await db.saveMetaValues({ [LIST_KEY]: (await list()).filter((m) => m.id !== id), [fileKey(id)]: null, [TOMBS_KEY]: tombs });
+  const rec = await get(id);
+  const trash = { ...((await db.getMeta(TRASH_KEY)) || {}) };
+  if (rec && rec.driveId) trash[id] = rec.driveId; // v15.18: bin its Drive PDF on next sync
+  await db.saveMetaValues({ [LIST_KEY]: (await list()).filter((m) => m.id !== id), [fileKey(id)]: null, [TOMBS_KEY]: tombs, [TRASH_KEY]: trash });
   notifyManualChange();
+}
+
+// v15.18 — remove ANY manual.
+// Built-in guides: a per-guide { hidden, at } marker (last write wins), shared
+// through this phone's own hearthbook-manuals-*.json (optional extra field;
+// older apps ignore it). Bring back = hidden:false with a newer time.
+export const BUILTIN_HIDE_KEY = 'hiddenBuiltinManuals';
+// Drive PDFs of manuals removed on this phone, waiting to be binned (Drive
+// trash, never deleted) by the next sync.
+export const TRASH_KEY = 'userManualTrash';
+export const validHide = (h) => Boolean(h && typeof h === 'object' && typeof h.hidden === 'boolean' && typeof h.at === 'string' && Number.isFinite(Date.parse(h.at)));
+export async function builtinHides() { return (await db.getMeta(BUILTIN_HIDE_KEY)) || {}; }
+export const hiddenIds = (hides) => Object.entries(hides || {}).filter(([, h]) => validHide(h) && h.hidden).map(([id]) => id);
+export function mergeHides(list) {
+  const out = Object.create(null);
+  for (const hides of list) for (const [id, h] of Object.entries(hides || {})) {
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || !validHide(h)) continue;
+    if (!out[id] || h.at > out[id].at || (h.at === out[id].at && h.hidden)) out[id] = { hidden: h.hidden, at: h.at };
+  }
+  return { ...out };
+}
+export async function setBuiltinHidden(id, hidden) {
+  const next = { ...(await builtinHides()), [id]: { hidden: Boolean(hidden), at: new Date().toISOString() } };
+  await db.setMeta(BUILTIN_HIDE_KEY, next);
+  notifyManualChange();
+  return next;
 }
 
 /** Manuals linked to an entry. */

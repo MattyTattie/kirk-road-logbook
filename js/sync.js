@@ -50,10 +50,11 @@
 
 import * as db from './db.js';
 import { syncManuals } from './sharedmanuals.js';
+import * as tidy from './drivetidy.js';
 import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
-export const APP_VERSION = '15.17'; // shown in Sync details; keep in step with sw.js CACHE_NAME
+export const APP_VERSION = '15.18'; // shown in Sync details; keep in step with sw.js CACHE_NAME
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;
@@ -416,6 +417,18 @@ async function syncCycle(interactive) {
     // files) — only ones the sync file doesn't point at. Never fatal.
     if (job.mapNow) {
       try { result.tidied = await tidyPhotoFiles(job); } catch (err) { console.info('sync: photo tidy skipped', err && err.message); }
+      // v15.18: folders by type + readable names. Moves only; never fatal.
+      try {
+        const now = await getConfig();
+        const mstate = (await db.getMeta('sharedManualFiles')) || {};
+        const bstate = (await db.getMeta('driveBackupFolder')) || {};
+        result.driveTidy = await tidy.tidyDrive({
+          parent: now.folder?.id, records: job.records, photos: job.mapNow, photoDriveId,
+          syncVersion: now.layout >= 3 ? 3 : 0, manuals: (await db.getMeta('userManuals')) || [],
+          manifestIds: job.manuals?.ids || [], force: job.uploads > 0, owner: Boolean(now.folder?.owner),
+          prefer: { other: now.photoFolderId, manuals: mstate.parent === now.folder?.id ? mstate.folder : null, backups: bstate.parent === now.folder?.id ? bstate.id : null },
+        });
+      } catch (err) { console.info('sync: Drive tidy skipped', err && err.message); }
     }
     const left = Math.max(0, job.pending.size - job.finished.size);
     result.photosMoved = job.finished.size;
@@ -616,7 +629,11 @@ async function uploadPhotoChecked(job, photoId, blob) {
     }
     let made = null;
     try {
-      const parent = await photoFolder(job);
+      // v15.18: straight into Receipts / Bills / … once those folders exist.
+      let parent = null;
+      try { parent = await tidy.folderFor(job.c.folder?.id, job.photoEntry?.get(photoId)); } catch {}
+      if (parent) { try { const f = await drive.getMeta(parent); if (f.trashed) parent = null; } catch (e) { if (e instanceof drive.AuthError) throw e; parent = null; } }
+      if (!parent) parent = await photoFolder(job);
       if (!parent) throw new Error('Choose the shared Hearthbook folder in Manuals before uploading photos.');
       made = await drive.uploadNewBlob(name, parent, blob, (blob && blob.type) || 'image/jpeg', { hearthbook: 'photo', photoId: String(photoId) }, { timeoutMs: PHOTO_TIMEOUT });
       if (made && made.id && (made.size == null || made.unchecked)) made = await drive.getMeta(made.id);
@@ -1000,6 +1017,9 @@ async function syncOnce(c, job = photoJob()) {
     // Photos the shared file should point at = those used by live entries.
     const used = new Set();
     for (const rec of Object.values(p.records)) for (const ph of rec.photos || []) used.add(ph.id);
+    job.records = p.records; // v15.18: photo → entry type for the Drive folders
+    job.photoEntry = new Map();
+    for (const rec of Object.values(p.records)) for (const ph of rec.photos || []) job.photoEntry.set(ph.id, rec);
     const previousDriveOnly = new Map(Object.entries(cache && cache.driveOnlyPhotos || {}));
     // Also treat remote thin Drive refs as "already published" so we don't
     // re-embed every photo on every sync after migration.

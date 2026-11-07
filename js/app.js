@@ -2321,7 +2321,8 @@ function wireSyncChip() {
 
 // When the other phone's changes arrive, redraw the screen, but never
 // while you're in the middle of filling in a form.
-addEventListener('hearthbook:synced', () => {
+addEventListener('hearthbook:synced', async () => {
+  await applyBuiltinHides();
   if (!/^#\/(new|edit|scan)/.test(location.hash) && !document.querySelector('.period-card.dragging')) {
     const y = scrollY;
     render().then(() => scrollTo(0, y));
@@ -2686,6 +2687,15 @@ async function clearBuiltinOffline(file) {
     }
   } catch {}
 }
+// v15.18: built-in guides removed on either phone disappear here too, and
+// any offline copy of them is cleared from this device.
+async function applyBuiltinHides() {
+  try {
+    const ids = userManuals.hiddenIds(await userManuals.builtinHides());
+    manuals.applyHidden(ids);
+    for (const id of ids) { const a = manuals.builtinById(id); if (a) for (const f of a.files) await clearBuiltinOffline(f.file); }
+  } catch {}
+}
 async function clearAllBuiltinOffline() {
   try { localStorage.removeItem(OFFLINE_KEY); } catch {}
   if (!('caches' in window)) return;
@@ -2709,6 +2719,7 @@ function roomToggles(all, selected, onChange, id) {
 const roomChips = (list) => (list && list.length ? el('p', { class: 'room-tags' }, list.map((r) => el('a', { class: 'room-tag', href: `#/room/${encodeURIComponent(r)}` }, icon('door', 12), r))) : null);
 
 async function renderManuals(focus = '') {
+  await applyBuiltinHides();
   if (offlineChosen()) warmManuals();
   const [mine, overrides, entries, stored, localFlags] = [
     await userManuals.list(), await rooms.getManualRooms(), await db.getAllEntries(), await rooms.getStored(),
@@ -2760,6 +2771,13 @@ async function renderManuals(focus = '') {
   let timer = null;
   const poll = () => { clearInterval(timer); timer = setInterval(async () => { if (!status.isConnected || (await showStatus())) clearInterval(timer); }, 2000); };
 
+  const removed = userManuals.hiddenIds(await userManuals.builtinHides()).map(manuals.builtinById).filter(Boolean);
+  const removedBox = removed.length ? el('details', { class: 'card manuals-removed', id: 'manuals-removed' },
+    el('summary', {}, `Removed guides (${removed.length})`),
+    el('ul', { class: 'plain-list' }, removed.map((a) => el('li', {}, el('span', {}, a.name),
+      el('button', { type: 'button', class: 'btn link-btn quiet small', id: `manual-restore-${a.id}`, onclick: async () => {
+        await userManuals.setBuiltinHidden(a.id, false); await applyBuiltinHides(); toast('Manual back'); render();
+      } }, 'Bring back'))))) : null;
   const groups = [];
   for (const a of manuals.APPLIANCES) { let g = groups.find((x) => x.name === a.group); if (!g) groups.push((g = { name: a.group, items: [] })); g.items.push(a); }
   const builtinCard = (a) => {
@@ -2805,7 +2823,16 @@ async function renderManuals(focus = '') {
           try { localStorage.removeItem(OFFLINE_KEY); } catch {}
           toast('Removed from this device');
           showStatus();
-        } }, 'Remove from this device')))));
+        } }, 'Remove from this device')))),
+      el('button', { type: 'button', class: 'btn link-btn quiet small manual-remove-builtin', id: `manual-remove-${a.id}`, 'data-appliance': a.id, onclick: async () => {
+        if (!confirm(`Remove the ${a.name} manual from Hearth?\n\nIt goes from both phones. You can bring it back at the bottom of Manuals.`)) return;
+        for (const f of a.files) await clearBuiltinOffline(f.file);
+        await userManuals.setBuiltinHidden(a.id, true);
+        await applyBuiltinHides();
+        toast('Manual removed');
+       
+        render();
+      } }, icon('trash', 14), 'Remove manual'));
   };
   const linkedTitles = (m) => (m.entryIds || []).map((id) => entries.find((e) => e.id === id)).filter(Boolean);
   const whereLine = (m, local) => {
@@ -2840,7 +2867,13 @@ async function renderManuals(focus = '') {
               const b = ev.currentTarget; b.disabled = true; b.textContent = 'Saving…';
               try { await saveOnThisPhone(m.id); toast('Saved on this device'); render(); }
               catch (err) { alert(db.storageError(err).message); b.disabled = false; b.textContent = 'Save on this device'; }
-            } }, 'Save on this device') : null)));
+            } }, 'Save on this device') : null),
+      el('button', { type: 'button', class: 'btn link-btn quiet small manual-remove-user', id: `manual-remove-${m.id}`, onclick: async () => {
+        if (!confirm(`Remove “${m.name}” from Hearth?\n\nIt goes from both phones${m.driveId ? ', and its PDF goes to the Drive bin (you can get it back from there for 30 days)' : ''}.`)) return;
+        await userManuals.remove(m.id);
+        toast('Manual removed');
+        render();
+      } }, icon('trash', 14), 'Remove manual')));
   };
 
   fill(app,
@@ -2857,7 +2890,8 @@ async function renderManuals(focus = '') {
     el('div', { class: 'manuals-offline' }, status, saveAll, clearAll),
     ...groups.map((g) => el('section', { class: 'group manuals-group' },
       el('div', { class: 'group-head' }, el('h2', {}, g.name)),
-      el('div', { class: 'manual-list' }, g.items.map(builtinCard))))
+      el('div', { class: 'manual-list' }, g.items.map(builtinCard)))),
+    removedBox
   );
   if (focus) { const t = document.getElementById(`manual-${focus}`); if (t) t.scrollIntoView({ block: 'center' }); }
   // Keep the status line up to date while the downloads run.
@@ -3652,6 +3686,37 @@ async function renderExport() {
     el('p', { class: 'small muted footnote' }, `${APP_NAME} · ${sync.getStatus().state === 'off' || sync.getStatus().state === 'unconfigured' ? 'everything stays on this phone' : 'synced through your own Google Drive'}`),
     el('p', { class: 'small muted footnote app-version', id: 'app-version' }, `Version ${sync.APP_VERSION}`)
   );
+  foldMoreCards(app);
+}
+
+// v15.18: every card on More keeps its status line (green when all is well)
+// and its buttons; the explaining goes behind a “How it works” button,
+// closed by default. Warnings and errors stay visible. Ids are kept, so
+// code that updates a paragraph still finds it.
+const KEEP_OPEN = /(^|\s)(ok|old|warn|warning|error|bad|alert|status|last-backup|reminders-status|sync-status)(\s|$)/;
+function foldCard(card) {
+  if (card.querySelector(':scope > .how-body')) return;
+  const notes = [...card.querySelectorAll('p')].filter((p) => !p.closest('.how-body, .reminder-dates, .seg, label, .remind-nudge')
+    && !KEEP_OPEN.test(p.className) && !/status|last-backup|sync-msg/.test(p.id || '') && !/sync-msg/.test(p.className) && !['status', 'alert'].includes(p.getAttribute('role')) && !p.closest('.sync-photo-access') && !/place-text/.test(p.id || '') && !p.querySelector('button, a, input, select')
+    && p.hidden !== true && (p.textContent || '').trim().length > 0);
+  if (!notes.length) return;
+  const id = `how-${card.id || Math.random().toString(36).slice(2, 8)}`;
+  const body = el('div', { class: 'how-body', id, hidden: true });
+  const btn = el('button', { type: 'button', class: 'btn link-btn quiet small how-toggle how-it-works', 'aria-expanded': 'false', 'aria-controls': id, onclick: () => {
+    body.hidden = !body.hidden; btn.setAttribute('aria-expanded', String(!body.hidden)); btn.textContent = body.hidden ? 'How it works' : 'Hide how it works';
+  } }, 'How it works');
+  for (const p of notes) body.appendChild(p);
+  card.append(btn, body);
+}
+function foldMoreCards(root) {
+  root.querySelectorAll('section.card').forEach(foldCard);
+  // Cards that redraw themselves (Drive sync) fold again after each redraw.
+  root.querySelectorAll('section.card').forEach((card) => {
+    if (card.__foldObs) return;
+    const obs = new MutationObserver(() => { if (!card.isConnected) { obs.disconnect(); return; } if (!card.querySelector(':scope > .how-body')) foldCard(card); });
+    obs.observe(card, { childList: true });
+    card.__foldObs = obs;
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -3780,7 +3845,8 @@ function renderReminderDetail(e) {
 
 // ---------------------------------------------------------------------
 window.addEventListener('hashchange', render);
-render();
+applyBuiltinHides().finally(render);
+addEventListener('hearthbook:manualchange', () => { applyBuiltinHides(); });
 
 // Inside the installed Android app: note what its native reminders hold
 // (native.js), and hand over changed dates after a tap.
