@@ -371,6 +371,7 @@ body.no-nav .bottom-nav { display: none; }
 .entry-title { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.01em; }
 .entry-sub, .entry-meter { color: var(--text-2); font-size: 13.5px; }
 .entry-meter { color: var(--amber); font-weight: 650; font-variant-numeric: tabular-nums; }
+.entry-meter .entry-meter-label { color: var(--text-2); font-weight: 500; }
 .entry-cost { font-weight: 720; white-space: nowrap; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .due { font-size: 13px; color: var(--text-2); }
 .due.soon { color: var(--soon); font-weight: 700; }
@@ -1334,9 +1335,12 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
      bills list stays one column on the left. */
   main:has(> #meter-insights) > #meter-insights, main:has(> #meter-insights) > #usage-card,
   main:has(> #usage-card) > #usage-card { float: right; clear: right; width: min(480px, 44%); margin-left: 28px; box-sizing: border-box; }
-  main:has(> #usage-card) #list.list { display: flex; flex-direction: column; gap: 8px; }
-  main:has(> #usage-card) > .search-row { max-width: none; }
-  main:has(> #usage-card)::after { content: ''; display: table; clear: both; }
+  /* v15.21: key on the summary too. Since v15.20 the usage card only shows
+     once usage is imported, so without it the bills fell back to the
+     two-column grid beside the float and were squashed to ~250px. */
+  main:has(> #meter-insights) #list.list, main:has(> #usage-card) #list.list { display: flex; flex-direction: column; gap: 8px; }
+  main:has(> #meter-insights) > .search-row, main:has(> #usage-card) > .search-row { max-width: none; }
+  main:has(> #meter-insights)::after, main:has(> #usage-card)::after { content: ''; display: table; clear: both; }
   .usage-card .card-head .btn { min-width: 110px; }
 
   /* Mortgage: cards in two columns, tables get room */

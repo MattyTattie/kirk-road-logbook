@@ -54,7 +54,7 @@ import * as tidy from './drivetidy.js';
 import * as drive from './gdrive.js';
 import { blobToDataURL, dataURLToBlob, isDriveRef, photoDriveId, photoEmbeddedData, packDrivePhoto } from './photos.js';
 
-export const APP_VERSION = '15.20'; // shown in Sync details; keep in step with sw.js CACHE_NAME
+export const APP_VERSION = '15.21'; // shown in Sync details; keep in step with sw.js CACHE_NAME
 export const INDEX_NAME = 'hearthbook-sync.json';
 export const LEGACY_BUCKETS = 8; // sync v1 kept photos in 8 extra files
 export const bucketName = (i) => `hearthbook-photos-${i + 1}.json`;

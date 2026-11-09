@@ -1022,3 +1022,8 @@ On a Mac the cards flow in independent-height columns with compact gaps. The man
 - **Electricity**: Scan a bill / Import usage at the top (`#meter-actions`); this year's bills shown, earlier years folded (`details#bills-year-<y>`, "Show 2025"). Bills tile: "11 bills this year · £1,278".
 - **Mortgage**: balance, deal end and mortgage-free key facts first (`#mortgage-keyfacts`); overpayment and what-if folded; statements list folded (`#mortgage-statements`).
 - Screens draw in order: a slow earlier screen can no longer paint over a newer one (`drawSeq` guard in `drawScreen`).
+
+## v15.21 — wide-screen Electricity list fix
+
+- On a computer-width window (1024px+) the Electricity page puts the summary/chart (`#meter-insights`, plus `#usage-card` once usage is imported) on the right and the bills in one column on the left. The one-column rule now keys on `#meter-insights` as well, so it no longer depends on the usage card being there.
+- Bill cards label the kWh figure as the **Meter reading** (the running total on the bill), so it isn't mistaken for the kWh used that period.

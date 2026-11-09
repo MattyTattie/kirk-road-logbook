@@ -1398,7 +1398,9 @@ function entryCard(e) {
       el('div', { class: 'entry-title' }, e.title),
       el('div', { class: 'entry-sub' }, details),
       e.meterValue !== null && e.meterValue !== undefined && e.meterValue !== ''
-        ? el('div', { class: 'entry-meter' }, `${fmtReading(e.meterValue)} ${e.meterUnit || ''}`)
+        // v15.21: it's the meter reading on the bill (a running total), not the
+        // kWh used that period, so say so.
+        ? el('div', { class: 'entry-meter' }, el('span', { class: 'entry-meter-label' }, 'Meter reading '), `${fmtReading(e.meterValue)} ${e.meterUnit || ''}`)
         : null,
       e.dueDate && !(isMort && days < 0) ? el('div', { class: 'due' + dueClass }, dueText(section.dueWord || 'due', days)) : null
     ),
