@@ -649,7 +649,7 @@ body.no-nav .bottom-nav { display: none; }
 .year-chip:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .chart-compare { fill: var(--text-3); opacity: 0.38; }
 .chart-bar.is-muted { opacity: 0.4; }
-.chart-legend { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-3); margin: 2px 0 6px; }
+.chart-legend { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--text-2); /* v15.19: was --text-3 (too faint) */ margin: 2px 0 6px; }
 .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
 .chart-legend i + i, .chart-legend i:not(:first-child) { margin-left: 8px; }
 .chart-legend .lg-now { background: var(--brand); }
@@ -1133,7 +1133,7 @@ a.year-chip { text-decoration: none; display: inline-flex; align-items: center; 
 .overpay-saved .ico { color: var(--good); flex: none; margin-top: 1px; }
 .overpay-saved small { color: var(--text-2); font-weight: 500; }
 .mortgage-chart-box { margin-top: 10px; }
-.chart-axis { fill: var(--text-3); font-size: 10px; }
+.chart-axis { fill: var(--text-2); font-size: 10px; } /* v15.19: darker */
 .mortgage-line { fill: none; stroke: var(--sky); stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
 .mortgage-dot { fill: var(--sky); }
 .mortgage-line.shadow { stroke: var(--soon); stroke-width: 2; stroke-dasharray: 5 4; }
@@ -1206,6 +1206,11 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
 .info-btn { flex: none; background: none; border: 0; padding: 2px 4px; margin: -2px 0 0 -4px; font: inherit; font-size: 15px; line-height: 1; color: var(--text-2); cursor: pointer; border-radius: 999px; min-width: 28px; min-height: 28px; }
 .info-note.open .info-btn { color: var(--brand); }
 .info-text { flex: 1; }
+/* v15.19: Year in review — the ⓘ sits at the end of the comparison line. */
+.review-compare-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 0 2px; margin: 8px 0 0; }
+.review-compare-row > p.small { margin: 0; }
+.review-compare-row .info-note { display: inline-flex; margin: 0; }
+.review-compare-row .info-note.open { display: flex; flex-basis: 100%; text-align: left; }
 
 /* =====================================================================
    v15.0 — EDF usage card + import screen (all screen sizes)

@@ -12,6 +12,7 @@
 // include PDF bytes, fetching from Drive when the local copy is missing.
 import * as db from './db.js';
 import * as drive from './gdrive.js';
+import { writeIntoFolder } from './drivetidy.js';
 import * as manuals from './usermanuals.js';
 import * as rooms from './rooms.js';
 
@@ -77,24 +78,25 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
 
   // One folder per uploader is fine: it MUST be inside the shared folder,
   // never quietly in that phone's private Drive root. All PDFs inherit sharing.
-  const folder = async () => {
-    if (state.folder) {
-      const f = await drive.getMeta(state.folder);
-      if ((f.parents || []).includes(parent) && !f.trashed) return f.id;
+  // v15.19: upload into the shared Manuals folder. The phone that joined
+  // uses the owner's Manuals folder when Google allows it, and never makes a
+  // second folder called "Manuals" (see drivetidy.writeIntoFolder).
+  const owner = !(c.folder && c.folder.owner === false);
+  const upload = async (name, blob, props) => {
+    let put;
+    try { put = await writeIntoFolder({ parent, kind: 'manuals', owner, remembered: state.folder || null, write: (id) => drive.uploadNewBlob(name, id, blob, 'application/pdf', props, { timeoutMs: 60000 }) }); }
+    catch (err) {
+      if (err.needsGrant) throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this device.');
+      throw err;
     }
-    const found = [...await drive.list(`'${quoted(parent)}' in parents and trashed = false and name = 'Manuals'`), ...await drive.list(`'${quoted(parent)}' in parents and trashed = false and name = 'Hearthbook manuals'`)];
-    // Only reuse an app-writable folder (owned by this account). Read-only
-    // access to somebody else's folder isn't permission to create children.
-    const own = found.find((f) => f.ownedByMe);
-    let f = own;
-    if (!f) {
-      try { f = await drive.createFolder('Manuals', parent); }
-      catch (err) { if (err instanceof drive.AuthError) throw err; throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this device.'); }
-    }
-    state.folder = f.id;
-    await db.setMeta(STATE, state);
-    return f.id;
+    if (state.folder !== put.folderId) { state.folder = put.folderId; await db.setMeta(STATE, state); }
+    return put.result;
   };
+  const lookIn = async () => {
+    const kids = (await drive.list(`'${quoted(parent)}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'`)).filter((f) => /^(Manuals|Hearthbook manuals)( \(second phone\))?$/.test(f.name || ''));
+    return [...new Set([state.folder, ...kids.map((f) => f.id)].filter(Boolean))];
+  };
+  let places = null;
   for (const [id, m] of Object.entries(merged.records)) {
     if (m.driveId) continue;
     const blob = await manuals.getFile(id);
@@ -104,11 +106,15 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
     if (saved) {
       try { const f = await drive.getMeta(saved); if (!f.trashed && Number(f.size) === blob.size) file = f; } catch (e) { if (e instanceof drive.AuthError) throw e; }
     }
-    const target = await folder();
-    if (!file) file = (await drive.list(`'${quoted(target)}' in parents and trashed = false and name = '${quoted(pdfName(id))}'`)).find((f) => Number(f.size) === blob.size);
+    if (!places) places = await lookIn();
+    // A finished upload from before (e.g. the phone stopped before saving its id).
+    for (const where of file ? [] : places) {
+      file = (await drive.list(`'${quoted(where)}' in parents and trashed = false and name = '${quoted(pdfName(id))}'`)).find((f) => f.ownedByMe && Number(f.size) === blob.size) || null;
+      if (file) break;
+    }
     if (!file) {
       if (!(await stillOn())) throw new Error('Sync was switched off.');
-      file = await drive.uploadNewBlob(pdfName(id), target, blob, 'application/pdf', { hearthbook: 'manual', manualId: id }, { timeoutMs: 60000 });
+      file = await upload(pdfName(id), blob, { hearthbook: 'manual', manualId: id });
       if (file && (file.size == null || file.unchecked)) file = await drive.getMeta(file.id);
       if (!file || Number(file.size) !== blob.size) throw new Error('Google Drive did not save the whole PDF. Try syncing again.');
     }

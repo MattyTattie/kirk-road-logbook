@@ -16,16 +16,25 @@ export const ZERO_FROM = '2026-10-01';
 export const ZERO_UNTIL = '2027-04-01'; // first day back at 5%
 
 const day = (iso) => String(iso || '').slice(0, 10);
+// v15.19: the wording is worked out from ZERO_FROM / ZERO_UNTIL, so a change
+// to the dates is one edit here (no dates typed into the sentences).
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const parts = (iso) => { const d = new Date(`${iso}T12:00:00Z`); return { d: d.getUTCDate(), m: MON[d.getUTCMonth()], y: d.getUTCFullYear() }; };
+const dayBefore = (iso) => new Date(Date.parse(`${iso}T12:00:00Z`) - 86400_000).toISOString().slice(0, 10);
+const words = (iso, year = true) => { const p = parts(iso); return `${p.d} ${p.m}${year ? ' ' + p.y : ''}`; };
+const Z0 = words(ZERO_FROM), Z0short = words(ZERO_FROM, false), PRE = words(dayBefore(ZERO_FROM), false);
+const ZLAST = words(dayBefore(ZERO_UNTIL)), Z1 = words(ZERO_UNTIL), Z1short = words(ZERO_UNTIL, false);
+const RANGE = `${parts(ZERO_FROM).m}–${parts(dayBefore(ZERO_UNTIL)).m}`;
 
 /** { kind: 'vat5' | 'none' | 'into-none' | 'out-of-none', text } for a period. */
 export function vatFor(fromIso, toIso) {
   const a = day(fromIso), b = day(toIso);
   const startsZero = a >= ZERO_FROM && a < ZERO_UNTIL;
   const endsZero = b > ZERO_FROM && b <= ZERO_UNTIL; // last day used is the day before b
-  if (startsZero && endsZero) return { kind: 'none', short: 'no VAT', text: 'No VAT (0% until 31 Mar 2027).' };
-  if (!startsZero && endsZero && a < ZERO_FROM) return { kind: 'into-none', short: '5% VAT to 30 Sep', text: '5% VAT added up to 30 Sep, then no VAT from 1 Oct 2026.' };
-  if (startsZero && b > ZERO_UNTIL) return { kind: 'out-of-none', short: '5% VAT from 1 Apr', text: 'No VAT up to 31 Mar 2027, then 5% VAT added from 1 Apr 2027.' };
-  if (a < ZERO_FROM && b > ZERO_UNTIL) return { kind: 'into-none', short: '5% VAT except Oct–Mar', text: '5% VAT added, except 1 Oct 2026 – 31 Mar 2027 (no VAT then).' };
+  if (startsZero && endsZero) return { kind: 'none', short: 'no VAT', text: `No VAT (0% until ${ZLAST}).` };
+  if (!startsZero && endsZero && a < ZERO_FROM) return { kind: 'into-none', short: `5% VAT to ${PRE}`, text: `5% VAT added up to ${PRE}, then no VAT from ${Z0}.` };
+  if (startsZero && b > ZERO_UNTIL) return { kind: 'out-of-none', short: `5% VAT from ${Z1short}`, text: `No VAT up to ${ZLAST}, then 5% VAT added from ${Z1}.` };
+  if (a < ZERO_FROM && b > ZERO_UNTIL) return { kind: 'into-none', short: `5% VAT except ${RANGE}`, text: `5% VAT added, except ${Z0} – ${ZLAST} (no VAT then).` };
   return { kind: 'vat5', short: '5% VAT', text: 'Rates plus 5% VAT.' };
 }
 

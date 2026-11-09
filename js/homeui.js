@@ -138,7 +138,8 @@ export function houseCard(everything, { ask: askOn = true } = {}) {
 // ---------------------------------------------------------------------
 // Ask Hearthbook
 // ---------------------------------------------------------------------
-const EXAMPLES = ['When does the car insurance renew?', 'Electricity bills 2026', 'Receipts this year', 'When does the warranty expire?'];
+// v15.19: the example year follows the clock (was a typed-in 2026).
+const EXAMPLES = ['When does the car insurance renew?', `Electricity bills ${new Date().getFullYear()}`, 'Receipts this year', 'When does the warranty expire?'];
 
 function answerCard(answer) {
   if (!answer) return null;
@@ -294,7 +295,11 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
       el('button', { type: 'button', class: 'tray-chip', 'data-show': s.id, 'aria-label': `Show ${s.label}`, 'data-tone': s.tone }, icon('plus', 14), s.label)));
   }
   function setEditing(on) {
+    const was = editing;
     editing = on;
+    box.dataset.editing = on ? 'yes' : '';
+    // v15.19: a sync that arrived while editing redraws Home once you're done.
+    if (was && !on) setTimeout(() => dispatchEvent(new CustomEvent('hearthbook:tiles-idle')), 0);
     box.classList.toggle('editing', on);
     editBtn.textContent = on ? 'Done' : 'Edit';
     editBtn.setAttribute('aria-pressed', String(on));
@@ -327,23 +332,54 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     try { dragging.setPointerCapture(ev.pointerId); } catch {}
     ev.preventDefault();
   });
-  grid.addEventListener('pointermove', (ev) => {
-    if (press && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 10) { clearTimeout(press.timer); press = null; }
-    if (!dragging) return;
+  let lastPt = null, scrollRaf = null;
+  const moveTo = (x, y, pointerId) => {
     // v15.18: over the bottom bar (or top bar) keep the last good place; tiles
     // showing through underneath the bar must not move the tile again.
-    const stack = document.elementsFromPoint(ev.clientX, ev.clientY);
+    const stack = document.elementsFromPoint(x, y);
     if (stack.some((n) => n.closest && n.closest('.bottom-nav, .topbar'))) return;
     const over = stack.map((n) => n.closest && n.closest('.section-tile')).find((n) => n && n !== dragging && grid.contains(n));
     if (!over) return;
     const tiles = [...grid.querySelectorAll('.section-tile')];
     if (tiles.indexOf(over) > tiles.indexOf(dragging)) over.after(dragging); else over.before(dragging);
-    try { dragging.setPointerCapture(ev.pointerId); } catch {} // moving the tile drops the capture (v14.8)
+    if (pointerId != null) { try { dragging.setPointerCapture(pointerId); } catch {} } // moving the tile drops the capture (v14.8)
+  };
+  // v15.19: near the top or bottom edge (just above the bottom bar / below
+  // the top bar) the page scrolls by itself, so a tile can reach a spot that
+  // was off screen. Faster the closer you get; stops at the end of the page.
+  const EDGE = 56;
+  const edges = () => ({
+    top: ((document.querySelector('.topbar') || {}).getBoundingClientRect?.().bottom || 0) + EDGE,
+    bottom: ((document.querySelector('.bottom-nav') || {}).getBoundingClientRect?.().top || innerHeight) - EDGE,
+  });
+  const autoScroll = () => {
+    scrollRaf = null;
+    if (!dragging || !lastPt) return;
+    const { top, bottom } = edges();
+    let dy = 0;
+    if (lastPt.y < top) dy = -Math.ceil((top - lastPt.y) / 3);
+    else if (lastPt.y > bottom) dy = Math.ceil((lastPt.y - bottom) / 3);
+    dy = Math.max(-20, Math.min(20, dy));
+    if (!dy) return;
+    const before = scrollY;
+    window.scrollBy(0, dy);
+    if (scrollY === before) return; // top or end of the page
+    moveTo(lastPt.x, lastPt.y, lastPt.id);
+    scrollRaf = requestAnimationFrame(autoScroll);
+  };
+  grid.addEventListener('pointermove', (ev) => {
+    if (press && Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 10) { clearTimeout(press.timer); press = null; }
+    if (!dragging) return;
+    lastPt = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
+    moveTo(ev.clientX, ev.clientY, ev.pointerId);
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(autoScroll);
   });
   const endPress = () => { if (press) { clearTimeout(press.timer); press = null; } };
   const endDrag = () => {
     endPress();
     if (!dragging) return;
+    if (scrollRaf) { cancelAnimationFrame(scrollRaf); scrollRaf = null; }
+    lastPt = null;
     dragging.classList.remove('dragging');
     dragging = null;
     const visible = [...grid.querySelectorAll('.section-tile')].map((t) => t.dataset.section);
@@ -430,12 +466,16 @@ export function customiseCard(cardHead, onChange = () => {}) {
 // ---------------------------------------------------------------------
 // v15.18: "Show N dates" — the dates the reminders cover (title, date, type),
 // folded until tapped.
+// v15.19: folds that are open stay open when the screen redraws (e.g. after
+// a sync). Per page load only; nothing saved.
+export const openFolds = new Set();
 function datesToggle(getEntries) {
-  const box = el('div', { class: 'reminder-dates', id: 'reminders-dates', hidden: true });
+  const box = el('div', { class: 'reminder-dates', id: 'reminders-dates', hidden: !openFolds.has('reminders-dates') });
   const btn = el('button', { type: 'button', class: 'btn link-btn quiet small how-toggle', id: 'reminders-dates-toggle', 'aria-expanded': 'false', 'aria-controls': 'reminders-dates', hidden: true }, 'Show dates');
   let n = 0;
   const label = () => (box.hidden ? `Show ${n} date${n === 1 ? '' : 's'}` : `Hide ${n === 1 ? 'date' : 'dates'}`);
-  btn.addEventListener('click', () => { box.hidden = !box.hidden; btn.setAttribute('aria-expanded', String(!box.hidden)); btn.textContent = label(); });
+  btn.setAttribute('aria-expanded', String(!box.hidden));
+  btn.addEventListener('click', () => { box.hidden = !box.hidden; if (box.hidden) openFolds.delete('reminders-dates'); else openFolds.add('reminders-dates'); btn.setAttribute('aria-expanded', String(!box.hidden)); btn.textContent = label(); });
   Promise.resolve(getEntries ? getEntries() : []).then((entries) => {
     const items = native.payload(entries || []).items;
     n = items.length;

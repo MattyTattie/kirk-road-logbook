@@ -43,7 +43,7 @@ import * as sync from './sync.js';
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
 import { countUp, transition, haptic, reducedMotion } from './motion.js';
-import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock, placePicker } from './homeui.js';
+import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock, placePicker, openFolds } from './homeui.js';
 import { search as askSearch } from './search.js';
 import { classify, addYears } from './autosort.js';
 import * as manuals from './manuals.js';
@@ -2129,13 +2129,13 @@ async function syncCard(cardHead) {
   const msg = syncMsg ? el('p', { class: 'sync-msg' + (syncMsg.bad ? ' bad' : ''), id: 'sync-msg', role: 'status' }, syncMsg.text) : null;
 
   if (st.state === 'unconfigured') {
-    add(head, el('p', {}, 'Off. Everything stays on this phone.'), helpLine, help,
+    add(head, el('p', { class: 'status sync-off', id: 'sync-off-line' }, 'Off. Everything stays on this phone.'), helpLine, help,
       el('p', { class: 'small muted', id: 'sync-unconfigured' }, 'Not set up in this copy of the app yet: it needs a free Google Cloud “client ID” first (HOW-IT-WORKS.md, section 9).'),
       el('button', { type: 'button', class: 'btn secondary', disabled: true }, 'Connect Google account'));
     return card;
   }
   if (st.state === 'off') {
-    add(head, el('p', {}, 'Off. Everything stays on this phone.'), helpLine, help,
+    add(head, el('p', { class: 'status sync-off', id: 'sync-off-line' }, 'Off. Everything stays on this phone.'), helpLine, help,
       el('button', { type: 'button', class: 'btn', id: 'sync-connect', onclick: (ev) => busyBtn(ev.currentTarget, 'Opening Google…', async () => {
         await sync.connect();
         syncMsg = { text: sync.getStatus().state === 'nofolder' ? 'Signed in. Now start a shared logbook, or join one.' : 'Connected.' };
@@ -2181,7 +2181,8 @@ async function syncCard(cardHead) {
     el('ul', { class: 'sync-facts' },
       el('li', {}, el('span', {}, 'Signed in as'), el('span', { id: 'sync-account' }, who)),
       el('li', {}, el('span', {}, 'Shared folder'), el('span', { id: 'sync-folder' }, `${st.folderName || 'Hearthbook'}${st.owner ? ' (yours)' : ' (shared with you)'}`)),
-      st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, sizeLabel(st.fileSize))) : null),
+      st.fileSize ? el('li', {}, el('span', {}, 'Shared file'), el('span', { id: 'sync-size' }, sizeLabel(st.fileSize))) : null,
+      driveTidyText(await db.getMeta('driveTidy')) ? el('li', {}, el('span', {}, 'Drive folders tidied'), el('span', { id: 'sync-tidy' }, driveTidyText(await db.getMeta('driveTidy')))) : null),
     // v13: a gentle heads-up as the one shared file (photos included) grows.
     st.fileSize >= SIZE_WARN ? el('p', { class: 'sync-size-warn small', id: 'sync-size-warn', role: 'note' }, icon('alert', 16),
       `The shared file is ${(st.fileSize / 1048576).toFixed(1)} MB. Newer Hearth versions keep photos as separate Drive files so this stays small — tap Sync now to shrink it. It still syncs fine either way.`) : null,
@@ -2250,10 +2251,20 @@ async function syncCard(cardHead) {
 
 // "Sync details": what Google's picker returned and which Drive files this
 // app can open, so a problem can be diagnosed from a screenshot.
+// v15.19: the last Drive tidy (js/drivetidy.js) in plain words, e.g.
+// "9 Nov 2026, 08:30 · 41 moved, 2 old files binned".
+function driveTidyText(t) {
+  if (!t || !t.at || !t.last) return '';
+  const when = new Date(t.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const { moved = 0, binned = 0, failed = 0, skipped = 0 } = t.last;
+  const bits = [moved ? `${moved} moved` : 'nothing to move', binned ? `${binned} old file${binned === 1 ? '' : 's'} binned` : '', skipped ? `${skipped} left where ${skipped === 1 ? 'it is' : 'they are'}` : '', failed ? `${failed} to retry` : ''].filter(Boolean);
+  return `${when} · ${bits.join(', ')}`;
+}
 async function syncDetails() {
   const box = el('pre', { class: 'sync-diag', id: 'sync-diag' });
   const loadDiag = async () => {
     const [c, d, st] = [await sync.getConfig(), await sync.getDiag(), sync.getStatus()];
+    const tidyLine = driveTidyText(await db.getMeta('driveTidy'));
     const short = (id) => (!id ? '—' : String(id).length > 16 ? String(id).slice(0, 10) + '…' + String(id).slice(-4) : String(id));
     const lines = [
       `app version: ${sync.APP_VERSION}`,
@@ -2264,6 +2275,7 @@ async function syncDetails() {
       `layout: ${c.files && c.files.index ? "v" + (c.layout || 1) : "—"} · file: ${short(c.files && c.files.index)}`,
       `old photo files: ${c.files && c.files.buckets ? c.files.buckets.filter(Boolean).length + ' of 8' : 'none'}`,
       `last synced: ${c.lastSync ? new Date(c.lastSync).toLocaleString('en-GB') : 'never'}`,
+      `drive folders tidied: ${tidyLine || 'not yet'}`,
       d.picker ? `picker: ${d.picker.error ? 'error ' + d.picker.error : `${d.picker.action}, ${d.picker.count} file(s)`}` : 'picker: not used yet',
       ...((d.picker && d.picker.docs) || []).map((x) => `  · ${x.name || '(no name)'} ${short(x.id)} ${x.mimeType || ''}${x.resourceKey ? ' +key' : ''}`),
       ...((d.checks || []).map((x) => `  check ${x.name || short(x.id)}: ${x.ok ? 'OK' : 'FAILED ' + x.error}`)),
@@ -2275,7 +2287,9 @@ async function syncDetails() {
     box.textContent = lines.join('\n');
   };
   await loadDiag();
-  return el('details', { class: 'sync-more', id: 'sync-details' },
+  // v15.19: stays open when the sync card redraws (e.g. a sync finishing).
+  const keepOpen = (d) => { if (openFolds.has(d.id)) d.open = true; d.addEventListener('toggle', () => { if (d.open) openFolds.add(d.id); else openFolds.delete(d.id); }); return d; };
+  return keepOpen(el('details', { class: 'sync-more', id: 'sync-details' },
     el('summary', {}, 'Sync details (for troubleshooting)'),
     box,
     el('button', { type: 'button', class: 'btn secondary small', id: 'sync-diag-refresh', onclick: async (ev) => {
@@ -2284,7 +2298,7 @@ async function syncDetails() {
       try { await sync.refreshDiag(); } catch (err) { box.textContent += `\nrefresh failed: ${err.message}`; }
       await loadDiag();
       btn.disabled = false;
-    } }, 'Refresh details'));
+    } }, 'Refresh details')));
 }
 
 // The little chip in the top bar: "On this phone", or the sync status.
@@ -2321,12 +2335,28 @@ function wireSyncChip() {
 
 // When the other phone's changes arrive, redraw the screen, but never
 // while you're in the middle of filling in a form.
+// v15.19: not while Home's tiles are being edited or dragged either (that
+// cancelled the drag); the redraw waits until you tap Done. The redraw keeps
+// your place (no jump to the top and back).
+let syncRedrawPending = false;
+const redrawBusy = () => document.querySelector('.tiles-group.editing, .section-tile.dragging, .period-card.dragging');
+async function syncRedraw() {
+  const y = scrollY;
+  holdScroll = true;
+  try { await render(); } finally { holdScroll = false; }
+  scrollTo(0, y);
+}
 addEventListener('hearthbook:synced', async () => {
   await applyBuiltinHides();
-  if (!/^#\/(new|edit|scan)/.test(location.hash) && !document.querySelector('.period-card.dragging')) {
-    const y = scrollY;
-    render().then(() => scrollTo(0, y));
-  }
+  if (/^#\/(new|edit|scan)/.test(location.hash)) return;
+  if (redrawBusy()) { syncRedrawPending = true; return; }
+  syncRedrawPending = false;
+  await syncRedraw();
+});
+addEventListener('hearthbook:tiles-idle', () => {
+  if (!syncRedrawPending || redrawBusy() || /^#\/(new|edit|scan)/.test(location.hash)) return;
+  syncRedrawPending = false;
+  syncRedraw();
 });
 
 // "£1,200.50" -> 1200.5 ; "" -> null ; "abc" -> undefined (invalid)
@@ -3493,10 +3523,13 @@ async function renderYearReview(year) {
       el('p', { class: 'review-value', id: 'review-value' }, money(r.total)),
       r.prevTotal !== null && r.change !== null ? resultBox(Math.abs(r.change) < 1 ? 'plain' : r.change < 0 ? 'good' : 'warn',
         Math.abs(r.change) < 1 ? `About the same as ${year - 1}` : `${money(Math.abs(r.change))} ${r.change < 0 ? 'less' : 'more'} than ${year - 1}${r.partial ? ' by this date' : ''}`, null, { id: 'review-outcome' }) : null,
-      el('p', { class: 'small', id: 'review-compare' }, r.prevTotal !== null
-        ? [change(r.change, `${year - 1}${r.partial ? ' (same dates)' : ''}`), ` · ${money(r.prevTotal)} in ${year - 1}${r.partial ? ' by then' : ''}`]
-        : `Nothing logged in ${year - 1} to compare with.`),
-      infoNote(`Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills by date paid, as charged.`, { id: 'review-basis', cls: 'small muted', label: 'What this total counts' }),
+      // v15.19: the box above already says how it compares, so this line just
+      // gives last year's figure, with the ⓘ on the same line (no lone icon).
+      el('div', { class: 'review-compare-row' },
+        el('p', { class: 'small', id: 'review-compare' }, r.prevTotal !== null
+          ? (r.change !== null ? `${money(r.prevTotal)} in ${year - 1}${r.partial ? ' by the same date' : ''}` : [change(r.change, String(year - 1)), ` ${money(r.prevTotal)} in ${year - 1}`])
+          : `Nothing logged in ${year - 1} to compare with.`),
+        infoNote(`Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills by date paid, as charged.`, { id: 'review-basis', cls: 'small muted', label: 'What this total counts' })),
       r.categories.length ? moreInfo([`Each section’s total for ${year}${r.partial ? ' so far' : ''}, with ${year - 1}${r.partial ? ' to the same date' : ''} beside it.`], { id: 'review-more', rows: [
         ...r.categories.map((c) => [c.label, `${money(c.total)}${c.prev !== null && c.prev !== undefined ? ` (${money(c.prev)})` : ''}`]),
         ['Total', `${money(r.total)}${r.prevTotal !== null ? ` (${money(r.prevTotal)})` : ''}`]] }) : null,
@@ -3639,7 +3672,7 @@ async function renderExport() {
         } catch (err) { alert('Backup not saved: ' + db.storageError(err).message); }
         renderExport();
       } }, icon('backup', 20), 'Save backup to Drive'),
-      el('p', { class: 'small muted', id: 'drive-backup-note' }, 'Saves a dated file in Hearthbook backups in your shared Drive folder. Keeps the newest 3 app-made backups it can manage; never removes your own files.'),
+      el('p', { class: 'small muted', id: 'drive-backup-note' }, 'Saves a dated file in the Backups folder inside your shared Hearthbook Drive folder. Keeps one from each of the last 12 months, plus every one from the past week. Only old backups Hearth made are removed, never your own files.'),
       (await sync.getConfig()).enabled ? el('p', { class: 'small muted', id: 'backup-folder-hint' }, 'If Drive says it can’t save, use “Allow saving to the shared Drive folder” on the Drive sync card below.') : null,
       fileInput),
     await syncCard(cardHead),
@@ -3699,13 +3732,22 @@ function foldCard(card) {
   const notes = [...card.querySelectorAll('p')].filter((p) => !p.closest('.how-body, .reminder-dates, .seg, label, .remind-nudge')
     && !KEEP_OPEN.test(p.className) && !/status|last-backup|sync-msg/.test(p.id || '') && !/sync-msg/.test(p.className) && !['status', 'alert'].includes(p.getAttribute('role')) && !p.closest('.sync-photo-access') && !/place-text/.test(p.id || '') && !p.querySelector('button, a, input, select')
     && p.hidden !== true && (p.textContent || '').trim().length > 0);
-  if (!notes.length) return;
-  const id = `how-${card.id || Math.random().toString(36).slice(2, 8)}`;
-  const body = el('div', { class: 'how-body', id, hidden: true });
-  const btn = el('button', { type: 'button', class: 'btn link-btn quiet small how-toggle how-it-works', 'aria-expanded': 'false', 'aria-controls': id, onclick: () => {
-    body.hidden = !body.hidden; btn.setAttribute('aria-expanded', String(!body.hidden)); btn.textContent = body.hidden ? 'How it works' : 'Hide how it works';
-  } }, 'How it works');
+  // v15.19: a card's own "How it works ›" drop-down (Drive sync) joins the
+  // fold, so there's one "How it works" per card, not two.
+  const howDetails = [...card.querySelectorAll('details')].filter((x) => !x.closest('.how-body') && /^How it works/.test((x.querySelector('summary')?.textContent || '').trim()));
+  if (!notes.length && !howDetails.length) return;
+  // v15.19: a stable id per card (its id, else its title), so an open fold
+  // stays open when More redraws (e.g. after a sync).
+  const key = card.id || (card.querySelector('.card-title')?.textContent || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'card';
+  const id = `how-${key}`;
+  const open = openFolds.has(id);
+  const body = el('div', { class: 'how-body', id, hidden: !open });
+  const btn = el('button', { type: 'button', class: 'btn link-btn quiet small how-toggle how-it-works', 'aria-expanded': String(open), 'aria-controls': id, onclick: () => {
+    body.hidden = !body.hidden; if (body.hidden) openFolds.delete(id); else openFolds.add(id);
+    btn.setAttribute('aria-expanded', String(!body.hidden)); btn.textContent = body.hidden ? 'How it works' : 'Hide how it works';
+  } }, open ? 'Hide how it works' : 'How it works');
   for (const p of notes) body.appendChild(p);
+  for (const x of howDetails) { body.append(...[...x.childNodes].filter((n) => n.nodeName !== 'SUMMARY')); x.remove(); }
   card.append(btn, body);
 }
 function foldMoreCards(root) {
@@ -3844,6 +3886,9 @@ function renderReminderDetail(e) {
 // Start-up
 
 // ---------------------------------------------------------------------
+// v15.19: folds (How it works, Show N dates) stay open across redraws of the
+// same screen, and start closed again when you go to another screen.
+window.addEventListener('hashchange', () => openFolds.clear());
 window.addEventListener('hashchange', render);
 applyBuiltinHides().finally(render);
 addEventListener('hearthbook:manualchange', () => { applyBuiltinHides(); });
