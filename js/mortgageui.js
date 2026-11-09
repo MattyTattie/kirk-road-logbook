@@ -192,6 +192,25 @@ function freeHeadline(on, sh, pace, con, s) {
     el('p', { class: 'rb-sub' }, 'Paying the normal monthly payment'));
 }
 
+// v15.20: a fold that stays open when the page redraws (per page load).
+const openMortFolds = new Set();
+function fold(id, title, body) {
+  return el('details', { class: 'mortgage-fold', id, open: openMortFolds.has(id) || undefined,
+    ontoggle: (ev) => { if (ev.currentTarget.open) openMortFolds.add(id); else openMortFolds.delete(id); } },
+    el('summary', {}, title), body);
+}
+// v15.20: deal end and mortgage-free date right under the balance.
+function keyFacts(s, on, sh) {
+  const d = s.deal, pace = s.pace, con = s.contractual;
+  const free = on && sh ? { date: sh.mortgageFree, how: 'without overpayments (estimate)' }
+    : pace && s.overpays ? { date: pace.last, how: 'at your current pace' }
+    : con ? { date: con.last, how: 'contractual payments' } : s.originalEnd ? { date: s.originalEnd, how: 'original term' } : null;
+  if (!d.end && !free) return null;
+  return el('div', { class: 'mortgage-keyfacts', id: 'mortgage-keyfacts' },
+    d.end ? el('div', { class: 'kf', id: 'kf-deal-end' }, el('span', { class: 'kf-label' }, 'Deal ends'), el('strong', {}, niceDate(d.end)), el('small', {}, inTime(d.end))) : null,
+    free ? el('div', { class: 'kf', id: 'kf-free' }, el('span', { class: 'kf-label' }, 'Mortgage-free'), el('strong', {}, longMonth(free.date)), el('small', {}, free.how)) : null);
+}
+
 export function overview(everything, { saveSetup = null } = {}) {
   const s = M.summary(everything);
   const wrap = el('div', { class: 'mortgage-overview', id: 'mortgage-overview' });
@@ -218,6 +237,7 @@ export function overview(everything, { saveSetup = null } = {}) {
       on ? el('p', { class: 'overpay-saved', id: 'overpay-saved' }, icon('sparkle', 16),
         el('span', {}, `You owe ${money(sh.owesLess)} less`, sh.interestSaved !== null ? ` and save ${money(sh.interestSaved)} interest` : '', ' thanks to overpayments',
           el('small', {}, ` (estimate, to ${niceDate(s.asAt)})`))) : null,
+      keyFacts(s, on, sh),
       s.points.length > 1 ? balanceChart(s.points, on ? sh.points : null) : null,
       on ? el('p', { class: 'chart-legend', id: 'mortgage-legend' }, el('i', { class: 'lg-real' }), 'With overpayments', el('i', { class: 'lg-shadow' }), 'Without (estimate)') : null);
 
@@ -270,8 +290,9 @@ export function overview(everything, { saveSetup = null } = {}) {
       freeHeadline(on, sh, pace, con, s),
       el('div', { class: 'mrows' }, freeRows),
       infoNote(`Estimates from the ${niceDate(s.asAt)} balance, if the ${d.rate}% rate carried on.`, { id: 'free-note', cls: 'small muted', label: 'How these dates are worked out' }),
-      s.setup && saveSetup ? overpayBox(s, saveSetup) : null,
-      pace ? whatIfBox(s) : null) : null;
+      // v15.20: the sums you play with are folded; the dates above stay open.
+      s.setup && saveSetup ? fold('overpay-fold', 'Change your monthly overpayment', overpayBox(s, saveSetup)) : null,
+      pace ? fold('whatif-fold', 'What if you paid more?', whatIfBox(s)) : null) : null;
 
     // v14.8: what went in each year (normal payments and overpayments)
     const paid = M.paidYears(everything);

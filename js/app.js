@@ -43,9 +43,10 @@ import * as sync from './sync.js';
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
 import { countUp, transition, haptic, reducedMotion } from './motion.js';
-import { houseCard, askBox, tourCard, tilesSection, customiseCard, remindersBlock, placePicker, openFolds } from './homeui.js';
+import { houseCard, askBox, tourCard, tilesSection, remindersBlock, placePicker, openFolds } from './homeui.js';
 import { search as askSearch } from './search.js';
 import { classify, addYears } from './autosort.js';
+import * as fh from './formhelp.js'; // v15.20
 import * as manuals from './manuals.js';
 import * as native from './native.js';
 import * as rooms from './rooms.js';
@@ -151,9 +152,18 @@ async function render() {
   const y = goingBack ? scrollMemory.get(location.hash) : undefined;
   if (y) requestAnimationFrame(() => window.scrollTo(0, Math.min(y, document.documentElement.scrollHeight)));
 }
+// v15.20: the bill form by hand is "#/new/meter/form". A bare "#/new/meter"
+// (the Android "Add electricity bill" shortcut, old bookmarks) opens the
+// bill scanner instead — it has "Add bill by hand instead" if needed.
+const formHash = (type) => (type === 'meter' ? '#/new/meter/form' : `#/new/${type}`);
+// v15.20: if a slow screen finishes after a newer one has already drawn
+// (two quick taps), it would cover it; draw the current screen again.
+let drawSeq = 0, drawnSeq = 0;
 async function drawScreen(parts, viaTransition) {
+  const seq = ++drawSeq;
   releasePhotoURLs();
   const [page, arg] = parts;
+  if (page === 'new' && arg === 'meter' && !parts[2] && !pendingScan) { location.replace('#/scan/meter'); return; }
   if (page !== 'manual') { clearPdfChrome(); if (pdfView) { try { pdfView.destroy(); } catch {} pdfView = null; } }
   if (!holdScroll) window.scrollTo(0, 0);
   setChrome(page, arg);
@@ -164,6 +174,7 @@ async function drawScreen(parts, viaTransition) {
     else if (page === 'search') renderSearch(arg ? decodeURIComponent(arg) : '');
     else if (page === 'edit') await renderForm(null, arg);
     else if (page === 'view') await renderDetail(arg);
+    else if (page === 'export' && arg === 'settings') await renderSettings();
     else if (page === 'export') await renderExport();
     else if (page === 'list') await renderList(arg || 'all', /^\d{4}$/.test(parts[2] || '') ? Number(parts[2]) : 0);
     else if (page === 'manuals') await renderManuals(arg ? decodeURIComponent(arg) : '');
@@ -185,6 +196,8 @@ async function drawScreen(parts, viaTransition) {
     console.error(err);
     fill(app, el('div', { class: 'card error' }, 'Something went wrong: ' + err.message));
   }
+  if (seq < drawnSeq) { render(); return; }
+  drawnSeq = seq;
   // Replay the gentle "slide in" animation for the new screen.
   app.classList.remove('screen-in');
   if (viaTransition || holdScroll) return;
@@ -599,6 +612,8 @@ async function renderHome() {
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
   const dash = el('div', { class: 'dash', id: 'dashboard' });
   const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
+  // v15.20: one tap from Home to the scanner (was + → Scan receipt or bill).
+  const scanBtn = el('a', { class: 'btn home-scan', id: 'home-scan', href: '#/scan' }, icon('scan', 20), 'Scan a receipt or bill');
   function redrawHero() { fill(hero.querySelector('.hero-split'), ...heroChips()); }
 
   const comingUp = soonList.length
@@ -612,7 +627,7 @@ async function renderHome() {
 
   if (!prefs.homeTidy()) {
     // The v13.9 layout, everything on show (More → "Tidy home screen" off).
-    addTo(dash, head, ask, tourCard(), houseCard(everything), tiles.element, comingUp, banner, hero, statGrid, chartCard,
+    addTo(dash, head, ask, scanBtn, tourCard(), houseCard(everything), tiles.element, comingUp, banner, hero, statGrid, chartCard,
       el('section', { class: 'group', id: 'recent' },
         el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
         el('div', { class: 'list' }, recent.map(entryCard))));
@@ -647,7 +662,7 @@ async function renderHome() {
     el('span', { class: 'month-fold-text' }, el('strong', { class: 'month-fold-title' }, 'Money & energy'), el('span', { class: 'small muted', id: 'this-month-summary' }, summary)),
     el('span', { class: 'month-fold-chev', 'aria-hidden': 'true' }, icon('chevron', 18)));
   const monthCard = el('section', { class: 'month-fold' + (open ? ' open' : ''), id: 'this-month', 'aria-label': 'Money & energy: spending, meter readings and charts' }, toggle, body);
-  addTo(dash, head, ask, houseCard(everything), tiles.element, comingUp, banner, monthCard);
+  addTo(dash, head, ask, scanBtn, houseCard(everything), tiles.element, comingUp, banner, monthCard);
   fill(app, dash);
   const heroValue = document.getElementById('spend-year');
   if (heroValue && open) countUp(heroValue, thisYear, (v) => money(v));
@@ -690,13 +705,14 @@ function sectionTile(s, everything, year) {
   }
   const meta = !count ? `None in ${year}`
     : ins ? `${count} polic${count === 1 ? 'y' : 'ies'} · ${pounds}`
+    // v15.20: "11 bills this year · £1,278" (was "11 · £1,278 / by date paid, as charged")
+    : s.id === 'meter' ? `${count} bill${count === 1 ? '' : 's'} ${thisYear ? 'this year' : `in ${year}`}${total ? ` · ${pounds}` : ''}`
     : total ? `${count} · ${pounds}` : `${count} logged`;
   return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone, 'data-section': s.id, 'data-year': String(year) },
     sectionBadge(s),
     el('span', { class: 'tile-label' }, s.label),
     el('span', { class: 'tile-meta' }, meta),
-    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata`)
-      : s.id === 'meter' && total ? el('span', { class: 'tile-note', id: 'meter-tile-basis' }, 'by date paid, as charged') : null);
+    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata`) : null);
 }
 
 // ---------------------------------------------------------------------
@@ -744,6 +760,10 @@ async function renderList(type, year = 0) {
     }
   }
 
+  // --- v15.20: Scan a bill / Import usage at the top of Electricity ---
+  if (type === 'meter' && !year) screen.push(el('div', { class: 'meter-actions', id: 'meter-actions' },
+    el('a', { class: 'btn small-btn secondary', href: '#/scan/meter', id: 'meter-scan-top' }, icon('scan', 16), 'Scan a bill'),
+    el('a', { class: 'btn small-btn secondary', href: '#/usage', id: 'usage-import' }, icon('upload', 16), 'Import usage')));
   // --- Meter insights on the meter readings screen ---
   if (type === 'meter') screen.push(meterInsights(everything));
   // --- v15.0: monthly kWh from the EDF usage file, this year vs last ---
@@ -839,7 +859,14 @@ async function renderList(type, year = 0) {
       for (const y of monYears) if (!placed.has(y)) out.push(fold(y));
       const nSt = sorted.filter((e) => !(e.mortgage && e.mortgage.kind === 'setup')).length;
       fill(summary, el('span', {}, [`${nSt} statement${nSt === 1 ? '' : 's'}`, mons.length ? `${mons.length} monthly payment${mons.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ')), sorted.length > nSt ? el('span', { class: 'total' }, 'and the set-up') : null);
-      fill(list, ...(out.length ? out
+      // v15.20: the statements fold away under the overview (open while searching).
+      const stId = 'mortgage-statements';
+      const stFold = out.length && !q && !year ? el('details', { class: 'card year-fold statements-fold', id: stId, open: openFolds.has(stId) || undefined,
+        ontoggle: (ev) => { if (ev.currentTarget.open) openFolds.add(stId); else openFolds.delete(stId); } },
+        el('summary', { class: 'year-fold-head' }, el('span', { class: 'yf-title' }, 'Statements & payments'),
+          el('span', { class: 'small muted yf-sub' }, [`${nSt} statement${nSt === 1 ? '' : 's'}`, mons.length ? `${mons.length} payment${mons.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '))),
+        el('div', { class: 'year-fold-list' }, out)) : null;
+      fill(list, ...(stFold ? [stFold] : out.length ? out
         : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
             el('p', {}, q ? 'Nothing matches your search.' : 'No statements yet. Scan your annual mortgage statement, or tap + to add one.'))]));
       return;
@@ -852,9 +879,15 @@ async function renderList(type, year = 0) {
     // v14.8: on the whole Logbook (no search), "Include mortgage" adds the payments.
     const mortPaid = type === 'all' && !q && !state.room && prefs.includeMortgageOn() && everything.some((e) => e.type === 'mortgage')
       ? totalCost(mort.paymentEntries(everything).filter(inYear)) : 0;
+    // v15.20: Electricity (no year, no search) only shows this year's bills
+    // open, so the header counts and adds up just those, like the Home tile.
+    const billsYear = type === 'meter' && !year && !q ? new Date().getFullYear() : 0;
+    const counted = billsYear ? fh.splitByYear(shown, billsYear).current : shown;
     fill(summary,
-      el('span', {}, `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`),
-      (() => { const tot = sumShown(shown.filter(isSpend), netList) + mortPaid; return tot ? el('span', { class: 'total' }, netList ? 'Total after credits ' : 'Total ', el('strong', { id: 'total' }, money(tot)),
+      el('span', { id: 'list-count' }, billsYear
+        ? `${counted.length} bill${counted.length === 1 ? '' : 's'} in ${billsYear}`
+        : `${shown.length} entr${shown.length === 1 ? 'y' : 'ies'}`),
+      (() => { const tot = sumShown(counted.filter(isSpend), netList) + mortPaid; return tot ? el('span', { class: 'total' }, netList ? 'Total after credits ' : 'Total ', el('strong', { id: 'total' }, money(tot)),
         hasIns || mortPaid ? el('small', { id: 'total-basis' }, [mortPaid ? ' incl. mortgage' : '', hasIns ? ' excl. insurance' : ''].filter(Boolean).join(',')) : null) : null; })(), // v14.9: hidden when there's nothing to add up
       type === 'all' && !q ? mortgageSwitch(everything, 'list') : null
     );
@@ -871,21 +904,40 @@ async function renderList(type, year = 0) {
       return;
     }
     // Group by month, with a small heading and that month's total.
-    const groups = [];
-    for (const e of shown) {
-      const key = (e.date || '').slice(0, 7) || 'undated';
-      let g = groups[groups.length - 1];
-      if (!g || g.key !== key) groups.push((g = { key, items: [] }));
-      g.items.push(e);
-    }
-    fill(list,
-      ...groups.flatMap((g) => [
+    const monthGroups = (items) => {
+      const groups = [];
+      for (const e of items) {
+        const key = (e.date || '').slice(0, 7) || 'undated';
+        let g = groups[groups.length - 1];
+        if (!g || g.key !== key) groups.push((g = { key, items: [] }));
+        g.items.push(e);
+      }
+      return groups.flatMap((g) => [
         el('div', { class: 'month-head' },
           el('span', {}, g.key === 'undated' ? 'No date' : monthName(g.key)),
           (() => { const t = sumShown(g.items.filter(isSpend), netList); return t ? el('span', {}, money(t)) : null; })()), // v14.9: no "£0.00" when nothing has a cost
         ...g.items.map(entryCard),
-      ])
-    );
+      ]);
+    };
+    // v15.20: Electricity shows this year's bills; earlier years fold under
+    // "Show 2025" (a search still looks through every year).
+    if (type === 'meter' && !year && !q) {
+      const thisYr = new Date().getFullYear();
+      const { current, earlier } = fh.splitByYear(shown, thisYr);
+      fill(list,
+        current.length ? monthGroups(current) : el('p', { class: 'small muted', id: 'bills-none-this-year' }, `No bills in ${thisYr} yet.`),
+        earlier.map(({ year: y, items }) => {
+          const tot = sumShown(items.filter(isSpend), netList);
+          const id = `bills-year-${y}`;
+          return el('details', { class: 'card year-fold', id, 'data-year': String(y), open: openFolds.has(id) || undefined,
+            ontoggle: (ev) => { if (ev.currentTarget.open) openFolds.add(id); else openFolds.delete(id); } },
+            el('summary', { class: 'year-fold-head' }, el('span', { class: 'yf-title' }, `Show ${y}`),
+              el('span', { class: 'small muted yf-sub' }, `${items.length} bill${items.length === 1 ? '' : 's'}${tot ? ` · ${money(tot)}` : ''}`)),
+            el('div', { class: 'year-fold-list' }, monthGroups(items)));
+        }));
+      return;
+    }
+    fill(list, ...monthGroups(shown));
   }
   search.addEventListener('input', () => {
     state.query = search.value;
@@ -1265,7 +1317,7 @@ function periodDetail(interval, prev, everything) {
           el('div', { class: 'pb-text' }, el('strong', {}, bill.title || 'Bill'), `paid ${niceDate(bill.date)}${perUnit !== null ? ' · incl. standing charge' : ''}`),
           el('a', { class: 'btn small', href: `#/view/${bill.id}`, id: 'pd-open-bill' }, 'Open bill'))
       : el('div', { class: 'period-bill none', id: 'pd-bill' }, el('div', { class: 'pb-text' }, 'No bill logged for this period.'),
-          el('a', { class: 'btn small ghost', href: '#/new/meter' }, 'Add bill'))
+          el('a', { class: 'btn small ghost', href: formHash('meter') }, 'Add bill'))
   );
   return { title: `${niceDate(interval.from.date)} – ${niceDate(interval.to.date)}`, sub: `${Math.round(interval.days)} days`, body };
 }
@@ -1387,7 +1439,7 @@ function renderChooser() {
       'div',
       { class: 'chooser' },
       prefs.orderedSections().map((s) =>
-        el('a', { class: 'choice', href: `#/new/${s.id}`, 'data-section': s.id, 'data-tone': s.tone },
+        el('a', { class: 'choice', href: formHash(s.id), 'data-section': s.id, 'data-tone': s.tone },
           sectionBadge(s, 'lg'),
           el('span', { class: 'choice-label' }, s.single),
           el('span', { class: 'choice-blurb' }, BLURB[s.id] || ''))
@@ -1427,7 +1479,7 @@ async function renderScan(arg) {
   // filed under it, and "Add by hand instead" opens its form.
   const hint = arg && arg !== 'shared' && SECTIONS.some((x) => x.id === arg) ? arg : null;
   const hintSec = hint ? getSection(hint) : null;
-  const byHand = () => el('a', { class: 'btn btn-lg ghost', id: 'scan-by-hand', href: hint ? `#/new/${hint}` : '#/new' }, icon('plus', 20), hint ? `Add ${hintSec.single.toLowerCase()} by hand instead` : 'Add by hand instead');
+  const byHand = () => el('a', { class: 'btn btn-lg ghost', id: 'scan-by-hand', href: hint ? formHash(hint) : '#/new' }, icon('plus', 20), hint ? `Add ${hintSec.single.toLowerCase()} by hand instead` : 'Add by hand instead');
   const cameraInput = el('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, id: 'scan-camera-input' });
   const fileInput = el('input', { type: 'file', accept: 'image/*,application/pdf,.pdf', hidden: true, id: 'scan-file-input' });
   const body = el('div', { class: 'scan-body', id: 'scan-body' });
@@ -1519,7 +1571,7 @@ async function renderScan(arg) {
       const fields = scanFields(parsed, type);
       if (type === 'warranty' && sorted && sorted.years && fields.date) fields.dueDate = addYears(fields.date, sorted.years);
       pendingScan = { type, parsed, photos, source: read.source, fields, sorted, years: sorted ? sorted.years : 0 };
-      location.hash = `#/new/${type}`;
+      location.hash = formHash(type);
     } catch (err) {
       console.warn('scan failed', err);
       if (cancelled) return;
@@ -1789,6 +1841,8 @@ async function renderForm(type, id) {
   const section = getSection(entry.type);
   const ins = section.kind === 'insurance';
   const mortF = section.kind === 'mortgage'; // v14.7
+  const billF = section.id === 'meter'; // v15.20: bills get a title made for them
+  const jobF = section.id === 'job';
   // A working copy of the photo list; only saved when you press Save.
   let photos = [...(entry.photos || [])];
 
@@ -1817,7 +1871,7 @@ async function renderForm(type, id) {
       const fields = { ...scan.fields, ...keep };
       if (t === 'warranty' && !fields.dueDate && scan.years && fields.date) fields.dueDate = addYears(fields.date, scan.years);
       pendingScan = { ...scan, type: t, fields, photos };
-      location.replace(`#/new/${t}`);
+      location.replace(formHash(t));
     }) : null,
     ins
       ? el('div', { class: 'field' }, el('span', { class: 'label', id: 'ins-type-label' }, 'Type of cover'),
@@ -1826,7 +1880,7 @@ async function renderForm(type, id) {
               el('input', { type: 'radio', name: 'insType', value: t.id, checked: (entry.insType || 'home') === t.id }), t.label))))
       : null,
     mortF ? mortgageKindField(entry) : null,
-    notMon(field(ins || mortF ? 'Name (optional)' : 'Title *', el('input', { name: 'title', required: !ins && !mortF, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : mortF ? 'e.g. Santander mortgage statement 2025' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : mortF ? 'Left blank, it’s made from the lender and year.' : null)),
+    notMon(field(ins || mortF ? 'Name (optional)' : billF ? 'Title' : 'Title *', el('input', { name: 'title', required: !ins && !mortF && !billF, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : mortF ? 'e.g. Santander mortgage statement 2025' : billF ? 'e.g. EDF bill Oct 2026 – £104.20' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : mortF ? 'Left blank, it’s made from the lender and year.' : billF ? 'Filled in from the supplier, month and amount. Change it if you like.' : null)),
     mortF ? notMon(field('Lender *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Santander' }))) : null,
     ins ? field('Insurer *', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list', placeholder: 'e.g. Aviva' })) : null,
     ins ? field('Policy number', el('input', { name: 'policyNumber', value: entry.policyNumber || '', autocomplete: 'off' })) : null,
@@ -1842,13 +1896,11 @@ async function renderForm(type, id) {
       ? null
       : el('div', { class: 'row cost-row' },
           field(
-            'Cost (optional)',
+            billF ? 'Amount £ (optional)' : 'Cost (optional)',
             // type="text" + inputmode="decimal" shows the number keypad but still
             // lets us accept things like "£12.50" or "1,200".
             el('input', { name: 'cost', inputmode: 'decimal', value: entry.cost ?? '', placeholder: '0.00', autocomplete: 'off' })
-          ),
-          field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
-            CURRENCIES.map(([code, sym]) => el('option', { value: code, selected: (entry.currency || 'GBP') === code }, `${sym} ${code}`))))),
+          )),
     ins || mortF ? null : field('Supplier / who (optional)', el('input', { name: 'supplier', value: entry.supplier || '', autocomplete: 'off', list: 'supplier-list' })));
 
   // Suggest suppliers you've used before (a "datalist" gives autocomplete).
@@ -1878,9 +1930,8 @@ async function renderForm(type, id) {
       creditFields(creditsOf(entry), Boolean(scan))
     );
   }
-  if (section.showDue) {
-    addTo(form, notMon(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : mortF ? 'The end of the current deal. Reminders 6, 3 and 1 month before.' : null)));
-  }
+  const dueField = section.showDue ? notMon(field(ins ? 'Renewal date' : section.dueLabel, el('input', { name: 'dueDate', type: 'date', value: entry.dueDate || '' }), ins ? `Flagged on the dashboard ${section.soonDays} days before.` : mortF ? 'The end of the current deal. Reminders 6, 3 and 1 month before.' : null)) : null;
+  if (dueField && !jobF) addTo(form, dueField, section.id === 'warranty' ? warrantyQuick(form) : null);
   if (mortF) {
     form.__all = allEntries; // v15.3: the normal payment for a monthly payment
     const mf = mortgageFields(entry, allEntries);
@@ -1893,15 +1944,37 @@ async function renderForm(type, id) {
   if (ins) addTo(form, field('Who’s covered', el('input', { name: 'covered', value: entry.covered || '', autocomplete: 'off', placeholder: 'e.g. Both of us, or named drivers' })));
   // v13: which room it belongs to (optional; jobs, receipts, warranties).
   const roomable = rooms.ROOM_TYPES.includes(entry.type);
+  // v15.20: Currency, Room, Notes (and a job's Next due) behind "More
+  // details". £ is the default. Opens by itself when one of them has a value.
+  const extras = el('details', { class: 'more-details', id: 'more-details', open: fh.moreDetailsOpen(entry, { dueInside: jobF && !!dueField }) || undefined },
+    el('summary', {}, 'More details', el('span', { class: 'small muted more-details-what' }, ` ${[jobF && dueField ? 'next due' : null, ins || mortF ? null : 'currency', roomable ? 'room' : null, 'notes'].filter(Boolean).join(', ')}`)));
+  if (jobF && dueField) addTo(extras, dueField);
+  if (!ins && !mortF) {
+    addTo(extras, field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
+      CURRENCIES.map(([code, sym]) => el('option', { value: code, selected: (entry.currency || 'GBP') === code }, `${sym} ${code}`))), 'Pounds unless you bought it abroad.'));
+  }
   if (roomable) {
     const names = rooms.roomList(await rooms.getStored(), allEntries);
     if (entry.room && !names.some((r) => rooms.sameRoom(r, entry.room))) names.push(entry.room);
-    addTo(form, field('Room (optional)', el('select', { name: 'room', id: 'room-select' },
+    addTo(extras, field('Room (optional)', el('select', { name: 'room', id: 'room-select' },
       el('option', { value: '' }, 'No room'),
       names.map((r) => el('option', { value: r, selected: Boolean(entry.room) && rooms.sameRoom(r, entry.room) }, r))),
       'Add or rename rooms under More → Rooms.'));
   }
-  addTo(form, field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
+  addTo(extras, field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
+  addTo(form, extras);
+  // v15.20: a bill typed by hand gets its title from supplier, month and
+  // amount (kept up to date until you type your own).
+  if (billF) {
+    const t = form.elements.title;
+    if (!id && !scan && !entry.supplier) { const last = allEntries.filter((e) => e.type === 'meter' && e.supplier).sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0]; if (last) form.elements.supplier.value = last.supplier; }
+    let auto = fh.isAutoBillTitle(t.value);
+    const make = () => { if (auto) t.value = fh.billTitle({ supplier: form.elements.supplier.value, date: form.elements.date.value, cost: parseMoney(form.elements.cost.value) ?? null }); };
+    t.addEventListener('input', () => { auto = !t.value.trim(); });
+    for (const n of ['supplier', 'date', 'cost']) form.elements[n].addEventListener('input', make);
+    form.elements.date.addEventListener('change', make);
+    if (!t.value) make();
+  }
 
   // --- Photos ---
   // Two hidden file pickers. capture="environment" opens the back camera
@@ -2001,6 +2074,7 @@ async function renderForm(type, id) {
       if (!v('supplier')) return showError('Please enter the insurer.');
       if (!title) title = `${insuranceTypeLabel(form.elements.insType.value)} insurance – ${v('supplier')}`;
     }
+    if (!title && billF) title = fh.billTitle({ supplier: v('supplier'), date: v('date'), cost: parseMoney(v('cost')) ?? null }); // v15.20
     if (!title) return showError('Please give it a title.');
     if (!mDate && !v('date')) return showError(ins ? 'Please choose the start date.' : 'Please choose a date.');
 
@@ -2084,7 +2158,27 @@ async function renderForm(type, id) {
     }
   }
   fill(app, form);
-  if (!id && !scan) form.elements.title.focus();
+  if (!id && !scan) (billF ? form.elements.date : form.elements.title).focus();
+}
+
+// v15.20: warranty quick lengths — 1, 2, 3 or 5 years from the purchase
+// date fill in the expiry date (typing a date still works).
+function warrantyQuick(form) {
+  const box = el('div', { class: 'quick-years', id: 'warranty-quick', role: 'group', 'aria-label': 'Warranty length' });
+  const sync = () => {
+    const n = fh.warrantyYearsOf(form.elements.date?.value || todayISO(), form.elements.dueDate?.value || '');
+    box.querySelectorAll('button').forEach((b) => { const on = Number(b.dataset.years) === n; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
+  };
+  for (const n of fh.WARRANTY_YEARS) {
+    addTo(box, el('button', { type: 'button', class: 'seg-btn quick-year', 'data-years': String(n), id: `warranty-${n}y`, 'aria-pressed': 'false', onclick: () => {
+      form.elements.dueDate.value = fh.warrantyEnd(form.elements.date.value || todayISO(), n);
+      form.elements.dueDate.classList.remove('prefilled');
+      haptic(); sync();
+    } }, `${n} yr`));
+  }
+  addTo(box, el('span', { class: 'small muted quick-years-from' }, 'from the purchase date'));
+  queueMicrotask(() => { sync(); form.elements.dueDate?.addEventListener('input', sync); form.elements.dueDate?.addEventListener('change', sync); form.elements.date?.addEventListener('change', sync); });
+  return box;
 }
 
 // ---------------------------------------------------------------------
@@ -2860,8 +2954,7 @@ async function renderManuals(focus = '') {
         await userManuals.setBuiltinHidden(a.id, true);
         await applyBuiltinHides();
         toast('Manual removed');
-       
-        render();
+        backToManuals();
       } }, icon('trash', 14), 'Remove manual'));
   };
   const linkedTitles = (m) => (m.entryIds || []).map((id) => entries.find((e) => e.id === id)).filter(Boolean);
@@ -2902,31 +2995,66 @@ async function renderManuals(focus = '') {
         if (!confirm(`Remove “${m.name}” from Hearth?\n\nIt goes from both phones${m.driveId ? ', and its PDF goes to the Drive bin (you can get it back from there for 30 days)' : ''}.`)) return;
         await userManuals.remove(m.id);
         toast('Manual removed');
-        render();
+        backToManuals();
       } }, icon('trash', 14), 'Remove manual')));
   };
 
+  // v15.20: each manual has its own page (#/manuals/<id>, #/manuals/u:<id>)
+  // with its rooms, notes, files, Save on this device and Remove manual.
+  const pageOf = focus.startsWith('u:') ? mine.find((m) => m.id === focus.slice(2)) : manuals.APPLIANCES.find((a) => a.id === focus);
+  if (focus && pageOf) {
+    const builtin = !focus.startsWith('u:');
+    fill(app,
+      screenHead(pageOf.name, { back: { href: '#/manuals', label: 'Manuals' }, sub: builtin ? pageOf.model : [userManuals.sizeText(pageOf.size), pageOf.pages ? `${pageOf.pages} page${pageOf.pages === 1 ? '' : 's'}` : '', whereLine(pageOf, Boolean(localFlags[pageOf.id]))].filter(Boolean).join(' · ') }),
+      el('div', { class: 'manual-page', id: 'manual-page', 'data-manual': focus }, builtin ? builtinCard(pageOf) : mineCard(pageOf)),
+      builtin ? el('div', { class: 'manuals-offline' }, status) : null);
+    if (builtin && !(await showStatus())) poll();
+    return;
+  }
+
+  // v15.20: the list is one line per manual, with a search box on top.
+  const searchText = (...bits) => bits.flat().filter(Boolean).join(' ').toLowerCase();
+  const manualRow = (href, attrs, tone, name, sub, search) => el('a', { class: 'card manual-item manual-row', href, ...attrs, 'data-search': search },
+    el('span', { class: 'badge badge-sm', 'data-tone': tone }, icon('book', 16)),
+    el('span', { class: 'manual-row-text' }, el('strong', { class: 'manual-name' }, name), el('span', { class: 'small muted manual-model' }, sub)),
+    icon('chevron', 16));
+  const builtinRow = (a) => manualRow(`#/manuals/${a.id}`, { id: `manual-${a.id}`, 'data-appliance': a.id }, 'slate', a.name, a.model,
+    searchText(a.name, a.model, a.group, a.about, a.notes, rooms.manualRoomsOf(a, overrides), a.files.map((f) => f.label)));
+  const mineRow = (m) => manualRow(`#/manuals/u:${encodeURIComponent(m.id)}`, { id: `user-manual-${m.id}`, 'data-user-manual': m.id, 'data-local': localFlags[m.id] ? '1' : '0', 'data-drive': m.driveId ? '1' : '0', class: 'card manual-item manual-row user-manual' },
+    'teal', m.name, [userManuals.sizeText(m.size), whereLine(m, Boolean(localFlags[m.id]))].filter(Boolean).join(' · '),
+    searchText(m.name, m.notes, m.rooms, linkedTitles(m).map((e) => e.title)));
+  const noMatch = el('p', { class: 'small muted', id: 'manuals-no-match', hidden: true }, 'No manuals match. Try ', el('a', { href: '#/findmanual' }, 'Find a manual from a label'), '.');
+  const search = el('input', { type: 'search', class: 'search manuals-search', id: 'manuals-search', placeholder: 'Search manuals — e.g. oven, Hive, filter', 'aria-label': 'Search manuals', autocomplete: 'off',
+    oninput: () => {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      let any = false;
+      app.querySelectorAll('.manual-row').forEach((r) => { const on = words.every((w) => r.dataset.search.includes(w)); r.hidden = !on; any = any || on; });
+      app.querySelectorAll('.manuals-group[data-filterable]').forEach((g) => { g.hidden = words.length > 0 && !g.querySelector('.manual-row:not([hidden])'); });
+      noMatch.hidden = !words.length || any;
+    } });
   fill(app,
     screenHead('Manuals', { back: { href: '#/export', label: 'More' }, sub: 'Your appliances’ guides, shared through your Drive' }),
-    el('section', { class: 'group manuals-group', id: 'your-manuals' },
+    el('label', { class: 'search-wrap manuals-search-wrap' }, icon('search', 20), search),
+    noMatch,
+    el('section', { class: 'group manuals-group', id: 'your-manuals', 'data-filterable': '1' },
       el('div', { class: 'group-head' }, el('h2', {}, 'Your manuals'), el('a', { class: 'link', href: '#/addmanual', id: 'add-manual' }, icon('plus', 14), 'Add a manual')),
       el('a', { class: 'card more-row', href: '#/findmanual', id: 'find-manual' },
         el('span', { class: 'badge badge-md', 'data-tone': 'teal' }, icon('scan')),
         el('span', { class: 'more-row-text' }, el('strong', {}, 'Find a manual from a label'), el('span', { class: 'small muted' }, 'Photograph the model sticker; Hearth checks what it has, or searches the web')),
         icon('chevron', 18)),
-      mine.length ? el('div', { class: 'manual-list' }, mine.map(mineCard))
-        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it here, or share it to Hearth from your email or browser.'),
-      el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add show on both devices through Drive. Opening uses Drive (or a copy saved on this device). Offline copies are optional. Keep Hearth open until syncing finishes.')),
-    el('div', { class: 'manuals-offline' }, status, saveAll, clearAll),
-    ...groups.map((g) => el('section', { class: 'group manuals-group' },
+      mine.length ? el('div', { class: 'manual-list manual-rows' }, mine.map(mineRow))
+        : el('p', { class: 'small muted', id: 'your-manuals-empty' }, 'Add the PDF for anything else: pick it here, or share it to Hearth from your email or browser.')),
+    ...groups.map((g) => el('section', { class: 'group manuals-group', 'data-filterable': '1' },
       el('div', { class: 'group-head' }, el('h2', {}, g.name)),
-      el('div', { class: 'manual-list' }, g.items.map(builtinCard)))),
+      el('div', { class: 'manual-list manual-rows' }, g.items.map(builtinRow)))),
+    el('div', { class: 'manuals-offline' }, status, saveAll, clearAll),
+    el('p', { class: 'small muted', id: 'your-manuals-where' }, 'Manuals you add show on both devices through Drive. Opening uses Drive (or a copy saved on this device). Offline copies are optional. Keep Hearth open until syncing finishes.'),
     removedBox
   );
-  if (focus) { const t = document.getElementById(`manual-${focus}`); if (t) t.scrollIntoView({ block: 'center' }); }
   // Keep the status line up to date while the downloads run.
   if (!(await showStatus())) poll();
 }
+function backToManuals() { if (location.hash === '#/manuals') render(); else location.replace('#/manuals'); }
 
 // "Open in another app": hand the PDF to Android (Drive PDF viewer, Adobe…)
 // through the share sheet. Where sharing files isn't possible, download it
@@ -3190,7 +3318,7 @@ async function renderManualForm(id, arg) {
     taggable.length ? el('div', { class: 'field' }, el('span', { class: 'label' }, 'For which entries? (optional)'), filter, linkList,
       el('span', { class: 'hint' }, 'A linked entry shows a Manual button.')) : null,
     el('p', { class: 'small muted', id: 'manual-where-note' }, 'Saved on this device first. Included in backups. With Drive sync on, the PDF and details are shared — offline copies on each device are optional.'),
-    (await sync.getConfig()).enabled ? el('p', { class: 'small muted', id: 'manual-folder-note' }, 'If sync asks to allow the shared Hearthbook folder, that’s under More → Backup & sharing, next to Drive sync. Your PDF stays saved here either way.') : null,
+    (await sync.getConfig()).enabled ? el('p', { class: 'small muted', id: 'manual-folder-note' }, 'If sync asks to allow the shared Hearthbook folder, that’s under More → Backup & Drive, next to Drive sync. Your PDF stays saved here either way.') : null,
     errorBox,
     el('div', { class: 'row sticky-actions' },
       el('button', { type: 'button', class: 'btn secondary', onclick: () => (history.length > 1 ? history.back() : location.replace('#/manuals')) }, 'Cancel'),
@@ -3438,7 +3566,12 @@ async function renderUpcoming(focus) {
           el('div', { class: 'group-head' }, el('h2', {}, name), el('span', { class: 'small muted' }, `${list.length}`)),
           el('div', { class: 'list' }, list.map(row)))))
       : el('div', { class: 'empty', id: 'upcoming-empty' }, el('div', { class: 'empty-art' }, icon('clock', 36)), el('p', {}, 'Nothing coming up. Add a reminder, a warranty, a policy or a job with a due date and it shows here.')),
-    el('p', { class: 'small muted footnote' }, prefs.remindersOn() ? 'Phone reminders are on (More → Reminders).' : 'Phone reminders are off. Turn them on under More → Reminders.'));
+    // v15.20: phone reminders live here now (was a card on More).
+    el('section', { class: 'card', id: 'reminders-card' },
+      el('div', { class: 'card-head' }, el('div', { class: 'card-head-title' }, el('span', { class: 'badge badge-md', 'data-tone': 'rose' }, icon('clock')), el('h2', { class: 'card-title' }, 'Phone reminders'))),
+      remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => keepPlace('reminders-card', () => renderUpcoming('')) })));
+  foldCard(document.getElementById('reminders-card'));
+  if (focus === 'reminders') { const c = document.getElementById('reminders-card'); if (c) requestAnimationFrame(() => c.scrollIntoView({ block: 'start' })); }
   if (focus === 'mortgage') {
     const first = app.querySelector('.up-mortgage');
     if (first) { app.querySelectorAll('.up-mortgage').forEach((n) => n.classList.add('highlight')); requestAnimationFrame(() => first.scrollIntoView({ block: 'center' })); }
@@ -3616,38 +3749,24 @@ async function renderExport() {
 
   const cardHead = (glyph, tone, title) => el('div', { class: 'card-head' }, el('div', { class: 'card-head-title' }, el('span', { class: 'badge badge-md', 'data-tone': tone }, icon(glyph)), el('h2', { class: 'card-title' }, title)));
 
-  const theme = getTheme();
-  const themeBtn = (value, glyph, label) =>
-    el('button', { type: 'button', class: 'seg-btn' + (theme === value ? ' active' : ''), 'aria-pressed': String(theme === value), id: `theme-${value}`,
-      onclick: () => { setTheme(value); renderExport(); } }, icon(glyph, 16), label);
-
-  // v14: Recent entries and the quick tour live here (tidy home screen).
-  const recent = entries.filter((e) => !rem.isReminder(e)).sort(newestFirst).slice(0, 4);
+  // v15.20: More is shorter. Manuals, Rooms, Year in review and Backup &
+  // Drive on top; Appearance, Weather, Home screen, Words explained and the
+  // tour are behind one "Settings" row (#/export/settings). Recent went (the
+  // Logbook tab has it) and "Home screen & sections" went (Home → Edit does
+  // it). Reminders moved to the Coming up page.
   const tidy = prefs.homeTidy();
+  const moreRow = (href, id, glyph, tone, title, sub) => el('a', { class: 'card more-row', href, id },
+    el('span', { class: 'badge badge-md', 'data-tone': tone }, icon(glyph)),
+    el('span', { class: 'more-row-text' }, el('strong', {}, title), el('span', { class: 'small muted' }, sub)),
+    icon('chevron', 18));
   fill(app,
     screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
     tidy ? tourCard() : null,
     el('h2', { class: 'more-group', id: 'group-home' }, 'Your home'),
-    el('a', { class: 'card more-row', href: '#/manuals', id: 'more-manuals' },
-      el('span', { class: 'badge badge-md', 'data-tone': 'slate' }, icon('book')),
-      el('span', { class: 'more-row-text' }, el('strong', {}, 'Manuals'), el('span', { class: 'small muted' }, `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides${mineManuals.length ? ` · ${mineManuals.length} of yours` : ''}`)),
-      icon('chevron', 18)),
-    el('a', { class: 'card more-row', href: '#/rooms', id: 'more-rooms' },
-      el('span', { class: 'badge badge-md', 'data-tone': 'amber' }, icon('door')),
-      el('span', { class: 'more-row-text' }, el('strong', {}, 'Rooms'), el('span', { class: 'small muted' }, `${roomCount} rooms · browse and tag things by room`)),
-      icon('chevron', 18)),
-    el('a', { class: 'card more-row', href: `#/year/${new Date().getFullYear()}`, id: 'more-year' },
-      el('span', { class: 'badge badge-md', 'data-tone': 'brand' }, icon('chart')),
-      el('span', { class: 'more-row-text' }, el('strong', {}, 'Year in review'), el('span', { class: 'small muted' }, 'What the house cost each year')),
-      icon('chevron', 18)),
-    el('a', { class: 'card more-row', href: '#/glossary', id: 'more-glossary' },
-      el('span', { class: 'badge badge-md', 'data-tone': 'sky' }, icon('book')),
-      el('span', { class: 'more-row-text' }, el('strong', {}, 'Words explained'), el('span', { class: 'small muted' }, 'Mortgage, electricity and house words in plain English')),
-      icon('chevron', 18)),
-    tidy && recent.length ? el('section', { class: 'group', id: 'recent' },
-      el('div', { class: 'group-head' }, el('h2', {}, 'Recent'), el('a', { href: '#/list/all', class: 'link' }, 'See all')),
-      el('div', { class: 'list' }, recent.map(entryCard))) : null,
-    el('h2', { class: 'more-group', id: 'group-backup' }, 'Backup & sharing'),
+    moreRow('#/manuals', 'more-manuals', 'book', 'slate', 'Manuals', `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides${mineManuals.length ? ` · ${mineManuals.length} of yours` : ''}`),
+    moreRow('#/rooms', 'more-rooms', 'door', 'amber', 'Rooms', `${roomCount} rooms · browse and tag things by room`),
+    moreRow(`#/year/${new Date().getFullYear()}`, 'more-year', 'chart', 'brand', 'Year in review', 'What the house cost each year'),
+    el('h2', { class: 'more-group', id: 'group-backup' }, 'Backup & Drive'),
     el('section', { class: 'card', id: 'backup-card' },
       cardHead('backup', 'brand', 'Backup file'),
       el('p', { id: 'last-backup', class: 'last-backup' + (lastBackup ? ' ok' : '') + (backupOld ? ' old' : '') }, lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleString('en-GB')}${backupOld ? ' · time for a new one' : ''}` : 'Last backup: never'),
@@ -3676,37 +3795,9 @@ async function renderExport() {
       (await sync.getConfig()).enabled ? el('p', { class: 'small muted', id: 'backup-folder-hint' }, 'If Drive says it can’t save, use “Allow saving to the shared Drive folder” on the Drive sync card below.') : null,
       fileInput),
     await syncCard(cardHead),
-    el(
-      'section',
-      { class: 'card' },
-      cardHead('printer', 'indigo', 'Printable report'),
-      el('p', { class: 'small muted' }, 'Opens a report of every entry with photos. Use Print → "Save as PDF" to keep or send a copy.'),
-      el('a', { class: 'btn secondary', href: 'report.html', id: 'report-link' }, 'Open report')
-    ),
-    el('h2', { class: 'more-group', id: 'group-look' }, 'Look & feel'),
-    el(
-      'section',
-      { class: 'card' },
-      cardHead('sun', 'amber', 'Appearance'),
-      el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark')),
-      el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} if (prefs.homeTidy()) { renderExport().then(() => window.scrollTo(0, 0)); } else location.hash = '#/home'; } }, 'Show the quick tour again')
-    ),
-    // v14.1: weather has its own card (was inside Appearance).
-    el('section', { class: 'card', id: 'weather-card' },
-      cardHead('cloud', 'indigo', 'Weather'),
-      el('p', { id: 'weather-what' }, 'Show the real weather and night sky over the house.'),
-      el('label', { class: 'check-row', id: 'weather-row' },
-        el('input', { type: 'checkbox', id: 'weather-on', checked: weather.enabled(), onchange: (ev) => { weather.setEnabled(ev.currentTarget.checked); } }),
-        el('span', {}, el('strong', {}, 'Weather on the house picture'))),
-      weatherPlaceBox(),
-      el('p', { class: 'small muted', id: 'weather-privacy' }, 'Your area is set on this phone only. Your address is never sent.')),
-    el('h2', { class: 'more-group', id: 'group-sections' }, 'Reminders & home sections'),
-    el('section', { class: 'card', id: 'reminders-card' }, cardHead('clock', 'rose', 'Reminders'),
-      remindersBlock({ getEntries: () => db.getAllEntries(), rerender: () => renderExport() })),
-    addTo(customiseCard(cardHead, applyNavPrefs),
-      el('label', { class: 'check-row', id: 'home-tidy-row' },
-        el('input', { type: 'checkbox', id: 'home-tidy', checked: tidy, onchange: (ev) => { prefs.setHomeTidy(ev.currentTarget.checked); keepPlace('home-tidy-row', renderExport); } }),
-        el('span', {}, el('strong', {}, 'Tidy home screen'), el('span', { class: 'small muted' }, ' Spending, readings and charts fold into one “Money & energy” card; Recent and the tour are here under More. Untick to show everything on the home screen like before.')))),
+    el('h2', { class: 'more-group', id: 'group-other' }, 'Other'),
+    moreRow('report.html', 'report-link', 'printer', 'indigo', 'Printable report', 'Every entry with photos · Print → “Save as PDF”'),
+    moreRow('#/export/settings', 'more-settings', 'list', 'slate', 'Settings', 'Appearance, weather, home screen, words explained, quick tour'),
     el(
       'p',
       { class: 'small muted footnote' },
@@ -3719,6 +3810,49 @@ async function renderExport() {
     el('p', { class: 'small muted footnote' }, `${APP_NAME} · ${sync.getStatus().state === 'off' || sync.getStatus().state === 'unconfigured' ? 'everything stays on this phone' : 'synced through your own Google Drive'}`),
     el('p', { class: 'small muted footnote app-version', id: 'app-version' }, `Version ${sync.APP_VERSION}`)
   );
+  foldMoreCards(app);
+}
+
+// v15.20: More → Settings (#/export/settings): the things you set once.
+async function renderSettings() {
+  // Read the logbook first like every other screen, so a slower screen
+  // still drawing from just before can't land on top of this one.
+  await db.getAllEntries();
+  const cardHead = (glyph, tone, title) => el('div', { class: 'card-head' }, el('div', { class: 'card-head-title' }, el('span', { class: 'badge badge-md', 'data-tone': tone }, icon(glyph)), el('h2', { class: 'card-title' }, title)));
+  const theme = getTheme();
+  const themeBtn = (value, glyph, label) =>
+    el('button', { type: 'button', class: 'seg-btn' + (theme === value ? ' active' : ''), 'aria-pressed': String(theme === value), id: `theme-${value}`,
+      onclick: () => { setTheme(value); keepPlace('appearance-card', () => renderSettings()); } }, icon(glyph, 16), label);
+  const tidy = prefs.homeTidy();
+  fill(app,
+    screenHead('Settings', { back: { href: '#/export', label: 'More' }, sub: 'Things you set once, on this phone' }),
+    el('section', { class: 'card', id: 'appearance-card' },
+      cardHead('sun', 'amber', 'Appearance'),
+      el('div', { class: 'seg seg-full', role: 'group', 'aria-label': 'Theme' }, themeBtn('system', 'auto', 'Auto'), themeBtn('light', 'sun', 'Light'), themeBtn('dark', 'moon', 'Dark')),
+      el('button', { type: 'button', class: 'btn link-btn', id: 'tour-again', onclick: () => { try { localStorage.removeItem('hearthbook.toured'); } catch {} location.hash = prefs.homeTidy() ? '#/export' : '#/home'; } }, 'Show the quick tour again')),
+    el('section', { class: 'card', id: 'weather-card' },
+      cardHead('cloud', 'indigo', 'Weather'),
+      el('p', { id: 'weather-what' }, 'Show the real weather and night sky over the house.'),
+      el('label', { class: 'check-row', id: 'weather-row' },
+        el('input', { type: 'checkbox', id: 'weather-on', checked: weather.enabled(), onchange: (ev) => { weather.setEnabled(ev.currentTarget.checked); } }),
+        el('span', {}, el('strong', {}, 'Weather on the house picture'))),
+      weatherPlaceBox(),
+      el('p', { class: 'small muted', id: 'weather-privacy' }, 'Your area is set on this phone only. Your address is never sent.')),
+    el('section', { class: 'card', id: 'home-screen-card' },
+      cardHead('home', 'slate', 'Home screen'),
+      el('label', { class: 'check-row', id: 'home-tidy-row' },
+        el('input', { type: 'checkbox', id: 'home-tidy', checked: tidy, onchange: (ev) => { prefs.setHomeTidy(ev.currentTarget.checked); keepPlace('home-tidy-row', renderSettings); } }),
+        el('span', {}, el('strong', {}, 'Tidy home screen'), el('span', { class: 'small muted' }, ' Spending, readings and charts fold into one “Money & energy” card. Untick to show everything on the home screen like before.'))),
+      el('p', { class: 'small', id: 'home-edit-hint' }, 'To show, hide or reorder sections, tap ', el('strong', {}, 'Edit'), ' beside the sections on ', el('a', { href: '#/home' }, 'Home'), '.')),
+    el('a', { class: 'card more-row', href: '#/upcoming/reminders', id: 'settings-reminders' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'rose' }, icon('clock')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Phone reminders'), el('span', { class: 'small muted' }, prefs.remindersOn() ? 'On · set on the Coming up page' : 'Off · turn on from the Coming up page')),
+      icon('chevron', 18)),
+    el('a', { class: 'card more-row', href: '#/glossary', id: 'more-glossary' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'sky' }, icon('book')),
+      el('span', { class: 'more-row-text' }, el('strong', {}, 'Words explained'), el('span', { class: 'small muted' }, 'Mortgage, electricity and house words in plain English')),
+      icon('chevron', 18)),
+    el('p', { class: 'small muted footnote app-version' }, `Version ${sync.APP_VERSION}`));
   foldMoreCards(app);
 }
 
@@ -3972,11 +4106,8 @@ async function usageCard() {
       el('div', {}, el('h2', { class: 'card-title', id: 'usage-title' }, 'Electricity use by month'),
         el('p', { class: 'card-sub', id: 'usage-sub' }, keys.length ? `From your usage file · ${usage.monthLabel(keys[0])} – ${usage.monthLabel(keys[keys.length - 1])}` : 'From a usage CSV you download from your electricity supplier'))),
     keys.length ? el('a', { class: 'btn small-btn secondary', href: '#/usage', id: 'usage-import-again' }, icon('upload', 16), 'Import') : null);
-  if (!keys.length) {
-    return fill(card, head,
-      el('p', { class: 'small muted' }, 'Download your usage from your electricity account as a CSV file (monthly, daily or half-hourly), then pick it here. Hearth adds up the kWh for each month and shows this year against last year. The file is read on this device only.'),
-      el('a', { class: 'btn secondary', href: '#/usage', id: 'usage-import' }, icon('upload', 18), 'Import usage'));
-  }
+  // v15.20: nothing imported yet → no card; "Import usage" is at the top.
+  if (!keys.length) return null;
   const years = usage.yearsIn(months);
   if (!state.usageYear || !years.includes(state.usageYear)) state.usageYear = years[years.length - 1];
   const body = el('div', { class: 'usage-body', id: 'usage-body' });

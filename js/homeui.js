@@ -222,7 +222,7 @@ const TOUR = [
   { glyph: 'home', tone: 'brand', title: 'Your home’s logbook', text: 'Receipts, warranties, jobs, electricity bills and insurance in one tidy place. Kept on this phone (and in your own Google Drive if you turn on sharing).' },
   { glyph: 'scan', tone: 'teal', title: 'Snap it, we’ll fill it in', text: 'Tap + then Scan. You can also share a photo or PDF to Hearth straight from your gallery or email.' },
   { glyph: 'sparkle', tone: 'violet', title: 'Ask Hearth', text: 'Search everything, or ask “when does the car insurance renew?” and get the date.' },
-  { glyph: 'pencil', tone: 'amber', title: 'Make it yours', text: 'Press and hold a section tile to hide or reorder sections. Turn on reminders, find appliance manuals and back up under More.' },
+  { glyph: 'pencil', tone: 'amber', title: 'Make it yours', text: 'Press and hold a section tile to hide or reorder sections. Turn on reminders from Coming up; find appliance manuals and back up under More.' },
 ];
 export function tourCard() {
   if (prefs.toured()) return null;

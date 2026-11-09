@@ -829,6 +829,9 @@ body.ready #splash { animation: splash-out 0.3s ease 0.1s forwards; }
    Ask Hearthbook
    ================================================================= */
 .ask { margin: 0 0 14px; }
+/* v15.20: Scan button under Ask Hearth on Home */
+.home-scan { display: flex; width: 100%; justify-content: center; gap: 8px; margin: -4px 0 14px; }
+.dash.is-asking > .home-scan { display: none; }
 .ask-wrap { margin-bottom: 0; }
 .ask-wrap svg { color: var(--brand); }
 .ask-input::placeholder { color: var(--text-3); }
@@ -1646,3 +1649,53 @@ body.pdf-open main { padding-bottom: 40px; }
 .manual-remove-builtin, .manual-remove-user { align-self: flex-start; margin-top: 4px; color: var(--bad); }
 .manuals-removed summary { cursor: pointer; font-weight: 600; }
 .manuals-removed li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
+
+/* v15.20: Manuals — search box, one line per manual, a page per manual */
+.manuals-search-wrap { margin: 0 0 14px; }
+.manual-rows { display: grid; gap: 8px; }
+.manual-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; text-decoration: none; color: var(--text); min-height: var(--tap); }
+.manual-row[hidden], .manuals-group[hidden] { display: none; }
+.manual-row-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.manual-row-text .manual-name { font-size: 15px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.manual-row-text .manual-model { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.manual-row > .ico:last-child { color: var(--text-3); flex: none; }
+.manual-page .manual-item { margin-bottom: 14px; }
+/* v15.20: forms — "More details" fold and warranty quick lengths */
+.more-details { border: 1px solid var(--line); border-radius: 14px; padding: 4px 12px; margin: 4px 0 14px; background: var(--surface); }
+.more-details > summary { cursor: pointer; font-weight: 600; padding: 10px 0; color: var(--text-2); min-height: var(--tap); display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.more-details > summary .more-details-what { font-weight: 400; }
+.more-details[open] > summary { margin-bottom: 4px; }
+.quick-years { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -6px 0 14px; }
+.quick-years .quick-year { flex: 0 0 auto; min-width: 56px; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.quick-years .quick-year.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.quick-years-from { margin-left: 4px; }
+/* v15.20: Electricity — top actions, earlier years folded */
+.meter-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.meter-actions .btn { flex: 1 1 0; justify-content: center; }
+.year-fold { padding: 0; margin: 10px 0; }
+.year-fold > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 14px; min-height: var(--tap); font-weight: 650; }
+.year-fold > summary::-webkit-details-marker { display: none; }
+.year-fold > summary::after { content: '›'; font-size: 20px; color: var(--text-3); transition: transform .15s; }
+.year-fold[open] > summary::after { transform: rotate(90deg); }
+.year-fold > summary .yf-sub { margin-left: auto; font-weight: 400; }
+.year-fold-list { padding: 0 10px 10px; }
+/* v15.20: Mortgage — deal end and mortgage-free under the balance, sums folded */
+.mortgage-keyfacts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0 6px; }
+.mortgage-keyfacts .kf { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2, var(--surface)); }
+.mortgage-keyfacts .kf-label { font-size: 12px; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+.mortgage-keyfacts .kf strong { font-size: 17px; }
+.mortgage-keyfacts .kf small { color: var(--text-2); }
+.mortgage-fold { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 4px; }
+.mortgage-fold > summary { cursor: pointer; font-weight: 650; padding: 10px 0; min-height: var(--tap); display: flex; align-items: center; color: var(--brand); }
+.manual-page .manual-item.focus { outline: none; }
+.manual-page .manual-head > .badge, .manual-page .manual-head > div { display: none; }
+.manual-page .manual-head { justify-content: flex-end; }
+.more-details > summary { list-style: none; }
+.more-details > summary::-webkit-details-marker { display: none; }
+.more-details > summary::after { content: '›'; margin-left: auto; font-size: 20px; color: var(--text-3); transition: transform .15s; }
+.more-details[open] > summary::after { transform: rotate(90deg); }
+@media (min-width: 1024px) {
+  /* v15.20: one-line manual rows are all the same height, so a plain two-column grid. */
+  .manual-list.manual-rows, #your-manuals .manual-list.manual-rows { display: grid; columns: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+  .manual-rows > .manual-item { margin: 0; }
+}

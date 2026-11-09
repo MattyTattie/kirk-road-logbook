@@ -50,7 +50,8 @@
 // v15.1 = Add reminder: standalone one-off or repeating reminders (stored as jobs with a reminder object).
 // v15.2 = tap-to-explain words + Words explained page, tap lists instead of drop-downs, green/red result boxes, More info folds, Undo after edits/deletes.
 // v15.19 = Home doesn't redraw mid tile-drag (sync waits), tile drag auto-scrolls, More folds stay open, joined phone reuses the owner's Drive folders, bill photos named by bill month, 12 months of Drive backups, Drive tidy result in Sync details, wording/contrast fixes.
-const CACHE_NAME = 'hearthbook-v15.19';
+// v15.20 = Scan on Home + bill shortcut opens the scanner, Manuals search and one-line list (a page per manual), shorter More with a Settings page, phone reminders on Coming up, More details fold on forms, warranty 1/2/3/5 yr, Electricity this year first + Import usage on top, bill titles made for you, mortgage dates first, bills tile wording.
+const CACHE_NAME = 'hearthbook-v15.20';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
@@ -134,6 +135,7 @@ const APP_SHELL = [
   './js/glossary.js',
   './js/tapselect.js',
   './js/outcomes.js',
+  './js/formhelp.js',
   './fonts/inter-latin.woff',
   './icons/icon.svg',
   './icons/icon-192.png',

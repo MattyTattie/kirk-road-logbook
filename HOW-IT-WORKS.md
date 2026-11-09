@@ -689,8 +689,8 @@ typing. It also understands:
 It all runs on the phone. The full raw text of a scan isn't stored (that
 would change the backup format), only what the scanner puts in the entry.
 
-**Reminders.** Turn them on in Settings → Reminders, or with *Remind me*
-under Coming up. The app only asks Android for permission after you tap one
+**Reminders.** Turn them on in the *Phone reminders* card on Coming up
+(More → Settings → Reminders goes there too), or with *Remind me* under Coming up. The app only asks Android for permission after you tap one
 of those, never by itself. When the app is opened or switched back to, it
 looks for renewals, warranty expiries and job dates within 30 days. It
 shows one notification per item at 30 days and one at 7 days. Tapping a
@@ -700,8 +700,8 @@ background, so reminders only come when you open Hearth.
 **Customise sections.** Long-press a tile on the home screen (or tap
 *Edit*) to change them: the tiles wiggle, **−** hides a section, you drag
 tiles to reorder them, and the **+** chips put hidden sections back.
-Settings → *Home screen & sections* has the same thing as a tick list, with
-drag handles and ↑ ↓ buttons. A hidden section leaves the tiles, the add
+(Until v15.19 a *Home screen & sections* tick list on More did the same; v15.20
+dropped it, More → Settings → *Home screen* just points to *Edit*.) A hidden section leaves the tiles, the add
 menu, the Logbook tabs and (for Electricity) the bottom bar. Its entries are
 never deleted: they still sync, back up, and show in *All* and in search.
 This setting is per phone.
@@ -747,7 +747,7 @@ native part (`/workspace/hearthbook-android/project/app/src/main/java/.../`):
   permission if needed, and closes. Only dated entries from today to ~13 months
   ahead are sent: id, title, date, and the word (renews/expires/is due).
 - When the app starts, `LauncherActivity` adds `?hbv=13&hbn=<hash>&hbp=1` to the
-  address so the page knows the app holds the current list (More → Reminders
+  address so the page knows the app holds the current list (Coming up → Phone reminders
   shows ✓). The page then stops showing its own notifications so you don't get
   each one twice. The in-app "Coming up" list is unchanged.
 
@@ -816,8 +816,8 @@ phone number (code, docs and the PDFs' text) or a keystore file.
   one "Money & energy" card (called "This month" in v14.0). Its button (`#this-month-toggle`) shows/hides
   `#this-month-body`, which holds the same spending card, stat cards and
   Spending chart as before (same ids). Open/closed is kept in localStorage
-  (`hearthbook.monthOpen`). Recent and the tour are on More. The old layout
-  comes back with More → Home screen & sections → "Tidy home screen" off
+  (`hearthbook.monthOpen`). The tour is on More (Recent went in v15.20). The old layout
+  comes back with More → Settings → "Tidy home screen" off
   (`prefs.homeTidy()`, localStorage `hearthbook.homeLayout`).
 - **Chart labels**: `axisLabel()` in `js/charts.js` prints a bar's `short`
   name ("Sep") when each bar has ≥ 24 units of the 340-wide chart, else its
@@ -1002,3 +1002,23 @@ automated external routine; save is an explicit button tap.
 The browser is asked for persistent storage at startup. It can say no. Transaction
 failures, including full storage, never trigger a Saved toast; a plain error tells
 the user to free device storage without clearing Hearth/Chrome data.
+
+
+## v15.17 — viewing is not saving (current behaviour)
+Opening a manual loads its PDF for viewing only. User-added PDFs come from Drive unless an optional offline copy already exists. Built-in guides come from the app's hosted manuals folder, not Drive, and are no longer cached merely by opening. Neither viewing path creates a browser download or new persistent offline copy; Drive blob reads and uncached built-in reads use no-store.
+
+Use **Save on this device** under the Open button to keep a PDF offline. **Remove from this device** drops only that offline copy, leaving the listing and Drive file intact. Existing copies are not removed automatically. **Save all for offline** / **Clear offline guides** concern built-in guides only. Adding or restoring a PDF still saves the PDF you explicitly supplied, as before.
+
+On a Mac the cards flow in independent-height columns with compact gaps. The manual viewer hides the app header/navigation and centres the PDF across the screen; close and zoom stay fixed. No data/sync/backup format changes.
+
+
+## v15.20 — streamlining (UI only; DB, section ids, record fields and backup/sync formats unchanged)
+
+- **Scan on Home**: `#home-scan` → `#/scan`. `#/new/meter` (the Android/manifest "Add electricity bill" shortcut) now redirects to `#/scan/meter`; the hand-typed bill form is `#/new/meter/form` (`formHash()` in app.js). Manifest shortcut points straight at `#/scan/meter`.
+- **Manuals**: list is one-line rows with a search box (`#manuals-search`); each manual has its own page `#/manuals/<id>` (built-in) or `#/manuals/u:<id>` (yours) with Save offline / Remove. Removed guides still listed with Bring back.
+- **More**: Manuals, Rooms, Year in review, then Backup & Drive, then Other (Printable report, Settings). **Settings** (`#/export/settings`): appearance, weather place, home screen (tidy toggle), reminders link, words explained, version.
+- **Coming up** has the Phone reminders card (`#reminders-card`, `#/upcoming/reminders`).
+- **Forms**: Currency, Room, Notes (and a job's Next due) are inside *More details* (`details#more-details`, open when any has a value; £ default). Warranty quick buttons 1/2/3/5 yr (from the purchase date). Bill titles fill in automatically (`js/formhelp.js` `billTitle`, e.g. "EDF bill Oct 2026 – £104.20"); title is optional for bills.
+- **Electricity**: Scan a bill / Import usage at the top (`#meter-actions`); this year's bills shown, earlier years folded (`details#bills-year-<y>`, "Show 2025"). Bills tile: "11 bills this year · £1,278".
+- **Mortgage**: balance, deal end and mortgage-free key facts first (`#mortgage-keyfacts`); overpayment and what-if folded; statements list folded (`#mortgage-statements`).
+- Screens draw in order: a slow earlier screen can no longer paint over a newer one (`drawSeq` guard in `drawScreen`).

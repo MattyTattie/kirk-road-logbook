@@ -86,7 +86,7 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
     let put;
     try { put = await writeIntoFolder({ parent, kind: 'manuals', owner, remembered: state.folder || null, write: (id) => drive.uploadNewBlob(name, id, blob, 'application/pdf', props, { timeoutMs: 60000 }) }); }
     catch (err) {
-      if (err.needsGrant) throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this device.');
+      if (err.needsGrant) throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & Drive, select the existing Hearthbook folder, then Sync now again. Your PDF is still safe on this device.');
       throw err;
     }
     if (state.folder !== put.folderId) { state.folder = put.folderId; await db.setMeta(STATE, state); }
@@ -134,7 +134,7 @@ export async function syncManuals(c, hints = [], stillOn = async () => true) {
     let written;
     try { written = state.manifest ? await drive.writeJSON(state.manifest, payload) : await drive.createJSON(name, parent, payload); }
     catch (err) {
-      if (!state.manifest && err instanceof drive.NotFoundError) throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & sharing, choose the existing Hearthbook folder, then Sync now again. Your saved records are still on this device.');
+      if (!state.manifest && err instanceof drive.NotFoundError) throw new Error('Tap “Allow saving to the shared Drive folder” under More → Backup & Drive, choose the existing Hearthbook folder, then Sync now again. Your saved records are still on this device.');
       throw err;
     }
     state.manifest = written.id || state.manifest;

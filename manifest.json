@@ -52,7 +52,7 @@
       "name": "Add electricity bill",
       "short_name": "Add bill",
       "description": "Add an electricity bill or meter reading",
-      "url": "./index.html#/new/meter",
+      "url": "./index.html#/scan/meter",
       "icons": [
         {
           "src": "icons/icon-192.png",
