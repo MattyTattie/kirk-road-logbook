@@ -12,7 +12,8 @@
 
 import { remindersOn, notifiedLog, markNotified } from './prefs.js';
 import * as native from './native.js';
-import { withoutSuperseded, reminderDates } from './mortgage.js';
+import { reminderDates } from './mortgage.js';
+import { activeDue } from './duestate.js'; // v15.22: no dismissed dates, renewed or ended policies
 import { todayISO } from './utils.js';
 
 export const WINDOW_DAYS = 30;
@@ -31,7 +32,7 @@ const inDays = (n) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`
 // Pure: which notifications are due right now? (Easy to test.)
 export function dueReminders(entries, now = new Date(), log = {}) {
   const out = [];
-  for (const e of withoutSuperseded(entries)) {
+  for (const e of activeDue(entries)) {
     // v14.7: a mortgage deal end: 6, 3 and 1 month before (only the latest statement)
     if (e.type === 'mortgage') { const r = mortgageReminder(e, now, log); if (r) out.push(r); continue; }
     // v15.1: a reminder's extra early alert (e.g. 3 days before), shown by the page

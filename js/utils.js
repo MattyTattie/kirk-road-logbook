@@ -106,6 +106,9 @@ export function dueText(word, days) {
   if (days > 0) return `${word} in ${days} days`;
   const ago = -days;
   const past = word === 'expires' ? 'expired' : word === 'renews' ? 'renewal was due' : 'was due';
+  // v15.22: "expired about 3 years ago", not "1143 days ago"
+  if (ago >= 730) return `${past} about ${Math.round(ago / 365.25)} years ago`;
+  if (ago > 90) return `${past} about ${Math.round(ago / 30.44)} months ago`;
   return `${past} ${ago} day${ago === 1 ? '' : 's'} ago`;
 }
 

@@ -12,6 +12,7 @@
 //   "when does the car insurance renew?"   → an answer card with the date
 //   "when does the fridge warranty expire?"
 
+import { activeDue } from './duestate.js'; // v15.22
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 const MONTH_WORDS = {};
 MONTHS.forEach((m, i) => { MONTH_WORDS[m] = i + 1; MONTH_WORDS[m.slice(0, 3)] = i + 1; });
@@ -33,7 +34,9 @@ const QUESTION_WORDS = {
   due: 'due',
 };
 const STOP = new Set(('when what which whats how much many does do did is are was were the my our a an for of in on at to from by '
-  + 'and with show find me i we all any date will it its this that there their your please tell give list').split(' '));
+  + 'and with show find me i we all any date will it its this that there their your please tell give list '
+  // v15.22: "how much did I spend at Screwfix" is about Screwfix, not the word "spend"
+  + 'spend spent spending cost costs costing paid pay total money').split(' '));
 
 export function normalise(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -111,8 +114,17 @@ function titleMonth(e) {
   for (let i = 0; i < t.length; i++) if (MONTH_WORDS[t[i]] && /^\d{4}$/.test(t[i + 1] || '')) return { month: MONTH_WORDS[t[i]], year: Number(t[i + 1]) };
   return null;
 }
+// v15.22: the month a bill covers, worked out from the readings (stats.js
+// coverMonths, passed in as `cover`), so Ask adds up a year's bills the same
+// way as the Electricity page; the title's month if there's no cover month.
+let coverMap = null;
+function billMonth(e) {
+  const k = coverMap && coverMap.get(e.id);
+  if (k) return { month: Number(k.slice(5, 7)), year: Number(k.slice(0, 4)) };
+  return titleMonth(e);
+}
 function monthMatches(e, month, year) {
-  const tm = e.type === 'meter' ? titleMonth(e) : null;
+  const tm = e.type === 'meter' ? billMonth(e) : null;
   if (tm) return tm.month === month && (!year || tm.year === year);
   const d = e.date || '';
   return Number(d.slice(5, 7)) === month && (!year || d.startsWith(String(year)));
@@ -127,7 +139,8 @@ const VERB = { insurance: 'renews', warranty: 'expires', job: 'is due' };
  *              'nodate' { entry, verb }   (found it, but it has no date)
  *              'none'  { text }
  */
-export function search(entries, q, { now = new Date(), sectionWords = true } = {}) {
+export function search(entries, q, { now = new Date(), sectionWords = true, cover = null } = {}) {
+  coverMap = cover;
   const p = parseQuery(q, now, { sectionWords });
   if (!normalise(q)) return { query: p, results: [], fuzzy: false, answer: null };
   let pool = entries;
@@ -137,7 +150,7 @@ export function search(entries, q, { now = new Date(), sectionWords = true } = {
     const dated = pool.filter((e) => VERB[e.type]);
     if (dated.length) pool = dated;
   }
-  if (p.year && !p.question) pool = pool.filter((e) => (p.month ? monthMatches(e, p.month, p.year) : (e.type === 'meter' && titleMonth(e) ? monthMatchesAnyInYear(e, p.year) : (e.date || '').startsWith(String(p.year)))));
+  if (p.year && !p.question) pool = pool.filter((e) => (p.month ? monthMatches(e, p.month, p.year) : (e.type === 'meter' && billMonth(e) ? monthMatchesAnyInYear(e, p.year) : (e.date || '').startsWith(String(p.year)))));
   else if (p.month && !p.question) pool = pool.filter((e) => monthMatches(e, p.month, null));
 
   const scored = [];
@@ -153,9 +166,9 @@ export function search(entries, q, { now = new Date(), sectionWords = true } = {
   const byScore = (a, b) => b.score - a.score || (b.entry.date || '').localeCompare(a.entry.date || '');
   // Prefer exact matches; typo matches only if there are no exact ones.
   let results = scored.filter((r) => r.exact !== false);
-  let fuzzy = false;
+  let fuzzy = false, someWords = false;
   if (!results.length && scored.length) { results = scored; fuzzy = true; }
-  if (!results.length && partial.length && p.words.length > 1) { results = partial; fuzzy = true; }
+  if (!results.length && partial.length && p.words.length > 1) { results = partial; fuzzy = true; someWords = true; }
   results.sort(byScore);
 
   let answer = null;
@@ -163,21 +176,23 @@ export function search(entries, q, { now = new Date(), sectionWords = true } = {
     // Equally good matches: the one coming up soonest first.
     const soon = (r) => { const d = r.entry.dueDate || ''; return d >= now.toISOString().slice(0, 10) ? d : '9' + d; };
     results.sort((a, b) => b.score - a.score || soon(a).localeCompare(soon(b)));
-    const best = results.find((r) => r.entry.dueDate) || results[0];
+    // v15.22: a renewed / ended policy or a dismissed date isn't the answer (or an "Also")
+    const live = new Set(activeDue(entries).map((e) => e.id));
+    const best = results.find((r) => r.entry.dueDate && live.has(r.entry.id)) || results.find((r) => r.entry.dueDate) || results[0];
     if (!best) answer = { kind: 'none', text: `I couldn’t find ${p.words.length ? `“${p.words.join(' ')}”` : 'anything'} with ${p.question === 'renew' ? 'a renewal' : p.question === 'expire' ? 'an expiry' : 'a due'} date.` };
     else if (!best.entry.dueDate) answer = { kind: 'nodate', entry: best.entry, verb: VERB[best.entry.type] || 'is due' };
     else {
       const [y, m, d] = best.entry.dueDate.slice(0, 10).split('-').map(Number);
       const days = Math.round((Date.UTC(y, m - 1, d) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
-      const others = results.filter((r) => r !== best && r.entry.dueDate && r.score === best.score).slice(0, 2).map((r) => r.entry);
+      const others = results.filter((r) => r !== best && r.entry.dueDate && live.has(r.entry.id) && r.score === best.score).slice(0, 2).map((r) => r.entry);
       answer = { kind: 'date', entry: best.entry, verb: VERB[best.entry.type] || 'is due', date: best.entry.dueDate.slice(0, 10), days, others };
     }
   }
-  return { query: p, results, fuzzy, answer };
+  return { query: p, results, fuzzy, someWords, answer };
 }
 
 function monthMatchesAnyInYear(e, year) {
-  const tm = titleMonth(e);
+  const tm = billMonth(e);
   return Boolean(tm && tm.year === year);
 }
 

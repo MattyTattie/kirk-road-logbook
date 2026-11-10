@@ -847,7 +847,7 @@ export function parseDocument(text, { today = new Date() } = {}) {
     // (which is the day after the period ends).
     result.date = meter.closingDate || (meter.periodEnd ? addDays(meter.periodEnd, 1) : pickDate(allLines, defaultYear));
     const month = meter.periodStart && meter.periodEnd ? billMonth(meter.periodStart, meter.periodEnd) : '';
-    result.title = `${supplier || 'Energy'} bill${month ? ' ' + month : ''}${total ? ' - ' + gbp(total) : ''}`.replace(' - ', ' – ');
+    result.title = `${supplier || 'Energy'} bill${month ? ' ' + month : ''}`; // v15.22: no "– £amount" (it's on the card already)
     const bits = [];
     if (meter.periodStart) bits.push(`Period ${ukDate(meter.periodStart)} – ${ukDate(meter.periodEnd)}`);
     if (meter.used != null) bits.push(`Used ${meter.used} kWh`);

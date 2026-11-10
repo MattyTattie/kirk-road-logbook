@@ -25,7 +25,7 @@ export const TERMS = [
   ['vat', 'VAT', 'Tax added to energy bills, normally 5% for homes.', 'Electricity', 'VAT'],
   ['sunday', 'Sunday Saver credit', 'An EDF credit for using electricity in your Sunday Saver hours. It comes off the bill.', 'Electricity', 'Sunday Saver'],
   ['weekend', 'Weekend Saver credit', 'An EDF credit for electricity used at weekends on that tariff. It comes off the bill.', 'Electricity', 'Weekend Saver'],
-  ['credits', 'EDF credits', 'Money EDF takes off a bill (Sunday Saver, Weekend Saver and the like). “After credits” shows what you actually paid.', 'Electricity', 'EDF credits|after credits'],
+  ['credits', 'Bill credits', 'Money your supplier takes off a bill (Sunday Saver, Weekend Saver and the like). “After credits” shows what you actually paid.', 'Electricity', 'bill credits|EDF credits|after credits'],
   ['tariff', 'Tariff', 'The energy price plan you’re on: its unit rates and standing charge.', 'Electricity', 'tariff'],
   ['reading', 'Meter reading', 'The number on the meter. Two readings apart give the kWh used in between.', 'Electricity', 'meter readings?'],
   ['warranty', 'Warranty', 'The maker’s or shop’s promise to fix or replace something that goes wrong before the end date.', 'House', 'warranty|warranties|guarantee'],

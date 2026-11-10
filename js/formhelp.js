@@ -18,12 +18,23 @@ export function billMonthFromDate(iso) {
   return `${MON_SHORT[t.getUTCMonth()]} ${t.getUTCFullYear()}`;
 }
 
-// "EDF bill Sep 2025 – £101.16", the same as a scanned bill's title.
-export function billTitle({ supplier = '', date = '', cost = null } = {}) {
+// "EDF bill Sep 2025", the same as a scanned bill's title. v15.22: no
+// "– £101.16" on the end any more: the amount is on the right of every
+// card and big on the bill's own page (it showed two or three times).
+// `cost` is still accepted (older callers) but not used.
+export function billTitle({ supplier = '', date = '' } = {}) {
   const month = billMonthFromDate(date);
-  const amount = typeof cost === 'number' && isFinite(cost) && cost > 0
-    ? ` – £${cost.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '';
-  return `${String(supplier || '').trim() || 'Electricity'} bill${month ? ' ' + month : ''}${amount}`;
+  return `${String(supplier || '').trim() || 'Electricity'} bill${month ? ' ' + month : ''}`;
+}
+
+// v15.22: older bills were saved as "EDF bill Sep 2025 – £101.16". Shown
+// without the amount (the record isn't changed). Only an amount right at the
+// end, after a dash, on an electricity bill.
+export function shownTitle(e) {
+  const t = String((e && e.title) || '');
+  if (!e || e.type !== 'meter') return t;
+  const cut = t.replace(/\s+[–-]\s+£[\d,]+\.\d\d$/, '');
+  return cut.trim() ? cut : t;
 }
 
 // Does this title look like one Hearth made (so it's fine to update it as
@@ -48,11 +59,13 @@ export function moreDetailsOpen(entry = {}, { dueInside = false } = {}) {
 
 // Electricity tab: this year's bills shown, earlier years folded, newest
 // first. bills = entries with a date. Returns { current: [...], earlier: [{ year, items }] }.
-export function splitByYear(bills, year) {
+// v15.22: yearOf(e) says which year a bill counts in (the month it covers,
+// from stats.js); without it, the year of its date.
+export function splitByYear(bills, year, yearOf = null) {
   const current = [];
   const map = new Map();
   for (const b of bills) {
-    const y = Number(String(b.date || '').slice(0, 4));
+    const y = yearOf ? Number(yearOf(b)) || 0 : Number(String(b.date || '').slice(0, 4));
     if (y === year || !y) current.push(b);
     else { if (!map.has(y)) map.set(y, []); map.get(y).push(b); }
   }

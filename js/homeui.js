@@ -14,7 +14,9 @@ import * as weather from './weather.js';
 import { search, whenText } from './search.js';
 import { searchManuals } from './manuals.js';
 import { list as userManuals, searchUser } from './usermanuals.js';
-import { bills } from './stats.js';
+import { bills, coverMonths } from './stats.js';
+import { activeDue } from './duestate.js'; // v15.22
+import { shownTitle } from './formhelp.js'; // v15.22
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
 import * as native from './native.js';
@@ -34,11 +36,14 @@ export function houseFacts(everything, now = new Date()) {
   const latest = b[b.length - 1] || null;
   const prev = b.slice(-13, -1).map((x) => Number(x.cost)).filter((c) => c > 0);
   const average = prev.length ? prev.reduce((a, c) => a + c, 0) / prev.length : 0;
-  const due = everything.filter((e) => { const d = daysTo(e.dueDate, now); return d !== null && d >= 0 && d <= 30; }).length;
+  // v15.22: dismissed dates and replaced / ended policies don't count; overdue ones do (own chip)
+  const live = activeDue(everything);
+  const due = live.filter((e) => { const d = daysTo(e.dueDate, now); return d !== null && d >= 0 && d <= 30; }).length;
+  const overdue = live.filter((e) => e.type !== 'mortgage' && daysTo(e.dueDate, now) < 0).length;
   // Battery: a meter entry titled "...battery..." with the unit "%".
   const bat = everything.filter((e) => e.type === 'meter' && /battery/i.test(e.title || '') && /%/.test(e.meterUnit || '') && isFinite(Number(e.meterValue)) && e.meterValue !== '' && e.meterValue !== null)
     .sort((x, y) => (x.date || '').localeCompare(y.date || '')).pop();
-  return { latest, average, glow: glowLevel(latest && Number(latest.cost), average), due, battery: bat ? { pct: Number(bat.meterValue) } : null };
+  return { latest, average, glow: glowLevel(latest && Number(latest.cost), average), due, overdue, battery: bat ? { pct: Number(bat.meterValue) } : null };
 }
 
 // v14: "Show your local weather?" — set this phone's weather place, either
@@ -71,7 +76,7 @@ export function placePicker({ idp = 'place', onDone = () => {}, onCancel = null,
     el('p', { class: 'small muted place-note' }, 'Kept on this phone only. Your address is never sent.'));
 }
 
-export function houseCard(everything, { ask: askOn = true } = {}) {
+export function houseCard(everything, { ask: askOn = true, overdue = null } = {}) {
   const card = el('section', { class: 'house-card', id: 'house', 'aria-label': 'Your house at a glance' });
   const body = el('div', { class: 'house-body' });
   addTo(card, body);
@@ -82,6 +87,7 @@ export function houseCard(everything, { ask: askOn = true } = {}) {
     const phase = weather.sunPhase(now);
     const w = weather.cached(now);
     const f = houseFacts(everything, now);
+    if (overdue !== null) f.overdue = overdue; // v15.22: the same number as the Overdue list (it adds an ended mortgage deal)
     const pic = el('div', { class: 'house-pic' });
     pic.innerHTML = houseSVG({ phase, glow: f.glow, due: f.due, battery: f.battery, weather: w, moon: weather.moonPhase(now) });
     const words = weather.describe(w);
@@ -92,6 +98,7 @@ export function houseCard(everything, { ask: askOn = true } = {}) {
       chips.push(el('a', { class: 'hc-chip', href: `#/view/${f.latest.id}`, id: 'house-bill' }, icon('bolt', 14),
         `Last bill ${money(f.latest.cost)} · ${pct === 0 ? 'about average' : `${Math.abs(pct)}% ${pct > 0 ? 'above' : 'below'} average`}`));
     }
+    if (f.overdue) chips.push(el('a', { class: 'hc-chip overdue', href: '#overdue', id: 'house-overdue' }, icon('alert', 14), `${f.overdue} overdue`)); // v15.22
     if (f.due) chips.push(el('a', { class: 'hc-chip due', href: '#coming-up', id: 'house-due' }, icon('clock', 14), `${f.due} due within 30 days`));
     fill(body, pic, el('div', { class: 'house-caption' }, chips));
     card.dataset.phase = phase;
@@ -111,10 +118,10 @@ export function houseCard(everything, { ask: askOn = true } = {}) {
   const freshen = () => weather.refresh().then((w) => apply(w)).catch(() => {});
   // The flag (and the "due" chip) scroll to Coming up instead of changing page.
   card.addEventListener('click', (ev) => {
-    const a = ev.target.closest('a[href="#coming-up"]');
+    const a = ev.target.closest('a[href="#coming-up"], a[href="#overdue"]');
     if (!a) return;
     ev.preventDefault();
-    const target = document.getElementById('coming-up');
+    const target = document.getElementById(a.getAttribute('href') === '#overdue' ? 'overdue' : 'coming-up') || document.getElementById('coming-up');
     if (target) {
       target.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
       const h = target.querySelector('h2'); if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
@@ -147,7 +154,7 @@ function answerCard(answer) {
   const e = answer.entry;
   if (answer.kind === 'nodate') {
     return el('a', { class: 'answer-card', id: 'ask-answer', href: `#/view/${e.id}` }, icon(getSection(e.type).glyph, 20),
-      el('div', {}, el('strong', {}, e.title), el('p', {}, `No ${answer.verb === 'renews' ? 'renewal' : answer.verb === 'expires' ? 'expiry' : 'due'} date saved yet. Tap to add one.`)));
+      el('div', {}, el('strong', {}, shownTitle(e)), el('p', {}, `No ${answer.verb === 'renews' ? 'renewal' : answer.verb === 'expires' ? 'expiry' : 'due'} date saved yet. Tap to add one.`)));
   }
   const past = answer.days < 0;
   const verb = past ? { renews: 'renewed', expires: 'expired', 'is due': 'was due' }[answer.verb] : answer.verb;
@@ -155,7 +162,7 @@ function answerCard(answer) {
     el('a', { class: 'answer-card', id: 'ask-answer', href: `#/view/${e.id}`, 'data-tone': getSection(e.type).tone },
       el('span', { class: 'badge badge-md', 'data-tone': getSection(e.type).tone }, icon(getSection(e.type).glyph, 22)),
       el('div', { class: 'answer-text' },
-        el('span', { class: 'answer-title' }, e.title),
+        el('span', { class: 'answer-title' }, shownTitle(e)),
         el('span', { class: 'answer-date', id: 'ask-answer-date' }, `${verb} on ${niceDate(answer.date)}`),
         el('span', { class: 'answer-when' }, whenText(answer.days))),
       icon('chevron', 18)),
@@ -173,7 +180,7 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
     if (hints) hints.hidden = Boolean(q);
     if (!q) { results.replaceChildren(); return; }
     const entries = await getEntries();
-    const r = search(entries, q);
+    const r = search(entries, q, { cover: coverMonths(entries) }); // v15.22: bills by the month they cover
     const shown = r.results.slice(0, 40).map((x) => x.entry);
     const total = shown.reduce((a, e) => a + (e.type === 'insurance' ? 0 : Number(e.cost) || 0), 0);
     const p = r.query;
@@ -201,7 +208,7 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
       answerCard(r.answer),
       r.results.length ? null : manualHits,
       el('p', { class: 'ask-summary', id: 'ask-summary' }, r.results.length
-        ? `${r.results.length} ${r.results.length === 1 ? (scope === 'entries' ? 'entry' : scope.replace(/ies\b/, 'y').replace(/s\b/, '')) : scope}${r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) : ''}`
+        ? `${r.results.length} ${r.results.length === 1 ? (scope === 'entries' ? 'entry' : scope.replace(/ies\b/, 'y').replace(/s\b/, '')) : scope}${r.someWords ? ' (matching some of your words)' : r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) : ''}`
         : count ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`),
       el('div', { class: 'list', id: 'ask-list' }, shown.map(entryCard)),
       r.results.length ? manualHits : null);
@@ -278,7 +285,9 @@ export function tilesSection({ everything, sectionTile, thisYear, onChange = () 
     const current = y === now.getFullYear();
     title.textContent = current ? `${y} so far` : `In ${y}`;
     sub.hidden = !(current && rolling) || editing; // while editing, the drag hint takes its place
-    sub.textContent = sub.hidden ? '' : `Calendar year, 1 Jan – ${now.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][now.getMonth()]}`;
+    // v15.22: on New Year's Day it said "1 Jan – 1 Jan"
+    sub.textContent = sub.hidden ? '' : now.getMonth() === 0 && now.getDate() === 1 ? 'Calendar year: just today (1 Jan) so far'
+      : `Calendar year, 1 Jan – ${now.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][now.getMonth()]}`;
     box.dataset.year = String(y);
     const shown = prefs.orderedSections();
     fill(grid, ...shown.map((s) => {

@@ -256,6 +256,17 @@ export function overview(everything, { saveSetup = null } = {}) {
         s.reminders.length ? el('a', { class: 'mrow mrow-link', id: 'deal-reminders', href: '#/upcoming/mortgage', 'aria-label': `Reminders: ${reminderText(s.reminders)}. Open Coming up` },
           el('span', { class: 'mrow-k' }, 'Reminders'), el('span', { class: 'mrow-v' }, reminderText(s.reminders), el('small', {}, '6, 3 and 1 month before · see all ›'))) : null));
 
+    // v15.22: the deal has ended and nothing newer is logged: say so, once,
+    // with the two ways out (a new statement, or "I'm on the standard rate").
+    const endTarget = s.latest || s.setup;
+    if (d.end && daysUntil(d.end) < 0 && endTarget && String(endTarget.dueDismissed || '').slice(0, 10) !== String(d.end).slice(0, 10)) {
+      deal.prepend(el('div', { class: 'nudge nudge-warn', id: 'mortgage-deal-ended', role: 'note' },
+        el('p', {}, el('strong', {}, `This deal ended on ${niceDate(d.end)}.`), ' Add your new deal’s statement (or its rate and end date) so the figures stay right.'),
+        el('div', { class: 'nudge-actions' },
+          el('a', { class: 'btn small', href: '#/new/mortgage', id: 'mortgage-add-new-deal' }, 'Add the new deal'),
+          saveSetup ? el('button', { type: 'button', class: 'btn small secondary', id: 'mortgage-on-svr', onclick: () => saveSetup({ ...endTarget, dueDismissed: String(d.end).slice(0, 10) }, 'Hidden: on the standard rate') }, 'I’m on the standard rate: hide this') : null)));
+    }
+
     // 3. Overpayments and interest per year
     const yrs = s.years;
     const anyEst = yrs.some((y) => y.est);

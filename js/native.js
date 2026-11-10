@@ -21,7 +21,7 @@
 // Only inside the installed app (not in a normal Chrome tab), and only
 // after you've turned phone reminders on.
 
-import { withoutSuperseded } from './mortgage.js';
+import { activeDue } from './duestate.js'; // v15.22 (latest mortgage statement only, as before)
 
 const PKG = 'io.github.mattytattie.hearthbook';
 const K_APP = 'hearthbook.app';         // "yes" once we've seen we're inside the Android app
@@ -75,7 +75,7 @@ const dayNum = (iso) => { const [y, m, d] = iso.split('-').map(Number); return D
 export function payload(entries, now = new Date(), notified = {}) {
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000;
   // v14.7: a mortgage is named "Santander mortgage" (the app adds "deal ends in 30 days")
-  const items = withoutSuperseded(entries)
+  const items = activeDue(entries)
     .filter((e) => WORD[e.type] && /^\d{4}-\d\d-\d\d/.test(e.dueDate || ''))
     .map((e) => ({ i: String(e.id).slice(0, 80), t: String(e.type === 'mortgage' ? `${e.supplier || ''} mortgage`.trim() : e.title || 'Entry').slice(0, 60), d: e.dueDate.slice(0, 10), w: WORD[e.type] }))
     .filter((x) => { const n = dayNum(x.d) - today; return n >= 0 && n <= 400; })

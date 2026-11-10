@@ -5,7 +5,7 @@
 // they're easy to reason about and never touch the database.
 
 import { daysUntil, totalCost } from './utils.js';
-import { withoutSuperseded } from './mortgage.js';
+import { activeDue } from './duestate.js'; // v15.22
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -23,9 +23,15 @@ const hasNumber = (v) => v !== null && v !== undefined && v !== '' && isFinite(N
 export const isSpend = (e) => e.type !== 'insurance' && (e.type !== 'mortgage' || Boolean(e.mortgagePaid)); // v14.7: a mortgage isn't spending (v14.8: unless the "Include mortgage" switch adds its payments)
 
 // Total spent in a calendar year (every entry with a cost, bills included).
-export function spendInYear(entries, year) {
-  return totalCost(entries.filter((e) => isSpend(e) && (e.date || '').startsWith(String(year))));
+// v15.22: an energy bill counts in the year of the month it covers (the
+// December bill paid on 3 Jan is last year's), like the charts, the
+// Electricity page, Year in review and Ask Hearth.
+export function spendInYear(entries, year, { cover = null } = {}) {
+  const cv = cover || coverMonths(entries);
+  return totalCost(entries.filter((e) => isSpend(e) && spendMonthKey(e, cv).startsWith(String(year))));
 }
+// v15.22: the year an entry counts in ("2025"): a bill's month covered, else its date.
+export const spendYear = (e, cover) => Number(spendMonthKey(e, cover).slice(0, 4)) || 0;
 
 // Years that have any dated entries, plus this year, oldest first.
 export function yearsWithData(entries, now = new Date()) {
@@ -116,13 +122,17 @@ export function monthlySpend(entries, count = 12, now = new Date(), { cover = nu
 
 // Things with a due/expiry date, soonest first. Past ones are left out.
 // v14.7: an older mortgage statement's deal end doesn't count (the latest does).
+// v15.22: nor a dismissed date, a renewed (replaced) or ended policy (duestate.js).
 export function upcoming(entries) {
-  return withoutSuperseded(entries)
-    .filter((e) => e.dueDate && daysUntil(e.dueDate) >= 0)
+  return activeDue(entries)
+    .filter((e) => daysUntil(e.dueDate) >= 0)
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
+// v15.22: past dates still to deal with, oldest first. A mortgage deal end
+// isn't here (it has its own "deal ended" line, mortgageEnded in app.js).
 export function overdue(entries) {
-  return withoutSuperseded(entries).filter((e) => e.dueDate && daysUntil(e.dueDate) < 0);
+  return activeDue(entries).filter((e) => e.type !== 'mortgage' && daysUntil(e.dueDate) < 0)
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 
 // Meter entries that have a reading, oldest first.
@@ -203,7 +213,8 @@ export function insurancePaidInYear(e, year, now = new Date()) {
 // that cost something (or were running) that year; everything else counts
 // entries dated in that year.
 export function sectionYear(entries, sectionId, year, now = new Date()) {
-  const items = entries.filter((e) => e.type === sectionId);
+  // v15.22: reminders are stored as jobs but aren't jobs done (the Jobs list leaves them out too)
+  const items = entries.filter((e) => e.type === sectionId && !(e.type === 'job' && e.reminder && typeof e.reminder === 'object'));
   if (sectionId === 'insurance') {
     let total = 0, count = 0;
     for (const e of items) {
@@ -214,7 +225,9 @@ export function sectionYear(entries, sectionId, year, now = new Date()) {
     }
     return { count, total: Math.round(total * 100) / 100 };
   }
-  const inYear = items.filter((e) => (e.date || '').startsWith(String(year)));
+  // v15.22: bills count in the year of the month they cover
+  const cover = sectionId === 'meter' ? coverMonths(entries) : null;
+  const inYear = items.filter((e) => spendMonthKey(e, cover).startsWith(String(year)));
   return { count: inYear.length, total: totalCost(inYear) };
 }
 
@@ -244,9 +257,13 @@ export function meterSummary(entries, year = 0, now = new Date()) {
     const iv = all.slice(-12);
     const used = iv.reduce((t, x) => t + x.used, 0), days = iv.reduce((t, x) => t + x.days, 0);
     const keys = new Set(iv.map((x) => midMonthKey(x.from.date, x.to.date)));
+    // v15.22: with fewer than two readings there are no periods yet, so the
+    // bills of the last 12 months (by the month they cover) count instead
+    // (it said "£0 · 0 bills" while two bills were listed).
+    if (!iv.length) for (let i = 0; i < 12; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); keys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); }
     const bl = billList.filter((b) => keys.has(spendMonthKey(b, cover)));
     return { ...out, used, days, perDay: days ? used / days : null, from: iv.length ? iv[0].from.date : null, to: iv.length ? iv[iv.length - 1].to.date : null,
-      billsTotal: totalCost(bl), billsCount: bl.length, ...billCredits(bl), reading: { value: out.latest.value, date: latest.date, kind: 'latest' } };
+      billsTotal: totalCost(bl), billsCount: bl.length, ...billCredits(bl), ...billSpan(bl, cover), reading: { value: out.latest.value, date: latest.date, kind: 'latest' } };
   }
   const months = monthlyUsage(entries, year);
   const used = Math.round(months.reduce((t, m) => t + m.value, 0) * 10) / 10;
@@ -277,7 +294,12 @@ export function meterSummary(entries, year = 0, now = new Date()) {
     partialStart: first !== null && first > y0,
     soFar: year === now.getFullYear(),
     missingDays: first === null ? 0 : (last - first) - days,
-    billsTotal: totalCost(bl), billsCount: bl.length, ...billCredits(bl), reading };
+    billsTotal: totalCost(bl), billsCount: bl.length, ...billCredits(bl), ...billSpan(bl, cover), reading };
+}
+// v15.22: the first and last month the bills cover ("2025-12", "2026-10").
+function billSpan(list, cover) {
+  const keys = list.map((b) => spendMonthKey(b, cover)).filter(Boolean).sort();
+  return { billsFrom: keys[0] || null, billsTo: keys[keys.length - 1] || null };
 }
 
 // ---------- v14.5: EDF credits printed on a bill ----------
