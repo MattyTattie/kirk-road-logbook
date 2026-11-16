@@ -1753,3 +1753,12 @@ body.pdf-open main { padding-bottom: 40px; }
   .dash > #overdue > .list > * { margin: 0; min-width: 0; }
   .dash > #overdue .up-text strong { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
 }
+
+/* v15.23: Spending card has three buttons (All / Electricity / Receipts).
+   On a phone they get their own full-width row under the title, so the
+   title and total stay on one line each. */
+@media (max-width: 599px) {
+  #spend-chart > .card-head { flex-wrap: wrap; row-gap: 8px; }
+  #spend-chart > .card-head > .seg { width: 100%; margin-bottom: 6px; }
+  #spend-chart > .card-head > .seg .seg-btn { flex: 1; }
+}

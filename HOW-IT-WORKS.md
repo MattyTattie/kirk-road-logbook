@@ -1043,3 +1043,11 @@ On a Mac the cards flow in independent-height columns with compact gaps. The man
 - **Long lists** (Logbook All, Receipts…) show 60 at a time with "Show N more".
 - Wording: "Bill credits"/"after credits" (not EDF-only); "expired about 3 years ago" (not "1143 days ago"); amounts under £10 keep their pence on tiles; the Jobs tile counts jobs (not reminders); Ask only says "closest matches" when it had to guess.
 - New optional fields (`dueDismissed`, `renewedBy`, `policyEnded`) are extra: older copies of Hearth ignore them, and old backups restore as before. DB name, section ids, sync v3 and backup v1 formats are unchanged.
+
+## v15.23 — Spending card: All / Electricity / Receipts
+
+- The Home Spending card's buttons are now **All / Electricity / Receipts**. "Electricity" is the old "Bills" button with a clearer name: it only ever counted electricity bills (type `meter`). Only the label changed; the internal mode value is still `bills`.
+- **Receipts** (new, mode `receipts`) shows everyday spending: every cost except electricity bills — receipts, jobs, kit/warranties with a cost. Payments added by the "Include mortgage" switch are left out of Receipts too (they aren't receipts). Insurance was never in the spending totals and still isn't.
+- Everything on the card follows the button: the bars, the "Last 12 months · £…" total, the month card (spent, entries, the list) and the "vs last month" pill. The 12 months / year chips work the same in all three modes. The "bills by the month they cover" note is hidden in Receipts, where there are no bills.
+- On a phone (under 600px wide) the three buttons sit on their own full-width row under the title, so the title and total stay on one line each.
+- The chosen mode is not saved anywhere (in memory only), so no data, DB, section ids, sync or backup format changes.

@@ -72,7 +72,7 @@ const WELCOME_KEY = 'hearthbook.welcomed';
 // Things we remember while the app is open (not saved to the database).
 const state = {
   query: '', // what's typed in the search box
-  chartMode: 'all', // dashboard chart: 'all' spending or just 'bills'
+  chartMode: 'all', // dashboard chart: 'all' spending, just 'bills' (shown as "Electricity") or 'receipts' (everything but bills, v15.23)
   chartPick: -1, // which bar is tapped
   chartYear: 0, // dashboard chart: 0 = last 12 months, or a calendar year
   meterYear: 0, // meter chart: 0 = "Last 12 months" (the last 12 periods between readings), or a calendar year
@@ -551,7 +551,10 @@ async function renderHome() {
     // v14.5: the Electricity page's "After EDF credits" switch also applies to these bars.
     const netOn = prefs.afterCreditsOn() && everything.some((e) => e.type === 'meter' && creditsOf(e).length);
     const base = withMortgage(netOn ? afterCredits(everything) : everything);
-    const source = state.chartMode === 'bills' ? base.filter((e) => e.type === 'meter') : base;
+    // v15.23: "Receipts" = everyday spending: everything except electricity bills
+    // (and the "Include mortgage" payments, which aren't receipts).
+    const source = state.chartMode === 'bills' ? base.filter((e) => e.type === 'meter')
+      : state.chartMode === 'receipts' ? base.filter((e) => e.type !== 'meter' && !e.mortgagePaid) : base;
     const yr = state.chartYear;
     // v14.1: energy bills count under the month they cover (3 Sep–3 Oct → Sep),
     // the same month the Electricity page shows them under.
@@ -596,12 +599,12 @@ async function renderHome() {
     fill(chartCard,
       el('div', { class: 'card-head' },
         el('div', {}, el('h2', { class: 'card-title', id: 'chart-title' }, 'Spending'), sub),
-        el('div', { class: 'seg', role: 'group', 'aria-label': 'Chart shows' }, seg('all', 'All'), seg('bills', 'Bills'))
+        el('div', { class: 'seg', role: 'group', 'aria-label': 'Chart shows' }, seg('all', 'All'), seg('bills', 'Electricity'), seg('receipts', 'Receipts')) // v15.23: 'bills' kept as the internal value
       ),
       yearPicker('chart-years', years, yr, (y) => { state.chartYear = y; state.chartPick = -1; drawChart(); }, '12 months'),
       chart,
       yr ? el('p', { class: 'chart-legend' }, el('i', { class: 'lg-now' }), String(yr), el('i', { class: 'lg-then' }), String(yr - 1)) : null,
-      cover.size ? infoNote(`Energy bills count for the months used (the month each bill covers)${netOn ? ', after credits' : ''}. Insurance isn’t included.`, { id: 'chart-cover-note', cls: 'chart-hint', label: 'What the bars count' }) : null,
+      cover.size && state.chartMode !== 'receipts' ? infoNote(`Energy bills count for the months used (the month each bill covers)${netOn ? ', after credits' : ''}. Insurance isn’t included.`, { id: 'chart-cover-note', cls: 'chart-hint', label: 'What the bars count' }) : null,
       card); // fill() skips the null (replaceChildren would print it as "null")
     drawTiles(); // the tiles follow the year picker
   }
