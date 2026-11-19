@@ -40,6 +40,19 @@ export function yearsWithData(entries, now = new Date()) {
   return [...ys].sort();
 }
 
+// v16.0: the Spending card's years: this year plus years with money spent in
+// them (a warranty with no cost no longer adds a £0 year).
+export function yearsWithSpend(entries, now = new Date()) {
+  const cover = coverMonths(entries);
+  const ys = new Set([now.getFullYear()]);
+  for (const e of entries) {
+    if (!isSpend(e) || !Number(e.cost)) continue;
+    const y = Number(spendMonthKey(e, cover).slice(0, 4));
+    if (y > 1990 && y <= now.getFullYear()) ys.add(y);
+  }
+  return [...ys].sort();
+}
+
 // v14.1: the month a period between two readings mostly covers = the month
 // of its middle day. 3 Sep → 3 Oct is "Sep" (middle day 18 Sep).
 export function midMonthKey(fromIso, toIso) {
@@ -337,4 +350,23 @@ export function billCredits(list) {
   }
   for (const k of Object.keys(credits)) credits[k] /= 100;
   return { billsNet: net / 100, credits };
+}
+
+// v16.0: what the house costs to run each month, now: the mortgage payment
+// (plus any regular overpayment), current insurance per month, and the
+// average electricity bill over the last 12 months of bills. Each part is
+// null when there's nothing to go on. `mortgage` = { payment, extra } or null;
+// `policies` = the current policies; `afterCreditsOn` follows the switch.
+export function runningCost(entries, { mortgage = null, policies = [], afterCreditsOn = false, now = new Date() } = {}) {
+  const cover = coverMonths(entries);
+  const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const start = (() => { const d = new Date(now.getFullYear(), now.getMonth() - 12, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; })();
+  const billsIn = entries.filter((e) => e.type === 'meter' && Number(e.cost) > 0).filter((e) => { const k = spendMonthKey(e, cover); return k >= start && k < end; });
+  const months = new Set(billsIn.map((e) => spendMonthKey(e, cover)));
+  const elecTotal = billsIn.reduce((t, e) => t + Math.round((afterCreditsOn && creditsOf(e).length ? netCost(e) : Number(e.cost)) * 100), 0) / 100;
+  const electricity = months.size ? Math.round(elecTotal / months.size * 100) / 100 : null;
+  const insurance = policies.length ? Math.round(policies.reduce((t, e) => t + (e.costFreq === 'monthly' ? Number(e.cost) || 0 : (Number(e.cost) || 0) / 12), 0) * 100) / 100 : null;
+  const mort = mortgage && Number(mortgage.payment) > 0 ? Math.round((Number(mortgage.payment) + (Number(mortgage.extra) || 0)) * 100) / 100 : null;
+  const parts = [mort, insurance, electricity].filter((v) => v !== null);
+  return { mortgage: mort, overpay: mortgage ? Number(mortgage.extra) || 0 : 0, insurance, electricity, electricityMonths: months.size, total: parts.length ? Math.round(parts.reduce((a, b) => a + b, 0) * 100) / 100 : null };
 }

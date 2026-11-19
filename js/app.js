@@ -26,7 +26,7 @@
 // into the <main id="app"> box. A nice side effect: the phone's Back button
 // works, because each screen has its own address in the history.
 
-import { SECTIONS, getSection, SOON_DAYS, BACKUP_REMINDER_DAYS, soonDaysFor, INSURANCE_TYPES, insuranceTypeLabel, annualCost } from './sections.js';
+import { SECTIONS, getSection, SOON_DAYS, BACKUP_REMINDER_DAYS, soonDaysFor, INSURANCE_TYPES, insuranceTypeLabel, annualCost, insKindOf, insStore } from './sections.js';
 import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
@@ -35,7 +35,7 @@ import { el, fill, addTo, addFirst, infoNote, keepPlace, resultBox, moreInfo, mo
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
 import { periodCard } from './periodcard.js';
-import { spendYear, sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey, meterSummary, creditsOf, creditTotal, netCost, afterCredits, creditLabel, CREDIT_TYPES } from './stats.js';
+import { spendYear, sectionYear, spendInYear, monthlySpend, yearSpend, yearsWithData, monthlyUsage, isSpend, yearsWithSpend, runningCost, upcoming, overdue, readings, usageIntervals, bills, monthName, midMonthKey, coverMonths, spendMonthKey, meterSummary, creditsOf, creditTotal, netCost, afterCredits, creditLabel, CREDIT_TYPES } from './stats.js';
 import { vatFor, allInNote, allInPence } from './vat.js';
 import { ratesFromText, ratesToText } from './tariff.js';
 import { getTheme, setTheme, applyTheme } from './theme.js';
@@ -383,7 +383,7 @@ function renderWelcome() {
         'ul',
         { class: 'welcome-points' },
         point('receipt', 'teal', 'Snap it, file it', 'Photograph receipts and labels; they’re shrunk to save space.'),
-        point('shield', 'violet', 'Never miss an expiry', 'Warranties and services due in the next 60 days are flagged.'),
+        point('shield', 'violet', 'Never miss an expiry', `Warranties, renewals and jobs due within ${SOON_DAYS} days are flagged.`),
         point('lock', 'indigo', 'Private by design', 'Everything stays on this phone unless you turn on sharing with your own Google Drive. Works offline.')
       ),
       el('div', { class: 'welcome-actions' },
@@ -545,7 +545,7 @@ async function renderHome() {
 
   // --- Spending chart ---
   const chartCard = el('section', { class: 'card chart-card', id: 'spend-chart', 'aria-labelledby': 'chart-title' });
-  const years = yearsWithData(everything); // v15.22: every year with something in it (was the last 3)
+  const years = yearsWithSpend(everything); // v16.0: years with spending in them (v15.22: every year with anything)
   if (state.chartYear && !years.includes(state.chartYear)) state.chartYear = 0;
   function drawChart() {
     // v14.5: the Electricity page's "After EDF credits" switch also applies to these bars.
@@ -611,10 +611,13 @@ async function renderHome() {
   drawChart();
 
   // --- Coming up & recent ---
-  const soonList = upcoming(everything).slice(0, 3);
+  // v16.0: everything due in the next SOON_DAYS (30) days, the same things the
+  // house's "N due within 30 days" chip counts (was the first 3 + renewals);
+  // with nothing that close, just the next one.
+  const within = upcoming(everything).filter((e) => daysUntil(e.dueDate) <= SOON_DAYS);
+  const soonList = within.length ? within : upcoming(everything).filter((e) => e.type !== 'mortgage').slice(0, 1);
   // v15.22: overdue things get their own strip above Coming up (they never showed on Home)
   const overdueBox = overdueStrip(everything);
-  for (const e of renewSoon) if (!soonList.includes(e)) soonList.push(e);
   // v14.7: a mortgage deal ending within 6 months is always in Coming up.
   for (const e of upcoming(everything)) if (e.type === 'mortgage' && daysUntil(e.dueDate) <= soonDaysFor(e) && !soonList.includes(e)) soonList.push(e);
   const recent = everything.filter((e) => !rem.isReminder(e)).slice(0, 4);
@@ -628,8 +631,8 @@ async function renderHome() {
 
   const comingUp = soonList.length
     ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
-        el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up'), comingUpLink()),
-        el('div', { class: 'list' }, soonList.map((e) => entryCard(e.type === 'mortgage' ? { ...e, title: `${e.supplier || 'Mortgage'} deal ends ${niceDate(e.dueDate)}` } : e))),
+        el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up', within.length ? el('small', { class: 'group-sub', id: 'coming-up-window' }, ` next ${SOON_DAYS} days`) : null), comingUpLink()),
+        el('div', { class: 'list' }, soonList.map((e) => entryCard(e.type === 'mortgage' ? { ...e, title: `${e.supplier || 'Mortgage'} deal ends ${niceDate(e.dueDate)}` } : { ...e, __upcoming: true }))),
         remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
     : null;
   const banner = await backupReminder(everything);
@@ -720,18 +723,21 @@ function sectionTile(s, everything, year) {
       sectionBadge(s), el('span', { class: 'tile-label' }, s.label), el('span', { class: 'tile-meta', id: 'mortgage-tile-meta' }, t ? t.meta : 'Nothing yet'),
       t ? el('span', { class: 'tile-note', id: 'mortgage-tile-note' }, t.note) : null,
       // v15.22: how old the balance is (it's the latest statement's figure)
-      t && t.asAt && !/^at /.test(t.note || '') ? el('span', { class: 'tile-note tile-asat', id: 'mortgage-tile-asat' }, `as at ${niceDate(t.asAt)}`) : null);
+      t && t.asAt && !/^at /.test(t.note || '') ? el('span', { class: 'tile-note tile-asat', id: 'mortgage-tile-asat' }, t.estimate ? `estimate, from ${niceDate(t.asAt)}` : `as at ${niceDate(t.asAt)}`) : null);
   }
-  const meta = !count ? `None in ${year}`
-    : ins ? `${count} polic${count === 1 ? 'y' : 'ies'} · ${pounds}`
-    // v15.20: "11 bills this year · £1,278" (was "11 · £1,278 / by date paid, as charged")
-    : s.id === 'meter' ? `${count} bill${count === 1 ? '' : 's'} ${thisYear ? 'this year' : `in ${year}`}${total ? ` · ${pounds}` : ''}`
-    : total ? `${count} · ${pounds}` : `${count} logged`;
+  // v16.0: every tile reads "N things · £X" ("3 jobs · £115", "10 bills · £1,293",
+  // "2 warranties"); was "3 · £115", "10 bills this year · £1,293", "2 logged".
+  const NOUN = { job: ['job', 'jobs'], receipt: ['receipt', 'receipts'], warranty: ['warranty', 'warranties'], meter: ['bill', 'bills'], insurance: ['policy', 'policies'] };
+  const [one, many] = NOUN[s.id] || [String(s.single || 'entry').toLowerCase(), `${String(s.single || 'entrie').toLowerCase()}s`];
+  const meta = !count ? `None in ${year}` : `${count} ${count === 1 ? one : many}${total ? ` · ${pounds}` : ''}`;
+  // insurance: the tile counts every policy paid for in the year (pro rata), so
+  // say how many of them are current now when that's different (Insurance list)
+  const cur = ins && count ? everything.filter((e) => e.type === 'insurance' && ['current', 'lapsed'].includes(due.policyStatus(e, everything, todayISO()))).length : 0;
   return el('a', { class: 'section-tile', href: `#/list/${s.id}`, 'data-tone': s.tone, 'data-section': s.id, 'data-year': String(year) },
     sectionBadge(s),
     el('span', { class: 'tile-label' }, s.label),
     el('span', { class: 'tile-meta' }, meta),
-    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata`) : null);
+    ins && count ? el('span', { class: 'tile-note' }, `${thisYear ? 'paid so far' : 'paid'} in ${year}, pro rata${thisYear && cur !== count ? ` · ${cur} current` : ''}`) : null);
 }
 
 // ---------------------------------------------------------------------
@@ -765,17 +771,16 @@ async function renderList(type, year = 0) {
 
   // --- "Coming up" banner on the All screen: things due/expiring soon ---
   if (type === 'all') {
-    const soon = everything.filter((e) => {
-      const d = daysUntil(e.dueDate);
-      return d !== null && d >= 0 && d <= soonDaysFor(e);
-    });
+    // v16.0: the same "soon" as Home (due in the next 30 days, not dismissed,
+    // replaced or ended); was "due or expiring in the next 60 days".
+    const soon = upcoming(await db.getAllEntries()).filter((e) => daysUntil(e.dueDate) <= SOON_DAYS); // reminders too, like Home
     if (soon.length) {
       screen.push(
         el(
           'a',
-          { class: 'banner soon', href: `#/list/${new Set(soon.map((e) => e.type)).size === 1 ? soon[0].type : 'warranty'}`, id: 'soon-banner' },
+          { class: 'banner soon', href: '#/upcoming', id: 'soon-banner' },
           el('span', { class: 'banner-icon' }, icon('clock', 20)),
-          el('span', { class: 'banner-body' }, `${soon.length} item${soon.length === 1 ? '' : 's'} due or expiring in the next ${SOON_DAYS} days`),
+          el('span', { class: 'banner-body' }, `${soon.length} due within ${SOON_DAYS} days`),
           icon('chevron', 18)
         )
       );
@@ -867,7 +872,7 @@ async function renderList(type, year = 0) {
         el('div', { class: 'year-fold-list' }, past.map((e) => entryCard({ ...e, __status: st(e) === 'ended' ? `Ended${typeof e.policyEnded === 'string' ? ' ' + niceDate(e.policyEnded) : ''}` : 'Renewed' })))) : null;
       fill(list, ...(byRenewal.length ? [...live.map((e) => entryCard(e)), pastFold]
         : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
-            el('p', {}, q ? 'Nothing matches your search.' : 'No insurance policies yet. Tap + to add home, car or life cover and get a reminder before each renewal.'))]));
+            el('p', {}, q ? 'Nothing matches your search.' : 'No insurance policies yet. Tap + to add home, car, pet or other cover and get a reminder before each renewal.'))]));
       return;
     }
 
@@ -1389,7 +1394,8 @@ function periodDetail(interval, prev, everything) {
 
 // "12 months | 2024 | 2025 | 2026" chips above a chart. 0 = the default view.
 // v13.5: { newestFirst: true } lists the years 2026, 2025, 2024 (Electricity page).
-function yearPicker(id, years, current, onPick, defaultLabel, { newestFirst = false } = {}) {
+// v16.0: newest year first everywhere (the Spending card was oldest first)
+function yearPicker(id, years, current, onPick, defaultLabel, { newestFirst = true } = {}) {
   const chip = (y, label) => el('button', { type: 'button', class: 'year-chip' + (current === y ? ' active' : ''), 'aria-pressed': String(current === y), 'data-year': String(y), onclick: () => onPick(y) }, label);
   const list = newestFirst ? [...years].sort((a, b) => b - a) : years;
   return el('div', { class: 'year-picker', id, role: 'group', 'aria-label': 'Choose year' }, chip(0, defaultLabel), list.map((y) => chip(y, String(y))));
@@ -1447,8 +1453,10 @@ function entryCard(e) {
   const details = isRem
     ? ['Reminder', rem.repeatText(e.reminder), e.room].filter(Boolean).join(' · ')
     : isIns
-    ? [e.insType ? insuranceTypeLabel(e.insType) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
+    ? [insKindOf(e) ? insuranceTypeLabel(insKindOf(e)) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
     : isMort ? mortUI.cardLine(e)
+    // v16.0: in Home's Coming up, the date it's due (as on the Coming up page), not the date logged
+    : e.__upcoming && e.dueDate ? [section.single, `${section.dueWord === 'expires' ? 'ends' : 'due'} ${niceDate(e.dueDate)}`, e.supplier].filter(Boolean).join(' · ')
     : [e.type === 'meter' && Number(e.cost) > 0 ? `paid ${niceDate(e.date)}` : niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
   // v14.6: with "After EDF credits" on, a bill with credits shows what was paid after them.
   const netRow = e.type === 'meter' && prefs.afterCreditsOn() && creditsOf(e).length;
@@ -1489,7 +1497,7 @@ function renderSearch(initial = '') {
 // ---------------------------------------------------------------------
 // CHOOSER: "What do you want to add?"
 // ---------------------------------------------------------------------
-const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car and life policies', mortgage: 'Annual statements, monthly payments, your deal and balance' };
+const BLURB = { job: 'Work done, services, repairs', receipt: 'Things you bought', warranty: 'Cover and expiry dates', meter: 'A bill, or just a meter reading', insurance: 'Home, car, pet, travel and more', mortgage: 'Annual statements, monthly payments, your deal and balance' };
 function renderChooser() {
   fill(app,
     screenHead('Add to logbook', { back: { href: '#/home', label: 'Home' }, sub: 'What would you like to record?' }),
@@ -1725,13 +1733,16 @@ function scanHint(scan, onSwitch) {
     : null;
   const want = [['supplier', 'supplier'], ['date', 'date'], ['total', 'total']];
   if (scan.type === 'meter') want.push(['reading', 'meter reading']);
-  const missing = want.filter(([k]) => !p.found[k]).map(([, label]) => label);
+  // v16.0: a supplier filled in from the top of the page is a guess, not missing
+  const guessedSupplier = !p.found.supplier && Boolean(scan.fields.supplier);
+  const missing = want.filter(([k]) => !p.found[k] && !(k === 'supplier' && guessedSupplier)).map(([, label]) => label);
   return el('div', { class: 'scan-hint', id: 'scan-hint', role: 'status' },
     icon('sparkle', 20),
     el('div', {},
       el('strong', {}, 'Check these details'),
       el('p', {}, `Filled in from your ${scan.source === 'pdf-text' ? 'PDF' : 'scan'} — tinted fields were read automatically. ` +
-        (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.')),
+        (missing.length ? `Couldn’t find the ${listText(missing)}, so please add ${missing.length > 1 ? 'them' : 'it'}.` : 'Everything was found, but give it a quick look.') +
+        (guessedSupplier ? ` The supplier (${scan.fields.supplier}) is a best guess from the top of the page.` : '')),
       fileUnder,
       scan.fields.currency ? el('p', { id: 'scan-currency' }, `The amount is in ${scan.fields.currency === 'EUR' ? 'euros' : scan.fields.currency}. Totals count it as it is, so for exact £ totals type the £ amount from your bank statement and pick £.`) : null));
 }
@@ -1917,7 +1928,7 @@ async function renderForm(type, id, { renewOf = null } = {}) {
   } else if (renewFrom) {
     const start = (renewFrom.dueDate || '').slice(0, 10) || todayISO();
     entry = { id: null, type: 'insurance', title: renewFrom.title || '', date: start, cost: renewFrom.cost ?? null, supplier: renewFrom.supplier || '', notes: '', dueDate: addYears(start, 1), meterValue: null, meterUnit: '', photos: [],
-      insType: renewFrom.insType, policyNumber: renewFrom.policyNumber || '', costFreq: renewFrom.costFreq, covered: renewFrom.covered || '' };
+      insType: renewFrom.insType, ...(renewFrom.insKind ? { insKind: renewFrom.insKind } : {}), policyNumber: renewFrom.policyNumber || '', costFreq: renewFrom.costFreq, covered: renewFrom.covered || '' };
   } else {
     entry = { id: null, type, title: '', date: todayISO(), cost: null, supplier: '', notes: '', dueDate: null, meterValue: null, meterUnit: '', photos: [] };
   }
@@ -1965,7 +1976,7 @@ async function renderForm(type, id, { renewOf = null } = {}) {
       ? el('div', { class: 'field' }, el('span', { class: 'label', id: 'ins-type-label' }, 'Type of cover'),
           el('div', { class: 'seg seg-full ins-types', role: 'radiogroup', 'aria-labelledby': 'ins-type-label' },
             INSURANCE_TYPES.map((t) => el('label', { class: 'seg-btn radio-seg' },
-              el('input', { type: 'radio', name: 'insType', value: t.id, checked: (entry.insType || 'home') === t.id }), t.label))))
+              el('input', { type: 'radio', name: 'insType', value: t.id, checked: (insKindOf(entry) || 'home') === t.id }), t.label))))
       : null,
     mortF ? mortgageKindField(entry) : null,
     notMon(field(ins || mortF ? 'Name (optional)' : billF ? 'Title' : 'Title *', el('input', { name: 'title', required: !ins && !mortF && !billF, value: entry.title, maxlength: '200', autocomplete: 'off', placeholder: ins ? 'e.g. Car insurance – Aviva' : mortF ? 'e.g. Santander mortgage statement 2025' : billF ? 'e.g. EDF bill Oct 2026' : null }), ins ? 'Left blank, it’s made from the type and insurer.' : mortF ? 'Left blank, it’s made from the lender and year.' : billF ? 'Filled in from the supplier and month. Change it if you like.' : null)),
@@ -2036,7 +2047,7 @@ async function renderForm(type, id, { renewOf = null } = {}) {
   // v15.20: Currency, Room, Notes (and a job's Next due) behind "More
   // details". £ is the default. Opens by itself when one of them has a value.
   const extras = el('details', { class: 'more-details', id: 'more-details', open: fh.moreDetailsOpen(entry, { dueInside: jobF && !!dueField }) || undefined },
-    el('summary', {}, 'More details', el('span', { class: 'small muted more-details-what' }, ` ${[jobF && dueField ? 'next due' : null, ins || mortF ? null : 'currency', roomable ? 'room' : null, 'notes'].filter(Boolean).join(', ')}`)));
+    el('summary', {}, 'More details', el('span', { class: 'small muted more-details-what' }, ` ${[jobF && dueField ? 'next due' : null, ins || mortF ? null : 'currency', roomable ? 'room' : null, mortF ? null : 'paid by', 'notes'].filter(Boolean).join(', ')}`)));
   if (jobF && dueField) addTo(extras, dueField);
   if (!ins && !mortF) {
     addTo(extras, field('Currency', el('select', { name: 'currency', 'aria-label': 'Currency' },
@@ -2049,6 +2060,13 @@ async function renderForm(type, id, { renewOf = null } = {}) {
       el('option', { value: '' }, 'No room'),
       names.map((r) => el('option', { value: r, selected: Boolean(entry.room) && rooms.sameRoom(r, entry.room) }, r))),
       'Add or rename rooms under More → Rooms.'));
+  }
+  // v16.0: who paid (optional, any name you like; earlier names are offered).
+  // A new optional field: older versions keep it untouched when they edit.
+  if (!mortF) {
+    const payers = [...new Set(['Joint', ...allEntries.map((x) => String(x.paidBy || '').trim()).filter(Boolean)])];
+    addTo(extras, field('Paid by (optional)', el('input', { name: 'paidBy', id: 'paid-by', value: entry.paidBy || '', maxlength: '40', autocomplete: 'off', list: 'paid-by-list', placeholder: 'e.g. a name, or Joint' }),
+      'Who paid, if you want to see a split on Year in review.'), el('datalist', { id: 'paid-by-list' }, payers.map((n) => el('option', { value: n }))));
   }
   addTo(extras, field('Notes', el('textarea', { name: 'notes', rows: '4', placeholder: 'Serial numbers, what was done, anything useful…' }, entry.notes || '')));
   addTo(form, extras);
@@ -2203,7 +2221,7 @@ async function renderForm(type, id, { renewOf = null } = {}) {
       }
     }
     const extra = ins
-      ? { insType: form.elements.insType.value, policyNumber: v('policyNumber'), costFreq: form.elements.costFreq.value, covered: v('covered') }
+      ? { ...insStore(form.elements.insType.value), policyNumber: v('policyNumber'), costFreq: form.elements.costFreq.value, covered: v('covered') }
       : mortF ? { mortgage } : {};
 
     const now = new Date().toISOString();
@@ -2226,6 +2244,8 @@ async function renderForm(type, id, { renewOf = null } = {}) {
       updatedAt: now,
     };
     if (roomable) { if (v('room')) saved.room = rooms.cleanName(v('room')); else delete saved.room; }
+    if (ins && !extra.insKind) delete saved.insKind; // v16.0: back to home/car/life/other
+    if (form.elements.paidBy) { const pb = v('paidBy').replace(/\s+/g, ' ').trim().slice(0, 40); if (pb) saved.paidBy = pb; else delete saved.paidBy; } // v16.0
     if (section.showMeter && !tariff) delete saved.tariff; // tariff fields cleared
     if (credits) { if (credits.length) saved.credits = credits; else delete saved.credits; } // v14.5
     if (mortF && saved.mortgage.kind === 'monthly') saved.dueDate = null; // v15.3
@@ -2627,7 +2647,10 @@ async function detailNudges(e, section, days) {
       out.push(box('policy-ended', 'calm', `Ended${typeof e.policyEnded === 'string' ? ' on ' + niceDate(e.policyEnded) : ''}. It’s under Past policies and isn’t in the yearly total.`,
         el('button', { type: 'button', class: 'btn small link-btn', id: 'policy-unend', onclick: async () => { const prev = await db.getEntry(e.id); const s2 = { ...prev, updatedAt: new Date().toISOString() }; delete s2.policyEnded; await db.saveEntry(s2); sync.recordSave(s2.id); toast('Back with your current policies'); await redrawKeep(); } }, 'It didn’t end')));
     } else if (e.dueDate && days !== null && days <= soonDaysFor(e)) {
-      out.push(box('policy-renew', days < 0 ? 'warn' : 'info', days < 0 ? `The renewal date has passed (${niceDate(e.dueDate)}). Did it renew?` : `Renews ${niceDate(e.dueDate)}. Once it has, add the new year’s policy.`,
+      // v16.0: a nudge to shop around before it rolls over (with last year's price when known)
+      const rc = due.renewalChange(e, all, annualCost);
+      const shop = days < 0 ? '' : ` Before it rolls over, check the renewal quote against ${rc ? `last time (${money(rc.now)} a year, was ${money(rc.was)})` : (annualCost(e) > 0 ? `this year’s ${money(annualCost(e))}` : 'what you pay now')} and get a couple of other quotes: staying put is often dearer.`;
+      out.push(box('policy-renew', days < 0 ? 'warn' : 'info', days < 0 ? `The renewal date has passed (${niceDate(e.dueDate)}). Did it renew?` : `Renews ${niceDate(e.dueDate)}.${shop} Once it has renewed, add the new year’s policy.`,
         el('a', { class: 'btn small', href: `#/renew/${e.id}`, id: 'policy-renewed-btn' }, icon('check', 16), 'Renewed: add the new policy'),
         el('button', { type: 'button', class: 'btn small secondary', id: 'policy-ended-btn', onclick: async () => {
           const prev = await db.getEntry(e.id);
@@ -2668,16 +2691,24 @@ async function renderDetail(id) {
   const isMort = section.kind === 'mortgage' && mort.isMortgage(e); // v14.7
   if (isMort && days !== null && days < 0) dueClass = '';
   // v15.22: a renewed or ended policy, or a dismissed date, isn't flagged red
-  const polSt = ins ? due.policyStatus(e, await db.getAllEntries(), todayISO()) : null;
+  const allEntries = await db.getAllEntries();
+  const polSt = ins ? due.policyStatus(e, allEntries, todayISO()) : null;
+  // v16.0: what the renewal cost against the policy it replaced
+  const renewal = ins ? due.renewalChange(e, allEntries, annualCost) : null;
   const pastPolicy = polSt === 'renewed' || polSt === 'ended';
   if (pastPolicy || due.dueDismissed(e)) dueClass = '';
   const premium = e.cost ? (e.costFreq === 'monthly' ? `${money(e.cost)} a month (${money(annualCost(e))} a year)` : `${money(e.cost)} a year`) : null;
   const tariff = e.type === 'meter' ? tariffOf(e) : null;
+  // v16.0: a bill's month, kWh used (from the reading before) and cost per kWh
+  const billIv = e.type === 'meter' ? usageIntervals(allEntries).find((iv) => iv.to.id === e.id) : null;
+  const billMonth = e.type === 'meter' && Number(e.cost) > 0 ? coverMonths(allEntries).get(e.id) : null;
+  const billPaid = e.type === 'meter' ? (creditsOf(e).length ? netCost(e) : Number(e.cost)) : 0;
   const rows = ins ? [
-    ['Cover', e.insType ? `${insuranceTypeLabel(e.insType)} insurance` : 'Insurance', 'umbrella'],
+    ['Cover', insKindOf(e) ? `${insuranceTypeLabel(insKindOf(e))} insurance` : 'Insurance', 'umbrella'],
     ['Insurer', e.supplier, 'home'],
     ['Policy number', e.policyNumber, 'file'],
     ['Cost', premium, 'receipt'],
+    ['Renewal price', renewal ? `${money(renewal.now)} a year, was ${money(renewal.was)}${renewal.diff ? ` (${renewal.diff > 0 ? '+' : '−'}${money(Math.abs(renewal.diff))}, ${renewal.diff > 0 ? '+' : '−'}${Math.abs(renewal.pct)}%)` : ' (no change)'}` : null, 'receipt'],
     ['Started', niceDate(e.date), 'calendar'],
     [pastPolicy ? 'Ran to' : 'Renews', e.dueDate ? (pastPolicy ? niceDate(e.dueDate) : `${niceDate(e.dueDate)} (${dueText('renews', days)})`) : null, 'clock'],
     ['Covered', e.covered, 'lock'],
@@ -2691,12 +2722,16 @@ async function renderDetail(id) {
     // v15.22: the amount is big at the top already; this row only for a refund or another currency
     [Number(e.cost) < 0 ? 'Refund' : 'Cost', e.cost && (Number(e.cost) < 0 || (e.currency && e.currency !== 'GBP')) ? money(Math.abs(Number(e.cost)), e.currency) + (e.currency && e.currency !== 'GBP' ? ` (${e.currency})` : '') : null, 'receipt'],
     ['Supplier / who', e.supplier, 'home'],
+    ['Covers', billMonth ? monthName(billMonth) : null, 'calendar'],
     ['Reading', e.meterValue !== null && e.meterValue !== undefined ? `${fmtReading(e.meterValue)} ${e.meterUnit || ''}` : null, 'gauge'],
+    ['Used', billIv ? `${fmtReading(billIv.used)} ${billIv.unit || 'kWh'} (${shortDay(billIv.from.date)} – ${shortDay(billIv.to.date)})` : null, 'bolt'],
+    ['Cost per kWh', billIv && billIv.used > 0 && billPaid > 0 && /kwh/i.test(billIv.unit || 'kWh') ? `${(billPaid / billIv.used * 100).toFixed(1)}p all-in${creditsOf(e).length ? ' (after credits)' : ''}` : null, 'receipt'],
     ['Unit rate', tariff && tariff.rates.length ? ((r) => `${r.v} per kWh${r.from ? ` (new rate from ${shortDay(r.from)})` : ''}`)(rateText(tariff.rates)) : null, 'bolt'],
     ['Standing charge', tariff && tariff.standing.length ? rateText(tariff.standing).v + ' a day' : null, 'clock'],
     // v14.5: credits printed on the bill, and what was paid after them.
     ['Credits', e.type === 'meter' && creditsOf(e).length ? `${creditsOf(e).map((c) => `${c.type === 'other' ? (c.note || 'Other') : creditLabel(c.type)} −${money(c.amount)}${c.date ? ` (${shortDay(c.date)})` : ''}`).join(', ')} · ${money(netCost(e))} after credits` : null, 'receipt'],
     [section.dueWord === 'expires' ? 'Expires' : 'Next due', e.dueDate ? `${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})` : null, 'clock'],
+    ['Paid by', e.paidBy || null, 'user'],
     ['Room', e.room ? el('a', { href: `#/room/${encodeURIComponent(e.room)}`, id: 'detail-room', class: 'link' }, e.room) : null, 'door'],
   ].filter(([, value]) => value);
 
@@ -3784,7 +3819,7 @@ function upRow(r) {
   const isRem = rem.isReminder(e); // v15.1
   const sub = r.ended ? r.sub
     : isRem ? ['Reminder', rem.repeatText(e.reminder), dueText('due', days)].join(' · ')
-    : e && !r.reminder ? [sec.single, dueText(sec.dueWord || 'due', days)].join(' · ')
+    : e && !r.reminder ? [e.type === 'mortgage' ? 'Mortgage' : sec.single, dueText(sec.dueWord || 'due', days)].join(' · ') // v16.0: was "Mortgage statement · deal ends…"
     : `${r.sub} · ${dueText('', days).trim()}`;
   const action = upAction(r);
   return el('a', { class: 'card up-row' + (r.mortgage ? ' up-mortgage' : '') + (isRem ? ' up-reminder' : '') + (days < 0 ? ' up-late' : ''), href: r.ended ? '#/list/mortgage' : e && !r.reminder ? `#/view/${e.id}` : '#/list/mortgage', 'data-date': r.date, 'data-section': isRem ? 'reminder' : sec.id, 'data-id': e ? e.id : null },
@@ -3842,10 +3877,47 @@ async function renderUpcoming(focus) {
   }
 }
 
+// v16.0: "Who paid": a split of the year's spending by the optional Paid by
+// field. Only shown once something has a Paid by. Insurance and the mortgage
+// aren't in it (they're running costs, not one-off payments).
+function whoPaidCard(entries, year) {
+  const cover = coverMonths(entries);
+  const items = entries.filter((e) => isSpend(e) && e.type !== 'mortgage' && !rem.isReminder(e) && Number(e.cost) && spendMonthKey(e, cover).startsWith(String(year)));
+  if (!items.some((e) => e.paidBy)) return null;
+  const by = new Map();
+  for (const e of items) { const k = (e.paidBy || '').trim() || 'Not set'; by.set(k, Math.round(((by.get(k) || 0) + Number(e.cost)) * 100) / 100); }
+  const rows = [...by.entries()].sort((a, b) => (a[0] === 'Not set') - (b[0] === 'Not set') || b[1] - a[1]);
+  return el('section', { class: 'card', id: 'who-paid' },
+    el('h2', { class: 'card-title' }, 'Who paid'),
+    el('div', { class: 'mrows' }, rows.map(([k, v]) => el('div', { class: 'mrow', 'data-payer': k }, el('span', { class: 'mrow-k' }, k), el('span', { class: 'mrow-v' }, money(v))))),
+    el('p', { class: 'small muted' }, 'From “Paid by” under More details on each entry. Insurance and mortgage payments aren’t included.'));
+}
+
+// v16.0: "Running the house": about what it costs each month right now
+// (mortgage payment, insurance per month, typical electricity bill).
+function runningCostCard(everything, netOn) {
+  const today = todayISO();
+  const ms = mort.summary(everything);
+  const dealLive = ms && (!ms.deal.end || ms.deal.end >= today);
+  const mortgage = ms ? { payment: dealLive || !ms.svrPayment ? ms.deal.payment : ms.svrPayment, extra: mort.extraOn(ms.changes || [], today, ms.extra || 0) } : null;
+  const policies = everything.filter((e) => e.type === 'insurance' && ['current', 'lapsed'].includes(due.policyStatus(e, everything, today)));
+  const rc = runningCost(everything, { mortgage, policies, afterCreditsOn: netOn });
+  if (rc.total === null) return null;
+  const line = (id, k, v, note) => el('div', { class: 'mrow', id }, el('span', { class: 'mrow-k' }, k), el('span', { class: 'mrow-v' }, v, note ? el('small', {}, note) : null));
+  return el('section', { class: 'card', id: 'running-cost' },
+    el('h2', { class: 'card-title' }, 'Running the house'),
+    el('p', { class: 'review-value', id: 'running-cost-total' }, money(rc.total), el('small', {}, ' a month')),
+    el('div', { class: 'mrows' },
+      rc.mortgage !== null ? line('rc-mortgage', 'Mortgage', money(rc.mortgage), rc.overpay ? `incl. ${money(rc.overpay)} overpayment` : 'monthly payment') : null,
+      rc.insurance !== null ? line('rc-insurance', 'Insurance', money(rc.insurance), `${policies.length} current polic${policies.length === 1 ? 'y' : 'ies'}, per month`) : null,
+      rc.electricity !== null ? line('rc-electricity', 'Electricity', money(rc.electricity), `average bill, last ${rc.electricityMonths} month${rc.electricityMonths === 1 ? '' : 's'}${netOn ? ', after credits' : ''}`) : null),
+    infoNote('Right now, not this year’s total: today’s mortgage payment, what your current policies cost per month, and the average electricity bill over the last 12 months of bills. Jobs and receipts come and go, so they aren’t in it.', { id: 'running-cost-note', cls: 'small muted', label: 'What this counts' }));
+}
+
 // v14.8: the year at a glance: spending, the biggest item, electricity and
 // the mortgage, each with last year next to it.
-function roundupCard(r, year) {
-  const pounds = roundPounds; // v15.22: pence under £10 ("£0.66", not "£1")
+function roundupCard(r, year, netOn = false) {
+  const pounds = money; // v16.0: pounds and pence, like the total at the top of Year in review
   const vs = (now, then, fmt, lowerIsGood = true) => {
     if (then === null || then === undefined || now === null) return null;
     const d = Math.round((now - then) * 100) / 100;
@@ -3865,11 +3937,14 @@ function roundupCard(r, year) {
   if (big) rows.push(line('ru-biggest', 'Biggest job or buy', pounds(big.amount), el('small', {}, big.entry.title)));
   const pw = r.power;
   if (pw && pw.bills) {
-    const paid = pw.hasCredits ? pw.paidNet : pw.paid;
+    // v16.0: one electricity figure on the page: as charged, or after credits
+    // when the Electricity page's "After EDF credits" switch is on (the whole
+    // review then counts bills after credits), and it says which.
+    const paid = pw.paid;
     rows.push(line('ru-power', 'Electricity', pw.kwh ? `${pw.kwh.toLocaleString('en-GB')} kWh` : pounds(paid),
-      [el('small', {}, `${pw.kwh ? `paid ${money(paid)}` : `${pw.bills} bills`}${pw.hasCredits ? ` after ${money(pw.paid - pw.paidNet)} credits` : ''}`),
+      [el('small', {}, `${pw.kwh ? `paid ${money(paid)}` : `${pw.bills} bills`}${netOn ? ' after credits' : pw.hasCredits ? ' as charged' : ''}`),
         pw.prev && pw.prev.kwh && pw.kwh ? vs(pw.kwh, pw.prev.kwh, (v) => `${Math.round(v).toLocaleString('en-GB')} kWh`) : null,
-        pw.prev ? vs(paid, pw.prev.hasCredits ? pw.prev.paidNet : pw.prev.paid, money) : null]));
+        pw.prev ? vs(paid, pw.prev.paid, money) : null]));
   }
   const m = r.mortgage;
   if (m && m.paidDown !== null) {
@@ -3906,8 +3981,10 @@ async function renderYearReview(year) {
   const years = reviewYears(everything);
   if (!years.includes(year)) { years.push(year); years.sort((a, b) => b - a); }
   const mortOn = prefs.includeMortgageOn() && everything.some((e) => e.type === 'mortgage');
-  const r = yearReview(withMortgage(everything), year);
-  const short = (v) => money(Math.round(v)).replace(/\.\d\d$/, '');
+  // v16.0: bills after credits when the "After EDF credits" switch is on, as charged when off
+  const netOn = prefs.afterCreditsOn() && everything.some((e) => e.type === 'meter' && creditsOf(e).length);
+  const r = yearReview(withMortgage(netOn ? afterCredits(everything) : everything), year);
+  const short = money; // v16.0: pounds and pence throughout Year in review
   const change = (d, vs) => (d === null ? null : el('span', { class: 'yoy ' + (d > 0 ? 'up' : d < 0 ? 'down' : '') }, d === 0 ? `same as ${vs}` : `${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} vs ${vs}`));
   const max = Math.max(1, ...r.categories.map((c) => c.total));
   const hrefFor = (id) => (id === 'insurance' || id === 'mortgage' ? `#/list/${id}` : `#/list/${id}/${year}`);
@@ -3928,19 +4005,21 @@ async function renderYearReview(year) {
           // v15.22: on 1 January there's nothing "by this date" last year, but last year isn't empty
           : r.prevYearTotal !== null ? [`Too early to compare. ${year - 1} came to ${money(r.prevYearTotal)}: `, el('a', { href: `#/year/${year - 1}`, class: 'link', id: 'review-prev-link', onclick: (ev) => { ev.preventDefault(); location.replace(`#/year/${year - 1}`); } }, `see ${year - 1}`), '.']
           : `Nothing logged in ${year - 1} to compare with.`),
-        infoNote(`Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills count in the month they cover, as charged.`, { id: 'review-basis', cls: 'small muted', label: 'What this total counts' })),
+        infoNote(`Includes insurance (pro rata)${mortOn ? ' and mortgage payments' : ''}. Energy bills count in the month they cover, ${netOn ? 'after credits (the Electricity page’s “After EDF credits” switch is on)' : 'as charged (before any credits)'}.`, { id: 'review-basis', cls: 'small muted', label: 'What this total counts' })),
       r.categories.length ? moreInfo([`Each section’s total for ${year}${r.partial ? ' so far' : ''}, with ${year - 1}${r.partial ? ' to the same date' : ''} beside it.`], { id: 'review-more', rows: [
         ...r.categories.map((c) => [c.label, `${money(c.total)}${c.prev !== null && c.prev !== undefined ? ` (${money(c.prev)})` : ''}`]),
         ['Total', `${money(r.total)}${r.prevTotal !== null ? ` (${money(r.prevTotal)})` : ''}`]] }) : null,
       mortgageSwitch(everything, 'review')),
-    roundupCard(r, year),
+    roundupCard(r, year, netOn),
+    year === new Date().getFullYear() ? runningCostCard(everything, netOn) : null,
+    whoPaidCard(netOn ? afterCredits(everything) : everything, year),
     r.categories.length
       ? el('section', { class: 'card', id: 'review-categories' },
           el('h2', { class: 'card-title' }, 'Where it went'),
           el('div', { class: 'review-cats' }, r.categories.filter((c) => c.total).map((c) => el('a', /* v15.22: no "Jobs £0.00 · 0 items" row */ { class: 'review-cat', href: hrefFor(c.id), 'data-cat': c.id },
             el('div', { class: 'review-cat-row' }, el('strong', {}, c.label), el('span', { class: 'review-amt' }, money(c.total))),
             el('div', { class: 'review-bar' }, el('i', { style: `width:${Math.round((c.total / max) * 100)}%` })),
-            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : c.id === 'meter' ? `${c.count} bill${c.count === 1 ? '' : 's'}, by month used` : c.id === 'mortgage' ? `${c.count} month${c.count === 1 ? '' : 's'} of payments` : `${c.count} item${c.count === 1 ? '' : 's'}`, c.prev !== null ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1)))))))
+            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : c.id === 'meter' ? `${c.count} bill${c.count === 1 ? '' : 's'}, by month used, ${netOn ? 'after credits' : 'as charged'}` : c.id === 'mortgage' ? `${c.count} month${c.count === 1 ? '' : 's'} of payments` : `${c.count} with a cost`, c.prev !== null ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1)))))))
       : el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon('chart', 36)), el('p', {}, `Nothing with a cost in ${year} yet.`)),
     r.biggest.length
       ? el('section', { class: 'group', id: 'review-biggest' }, el('div', { class: 'group-head' }, el('h2', {}, 'Biggest items')),
@@ -4015,7 +4094,7 @@ async function renderExport() {
       if (r.cancelled) return;
       sync.noteChange();
       markWelcomed();
-      toast(r.toAdd ? `Restored ${r.toAdd} entries${r.kept ? ` · kept ${r.kept} newer on this phone` : ''}` : r.kept ? `Kept this phone’s ${r.kept} newer entr${r.kept === 1 ? 'y' : 'ies'}` : 'All already on this phone');
+      toast(r.toAdd ? `Restored ${r.toAdd} entr${r.toAdd === 1 ? 'y' : 'ies'}${r.kept ? ` · kept ${r.kept} newer on this phone` : ''}` : r.kept ? `Kept this phone’s ${r.kept} newer entr${r.kept === 1 ? 'y' : 'ies'}` : 'All already on this phone');
       location.hash = '#/list/all';
     } catch (err) {
       alert(db.storageError(err).message);
@@ -4035,7 +4114,9 @@ async function renderExport() {
     el('span', { class: 'more-row-text' }, el('strong', {}, title), el('span', { class: 'small muted' }, sub)),
     icon('chevron', 18));
   fill(app,
-    screenHead('More', { sub: `Manuals, backup and settings · ${entries.length} entries · ${photoCount} photos` }),
+    // v16.0: the same entry count as the Logbook (reminders counted apart); "1 photo"
+    screenHead('More', { sub: (() => { const rc = entries.filter((x) => rem.isReminder(x)).length, n = entries.length - rc;
+      return `Manuals, backup and settings · ${n} entr${n === 1 ? 'y' : 'ies'}${rc ? ` + ${rc} reminder${rc === 1 ? '' : 's'}` : ''} · ${photoCount} photo${photoCount === 1 ? '' : 's'}`; })() }),
     tidy ? tourCard() : null,
     el('h2', { class: 'more-group', id: 'group-home' }, 'Your home'),
     moreRow('#/manuals', 'more-manuals', 'book', 'slate', 'Manuals', `${manuals.APPLIANCES.length} appliances · ${manuals.ALL_FILES.length} guides${mineManuals.length ? ` · ${mineManuals.length} of yours` : ''}`),

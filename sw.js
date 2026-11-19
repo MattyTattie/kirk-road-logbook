@@ -55,7 +55,8 @@
 // v15.22 = the 10 Nov list: bill titles without the amount; Overdue on Home with Done/Dismiss/Renewed; renewed and ended insurance policies; one rule for bills (the month they cover) on Electricity, Year in review and Ask; restore keeps newer edits; same-bill-twice warning; far-future date warning; long lists show 60 at a time.
 // v15.23 = Home Spending card: All / Electricity / Receipts (Receipts = everything except electricity bills); "Bills" button renamed Electricity.
 // v15.24 = "Bills" shown as "Electricity" everywhere it named the section (Spent card chip, Electricity page boxes, year-on-year line, notes). Display text only.
-const CACHE_NAME = 'hearthbook-v15.24';
+// v16.0 = the 19 Nov audit fixed: report counts current policies only, mortgage what-if from today's estimated balance + real lender name, one "soon" (30 days), newest-first years, tile wording, minus signs, plain-PDF bills, renewal price, running cost, remortgage checklist, reminder presets, optional Paid by.
+const CACHE_NAME = 'hearthbook-v16.0';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 

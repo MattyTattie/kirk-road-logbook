@@ -13,6 +13,7 @@
 //   "when does the fridge warranty expire?"
 
 import { activeDue } from './duestate.js'; // v15.22
+import { insKindOf } from './sections.js'; // v16.0
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 const MONTH_WORDS = {};
 MONTHS.forEach((m, i) => { MONTH_WORDS[m] = i + 1; MONTH_WORDS[m.slice(0, 3)] = i + 1; });
@@ -52,6 +53,9 @@ export function parseQuery(q, now = new Date(), { sectionWords = true } = {}) {
     if (/^(19|20)\d\d$/.test(w)) { out.year = Number(w); continue; }
     if (w === 'this' && next === 'year') { out.year = now.getFullYear(); i++; continue; }
     if (w === 'last' && next === 'year') { out.year = now.getFullYear() - 1; i++; continue; }
+    // v16.0: "this month" / "last month" (a month and its year)
+    if (w === 'this' && next === 'month') { out.year = now.getFullYear(); out.month = now.getMonth() + 1; i++; continue; }
+    if (w === 'last' && next === 'month') { const d = new Date(now.getFullYear(), now.getMonth() - 1, 1); out.year = d.getFullYear(); out.month = d.getMonth() + 1; i++; continue; }
     if (w === 'run' && next === 'out') { out.question = out.question || 'expire'; i++; continue; }
     if (w === 'runs' && next === 'out') { out.question = out.question || 'expire'; i++; continue; }
     if (MONTH_WORDS[w] && !(w === 'may' && i === 0 && words.length > 2)) { out.month = MONTH_WORDS[w]; continue; }
@@ -83,11 +87,11 @@ function within(a, b, max) {
   return d[a.length][b.length] <= max;
 }
 
-const INS_TYPES = { home: 'home house buildings contents', car: 'car motor vehicle', life: 'life critical illness mortgage', other: '' };
+const INS_TYPES = { home: 'home house buildings contents', car: 'car motor vehicle', life: 'life critical illness mortgage', pet: 'pet dog cat', travel: 'travel holiday', gadget: 'gadget phone mobile', other: '' }; // v16.0: pet, travel, gadget
 function fieldsOf(e) {
   return {
     title: normalise(e.title),
-    other: normalise([e.supplier, e.notes, e.policyNumber, e.covered, e.scanText, e.ocrText, INS_TYPES[e.insType] || '', e.currency, e.room].filter(Boolean).join(' ')),
+    other: normalise([e.supplier, e.notes, e.policyNumber, e.covered, e.scanText, e.ocrText, INS_TYPES[insKindOf(e)] || '', e.currency, e.room, e.paidBy].filter(Boolean).join(' ')),
   };
 }
 

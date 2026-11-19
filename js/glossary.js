@@ -15,7 +15,7 @@ export const TERMS = [
   ['followon', 'Follow-on rate (SVR)', 'The lender’s standard variable rate you move to when a deal ends. It’s usually much higher, so pick a new deal before then.', 'Mortgage', 'follow-on rate|SVR|standard variable rate'],
   ['erc', 'Early repayment charge (ERC)', 'A fee for paying off more than the allowed amount (usually 10% a year) or leaving during a deal.', 'Mortgage', 'ERCs?|early repayment charges?'],
   ['ltv', 'Loan to value (LTV)', 'What you owe as a share of the house’s value. Lower LTV usually gets cheaper deals.', 'Mortgage', 'LTV|loan to value'],
-  ['apr', 'APR', 'Annual percentage rate: the yearly cost of borrowing including fees, so deals can be compared.', 'Mortgage', 'APRC?'],
+  ['apr', 'APR', 'Annual percentage rate: the yearly cost of borrowing including fees, so deals can be compared.', 'Mortgage', 'APRC?', 'case'], // v16.0: capitals only, so "6 Apr 2025" isn't APR
   ['term', 'Mortgage term', 'How long the mortgage is set up to last, e.g. 25 years.', 'Mortgage', 'original term|mortgage term'],
   ['mortgagefree', 'Mortgage-free date', 'The month the last payment would clear the balance, if the rate and payments stayed as they are.', 'Mortgage', 'mortgage-free'],
   ['kwh', 'Kilowatt hour (kWh)', 'The unit electricity is sold in: a 1,000 W heater running for one hour uses 1 kWh.', 'Electricity', 'kWh'],
@@ -34,7 +34,7 @@ export const TERMS = [
   ['excess', 'Excess', 'The part of an insurance claim you pay yourself before the insurer pays the rest.', 'House', 'excess'],
   ['estimate', 'Estimate (est.)', 'Worked out by Hearth from your figures, not a figure from the lender or supplier.', 'House', 'estimate|est\\.'],
 ];
-export const TERM = Object.fromEntries(TERMS.map(([key, name, desc, group, pat]) => [key, { key, name, desc, group, re: new RegExp(`(^|[^A-Za-z0-9])(${pat})(?![A-Za-z0-9])`, 'i') }]));
+export const TERM = Object.fromEntries(TERMS.map(([key, name, desc, group, pat, cs]) => [key, { key, name, desc, group, re: new RegExp(`(^|[^A-Za-z0-9])(${pat})(?![A-Za-z0-9])`, cs === 'case' ? '' : 'i') }]));
 export const GROUPS = [...new Set(TERMS.map((t) => t[3]))];
 
 // Find the first term in a bit of text that isn't already used on screen.

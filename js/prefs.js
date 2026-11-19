@@ -91,3 +91,8 @@ export const setWithoutOverpay = (on) => writeRaw('hearthbook.withoutOverpay', o
 // v14.8: "Include mortgage" switch on the spending totals (this phone only).
 export const includeMortgageOn = () => readRaw('hearthbook.includeMortgage') === 'on';
 export const setIncludeMortgage = (on) => writeRaw('hearthbook.includeMortgage', on ? 'on' : 'off');
+
+// v16.0: the remortgage checklist's ticks, one list per deal end (this phone
+// only, not in backups or sync).
+export const remortgageTicks = (dealEnd) => { try { return JSON.parse(readRaw(`hearthbook.remortgage.${dealEnd}`) || '[]'); } catch { return []; } };
+export const setRemortgageTicks = (dealEnd, ids) => writeRaw(`hearthbook.remortgage.${dealEnd}`, JSON.stringify(ids));

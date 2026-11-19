@@ -369,6 +369,22 @@ export function summary(entries) {
   };
 }
 
+// v16.0: an estimate of what's owed TODAY: the latest balance less the
+// payments (and overpayments) due since, at the deal rate (the rate after the
+// deal, when known, once the deal has ended). firstDay = the next payment
+// still to come, so the what-if starts from today, not the statement.
+export function balanceToday(s, today) {
+  if (!s) return null;
+  let b = p(s.balance), n = 0, day = s.firstAfter;
+  while (day && day <= today && b > 0 && n < 1200) {
+    const rate = s.deal.end && day > s.deal.end && s.svr ? s.svr : s.deal.rate;
+    const due = p(s.deal.payment) + p(extraOn(s.changes || [], day, s.extra || 0));
+    const i = Math.round(b * rate / 1200);
+    b -= Math.min(b, Math.max(0, due - i)); n++; day = addMonths(s.firstAfter, n);
+  }
+  return { balance: L(b), firstDay: day, payments: n, estimate: n > 0 };
+}
+
 // Deal-end reminders: 6, 3 and 1 month before the deal ends.
 export const REMINDER_MONTHS = [6, 3, 1];
 export const reminderDates = (end) => REMINDER_MONTHS.map((n) => ({ months: n, date: addMonths(end, -n) }));

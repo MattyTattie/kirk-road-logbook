@@ -114,6 +114,12 @@ export const INSURANCE_TYPES = [
   { id: 'home', label: 'Home' },
   { id: 'car', label: 'Car' },
   { id: 'life', label: 'Life' },
+  // v16.0: more kinds of cover. Saved as insType 'other' + insKind (see
+  // insKindOf below), so an older version shows them as Other and keeps the
+  // kind when it edits them (it only knows home/car/life/other).
+  { id: 'pet', label: 'Pet' },
+  { id: 'travel', label: 'Travel' },
+  { id: 'gadget', label: 'Gadget / phone' },
   { id: 'other', label: 'Other' },
 ];
 export const insuranceTypeLabel = (id) => (INSURANCE_TYPES.find((t) => t.id === id) || { label: 'Other' }).label;
@@ -125,7 +131,19 @@ export function annualCost(e) {
 }
 
 // How many days ahead counts as "coming up soon" (gets highlighted).
-export const SOON_DAYS = 60;
+// v16.0: the kind of cover shown for a policy. Pet / travel / gadget are
+// stored as insType 'other' + insKind: 'pet' (an additive optional field).
+export const NEW_INS_KINDS = ['pet', 'travel', 'gadget'];
+export const insKindOf = (e) => {
+  if (!e) return '';
+  if (NEW_INS_KINDS.includes(e.insType)) return e.insType;
+  if (NEW_INS_KINDS.includes(e.insKind) && (!e.insType || e.insType === 'other')) return e.insKind;
+  return e.insType || '';
+};
+// What to save for a kind picked on the form.
+export const insStore = (kind) => (NEW_INS_KINDS.includes(kind) ? { insType: 'other', insKind: kind } : { insType: kind });
+
+export const SOON_DAYS = 30; // v16.0: one meaning of "soon" everywhere (was 60)
 
 // "Soon" window for one entry (insurance renewals: 30 days).
 export const soonDaysFor = (e) => getSection(e && e.type).soonDays || SOON_DAYS;

@@ -73,29 +73,40 @@ const row = (label, value, id, note) => el('div', { class: 'mrow', id }, el('spa
 
 // v14.8: "What if" boxes in the Mortgage-free card. Try a different monthly
 // overpayment and/or a one-off payment; nothing is saved.
+// v16.0: the lender's name comes from your entries (was always "Santander").
+export const lenderName = (s) => (s && ((s.latest && s.latest.supplier) || (s.setup && s.setup.supplier))) || 'your lender';
+
 function whatIfBox(s) {
   const d = s.deal;
-  const thisYear = Number(s.asAt.slice(0, 4));
+  const lender = lenderName(s);
+  // v16.0: start from today's estimated balance (not the last statement), so
+  // a statement from months ago can't give a mortgage-free date in the past.
+  const today = todayISO();
+  const est = M.balanceToday(s, today) || { balance: s.balance, firstDay: s.firstAfter };
+  const thisYear = Number(today.slice(0, 4));
   const already = s.latest && s.latest.mortgage.partial && Number(s.latest.mortgage.year) === thisYear ? Number(s.latest.mortgage.overpaid) || 0 : 0;
-  const now = s.pace; // today's plan
+  const now = M.payoff(est.balance, d.rate, d.payment, s.extra || 0, est.firstDay, s.changes || []) || s.pace; // today's plan, from today
   const monthly = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '1', id: 'whatif-monthly', value: String(s.extra || 0) });
   const lump = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '100', id: 'whatif-lump', placeholder: '0' });
   // the month the one-off goes in (payment days from the next one, 5 years ahead)
   // v15.7: only payment days from today on (not before today)
-  const today = todayISO();
-  let k0 = 0; while (M.addMonths(s.firstAfter, k0) < today && k0 < 1200) k0++;
-  const opts = Array.from({ length: 60 }, (_, k) => M.addMonths(s.firstAfter, k0 + k));
+  const opts = Array.from({ length: 60 }, (_, k) => M.addMonths(est.firstDay, k));
   const pick = (iso) => opts.find((o) => o >= iso) || opts[0];
-  const defWhen = pick(d.end || s.firstAfter);
+  const defWhen = pick(d.end || est.firstDay);
   const when = el('select', { id: 'whatif-date' }, opts.map((o) => el('option', { value: o, selected: o === defWhen }, M.monthText(o))));
   const out = el('div', { class: 'whatif-out', id: 'whatif-result', 'aria-live': 'polite' });
   const num = (i) => Math.max(0, Number(i.value) || 0);
+  // v16.0: a minus amount or something that isn't a number gets a message, not a sum
+  const bad = (i) => (i.validity && i.validity.badInput) || (i.value.trim() !== '' && (!isFinite(Number(i.value)) || Number(i.value) < 0));
   const update = () => {
+    const wrong = [monthly, lump].filter(bad);
+    for (const i of [monthly, lump]) i.setAttribute('aria-invalid', String(wrong.includes(i)));
+    if (wrong.length) { fill(out, el('p', { class: 'whatif-error', id: 'whatif-error', role: 'alert' }, icon('alert', 16), el('span', {}, `Type an amount of £0 or more${wrong.length === 1 ? ` in “${wrong[0] === monthly ? 'Overpay each month' : 'One-off payment'}”` : ''}.`))); return; }
     const extra = num(monthly), l = num(lump);
     // v15.8: while the box shows today's amount, your saved changes apply
     // too; type another amount and it's that from the next payment on.
     const keepPlan = (s.changes || []).length > 0 && extra === Number(s.extra || 0);
-    const plan = { balance: s.balance, rate: d.rate, payment: d.payment, extra, firstDay: s.firstAfter, lump: l, lumpDate: l ? when.value || opts[0] : null, today, changes: keepPlan ? s.changes : [] };
+    const plan = { balance: est.balance, rate: d.rate, payment: d.payment, extra, firstDay: est.firstDay, lump: l, lumpDate: l ? when.value || opts[0] : null, today, changes: keepPlan ? s.changes : [] };
     const r = M.whatIf(plan);
     if (!r) { fill(out, el('p', { class: 'small' }, 'That wouldn’t pay it off.')); return; }
     const diff = monthsBetween(r.last, now.last); // + = sooner
@@ -115,9 +126,9 @@ function whatIfBox(s) {
       keepPlan ? el('p', { class: 'small muted whatif-plan-note', id: 'whatif-plan-note' }, `Includes your change: ${planText(s.changes)}.`) : null,
       warn.length ? el('p', { class: 'whatif-warn', id: 'whatif-warn' }, icon('alert', 16), el('span', {},
         warn.map((w) => `${w.year}: ${pounds(w.total)} overpaid, more than the usual 10% a year (about ${pounds(w.allowed)}).`).join(' '),
-        ' Santander may charge an early repayment charge on the extra, so check with them first.')) : null,
+        ` ${lender[0].toUpperCase() + lender.slice(1)} may charge an early repayment charge on the extra, so check with them first.`)) : null,
       moreInfo([`Just trying it out: nothing is saved. Interest is worked out each month as the balance × ${d.rate}% ÷ 12, and the rate is assumed to stay the same.`], { id: 'whatif-more', rows: [
-        ['Balance now', money(s.balance)],
+        [est.estimate ? 'Balance today (estimate)' : 'Balance now', money(est.balance)],
         ['Rate', `${d.rate}%`],
         ['Monthly payment', money(d.payment)],
         ['Extra each month', `${cash(extra)} (now ${cash(s.extra || 0)})${keepPlan ? `, then ${planText(s.changes)}` : ''}`],
@@ -199,6 +210,36 @@ function fold(id, title, body) {
     ontoggle: (ev) => { if (ev.currentTarget.open) openMortFolds.add(id); else openMortFolds.delete(id); } },
     el('summary', {}, title), body);
 }
+// v16.0: a remortgage checklist, from 6 months before the deal ends until it
+// ends. The ticks are kept on this phone (per deal end), not in backups.
+export function remortgageCard(s, today = todayISO()) {
+  const d = s.deal;
+  if (!d.end) return null;
+  const left = daysUntil(d.end);
+  if (left === null || left < 0 || left > 183) return null;
+  const lender = lenderName(s);
+  const items = [
+    ['erc', d.ercUntil ? `Check the early repayment charge ends ${niceDate(d.ercUntil)}` : `Check when the early repayment charge ends (usually with the deal, ${niceDate(d.end)})`],
+    ['pt', `Ask ${lender} what new deal they'd offer you (a product transfer)`],
+    ['broker', 'Compare with a broker or a comparison site'],
+    ['lock', 'Lock in a deal: most can be booked up to 6 months ahead'],
+    ['payment', 'Check the new monthly payment fits'],
+    ['hearth', 'Add the new deal to Hearth (its statement, or rate and end date)'],
+  ];
+  const ticked = new Set(prefs.remortgageTicks(d.end));
+  const count = el('span', { class: 'small muted', id: 'remortgage-count' });
+  const recount = () => { count.textContent = `${ticked.size} of ${items.length} done`; };
+  recount();
+  return el('section', { class: 'card mortgage-card', id: 'mortgage-remortgage' },
+    el('div', { class: 'mcard-head' }, el('h2', { class: 'card-title' }, 'Before your deal ends'), count),
+    el('p', { class: 'small muted' }, `Your deal ends ${niceDate(d.end)} (${inTime(d.end)}). Ticks are saved on this phone only.`),
+    el('ul', { class: 'remortgage-list' }, items.map(([id, text]) => el('li', {}, el('label', {},
+      el('input', { type: 'checkbox', 'data-step': id, checked: ticked.has(id) || undefined, onchange: (ev) => {
+        if (ev.currentTarget.checked) ticked.add(id); else ticked.delete(id);
+        prefs.setRemortgageTicks(d.end, [...ticked]); recount(); } }),
+      el('span', {}, text))))));
+}
+
 // v15.20: deal end and mortgage-free date right under the balance.
 function keyFacts(s, on, sh) {
   const d = s.deal, pace = s.pace, con = s.contractual;
@@ -222,6 +263,7 @@ export function overview(everything, { saveSetup = null } = {}) {
   }
   const sh = s.shadow;
   const asAtText = `at ${niceDate(s.asAt)}${s.source ? ` (${s.source})` : ''}`; // v14.8: "(online banking)" for a part-year update
+  const est = M.balanceToday(s, todayISO()); // v16.0
 
   const draw = () => {
     const on = Boolean(sh) && prefs.withoutOverpayOn();
@@ -234,6 +276,9 @@ export function overview(everything, { saveSetup = null } = {}) {
       el('div', { class: 'mcard-head' }, el('span', { class: 'stat-label' }, icon('key', 16), 'Balance'), sw),
       el('p', { class: 'mortgage-big', id: 'mortgage-balance-value' }, money(on ? sh.balance : s.balance), on ? el('small', { class: 'est-tag' }, 'estimate') : null),
       el('p', { class: 'small muted', id: 'mortgage-asat' }, on ? `Without overpayments, ${asAtText}. Real balance ${money(s.balance)}.` : asAtText),
+      // v16.0: roughly what's owed today, after the payments since that date
+      !on && est && est.estimate ? el('p', { class: 'mortgage-today', id: 'mortgage-today' }, `About ${pounds(est.balance)} today`,
+        el('small', {}, ` estimate, after ${est.payments} payment${est.payments === 1 ? '' : 's'} since ${niceDate(s.asAt)}`)) : null,
       on ? el('p', { class: 'overpay-saved', id: 'overpay-saved' }, icon('sparkle', 16),
         el('span', {}, `You owe ${money(sh.owesLess)} less`, sh.interestSaved !== null ? ` and save ${money(sh.interestSaved)} interest` : '', ' thanks to overpayments',
           el('small', {}, ` (estimate, to ${niceDate(s.asAt)})`))) : null,
@@ -310,8 +355,8 @@ export function overview(everything, { saveSetup = null } = {}) {
     const sumOf = (k) => paid.reduce((t, y) => t + y[k], 0);
     const paidRows = [...paid].reverse().map((y) => el('tr', { 'data-year': String(y.year) },
       el('td', {}, String(y.year), y.partial ? el('small', {}, ' so far') : null, y.est ? el('small', {}, ' est.') : null),
-      el('td', {}, pounds(y.normal)), el('td', {}, pounds(y.overpaid)), el('td', {}, el('strong', {}, pounds(y.total)))));
-    const paidTotal = el('tr', { class: 'mtotal' }, el('td', {}, 'Total'), el('td', {}, pounds(sumOf('normal'))), el('td', {}, pounds(sumOf('overpaid'))), el('td', { id: 'paid-total' }, pounds(sumOf('total'))));
+      el('td', {}, money(y.normal)), el('td', {}, money(y.overpaid)), el('td', {}, el('strong', {}, money(y.total)))));
+    const paidTotal = el('tr', { class: 'mtotal' }, el('td', {}, 'Total'), el('td', {}, money(sumOf('normal'))), el('td', {}, money(sumOf('overpaid'))), el('td', { id: 'paid-total' }, money(sumOf('total'))));
     const paidCard = paid.length ? el('section', { class: 'card mortgage-card', id: 'mortgage-paid' },
       el('h2', { class: 'card-title' }, 'Mortgage paid'),
       el('table', { class: 'mtable' },
@@ -333,7 +378,7 @@ export function overview(everything, { saveSetup = null } = {}) {
 
     const setupHint = !s.setup ? el('a', { class: 'card mortgage-card mortgage-setup-hint', id: 'mortgage-setup-hint', href: '#/new/mortgage' },
       el('strong', {}, 'Add the set-up'), el('span', { class: 'small muted' }, 'The amount borrowed, the term and the first deal (tap +, then “Mortgage set-up”), to see what your overpayments save.')) : null;
-    fill(wrap, balance, setupHint, deal, years, paidCard, free, notes);
+    fill(wrap, balance, setupHint, deal, remortgageCard(s), years, paidCard, free, notes);
   };
   draw();
   return wrap;
@@ -387,5 +432,8 @@ export function tileMeta(everything) {
   if (!s) return null;
   // v14.9: the month it's paid off at today's pace (or contractual payments)
   const free = s.pace || s.contractual;
-  return { meta: `${pounds(s.balance)} owed`, note: free && free.last ? `mortgage-free ${M.monthText(free.last)}` : `at ${niceDate(s.asAt)}`, asAt: s.asAt };
+  // v16.0: about what's owed today (an estimate from the latest balance)
+  const est = M.balanceToday(s, todayISO());
+  const owed = est && est.estimate ? est.balance : s.balance;
+  return { meta: `${est && est.estimate ? 'about ' : ''}${pounds(owed)} owed`, note: free && free.last ? `mortgage-free ${M.monthText(free.last)}` : `at ${niceDate(s.asAt)}`, asAt: s.asAt, estimate: Boolean(est && est.estimate) };
 }

@@ -53,9 +53,13 @@ export function addFirst(node, ...children) { node.prepend(...kids(children)); r
 // holiday can be in another currency (entry.currency, e.g. 'EUR' -> "€11.90").
 const gbp = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' });
 const other = {};
+// v16.0: a refund shows a proper minus sign, "−£29.99" (was "-£29.99"),
+// the same as credits on a bill.
 export function money(n, currency) {
-  if (!currency || currency === 'GBP') return gbp.format(n || 0);
-  try { return (other[currency] ||= new Intl.NumberFormat('en-GB', { style: 'currency', currency })).format(n || 0); } catch { return gbp.format(n || 0); }
+  let s;
+  if (!currency || currency === 'GBP') s = gbp.format(n || 0);
+  else { try { s = (other[currency] ||= new Intl.NumberFormat('en-GB', { style: 'currency', currency })).format(n || 0); } catch { s = gbp.format(n || 0); } }
+  return s.replace(/^-/, '−');
 }
 export const CURRENCIES = [['GBP', '£'], ['EUR', '€'], ['USD', '$']];
 

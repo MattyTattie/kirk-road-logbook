@@ -54,7 +54,7 @@ export function warrantyYearsOf(purchaseISO, endISO) {
 // "More details" on the add/edit forms starts open when any field inside it
 // already has something in it (pounds is the default, so GBP doesn't count).
 export function moreDetailsOpen(entry = {}, { dueInside = false } = {}) {
-  return Boolean((entry.currency && entry.currency !== 'GBP') || entry.room || String(entry.notes || '').trim() || (dueInside && entry.dueDate));
+  return Boolean((entry.currency && entry.currency !== 'GBP') || entry.room || entry.paidBy || String(entry.notes || '').trim() || (dueInside && entry.dueDate));
 }
 
 // Electricity tab: this year's bills shown, earlier years folded, newest

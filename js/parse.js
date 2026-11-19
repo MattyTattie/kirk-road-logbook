@@ -671,6 +671,17 @@ function parseEnergy(allLines, text, defaultYear) {
     const amt = findAmounts(l.slice(ds[1].end)).find((a) => a.pound);
     if (amt) charges.push(amt.value);
   }
+  // v16.0: a plain "Period: 1 Sep 2026 to 30 Sep 2026" / "Billing period …" line
+  if (!periods.length) {
+    for (const l of allLines) {
+      if (!/\b(?:billing |bill |charging )?period\b|\bcovering\b/i.test(l)) continue;
+      const ds = findDates(l, defaultYear);
+      if (ds.length < 2) continue;
+      let start = ds[0];
+      if (!start.hasYear && ds[1].hasYear) start = { ...start, iso: start.iso.replace(/^\d{4}/, ds[1].iso.slice(0, 4)) };
+      if (start.iso < ds[1].iso) { periods.push([start.iso, ds[1].iso]); break; }
+    }
+  }
   if (periods.length) {
     meter.periodStart = periods.map((p) => p[0]).sort()[0];
     meter.periodEnd = periods.map((p) => p[1]).sort().slice(-1)[0];
@@ -689,6 +700,19 @@ function parseEnergy(allLines, text, defaultYear) {
     const n = { v: nums[0] };
     reads.push({ date: ds[0].iso, value: n.v, closing: /closing|final/i.test(l), opening: /opening/i.test(l) });
   }
+  // v16.0: "Closing read: 12310 kWh" / "Opening reading 12000" with no date
+  // on the line (plain bills): the closing read is dated the day after the
+  // period ends, the same as the bill.
+  if (!reads.length) {
+    for (const l of allLines) {
+      const m = l.match(/\b(closing|final|present|current|opening|previous|start(?:ing)?)\s+(?:meter\s+)?read(?:ing)?s?\b[^\d\n]{0,12}?(\d[\d,]*(?:\.\d{1,4})?)/i);
+      if (!m) continue;
+      const v = Number(m[2].replace(/,/g, ''));
+      if (!isFinite(v)) continue;
+      const closing = /closing|final|present|current/i.test(m[1]);
+      reads.push({ date: closing ? (meter.periodEnd ? addDays(meter.periodEnd, 1) : '') : (meter.periodStart || ''), value: v, closing, opening: !closing });
+    }
+  }
   if (reads.length) {
     const sorted = [...reads].sort((a, b) => a.date.localeCompare(b.date));
     const close = reads.find((r) => r.closing) || sorted[sorted.length - 1];
@@ -699,7 +723,7 @@ function parseEnergy(allLines, text, defaultYear) {
   }
   // kWh used: sum of "Electricity used 376.2200 kWh" lines, else "Total units 135.730 kWh", else closing - opening
   const used = allLines.map((l) => l.match(/(?:electricity|gas|energy)\s+(?:used|use)\s+(-?[\d,]+\.?\d*)\s*kwh/i)).filter(Boolean).map((m) => Number(m[1].replace(/,/g, '')));
-  const units = text.match(/total units\s+([\d,]+\.?\d*)\s*kwh/i);
+  const units = text.match(/total units\s+([\d,]+\.?\d*)\s*kwh/i) || text.match(/\bunits used\s*:?\s*([\d,]+\.?\d*)\s*kwh/i); // v16.0: "Units used: 310 kWh"
   if (used.length) meter.used = round2(used.reduce((a, b) => a + b, 0));
   else if (units) meter.used = round2(Number(units[1].replace(/,/g, '')));
   else if (meter.closing && meter.opening) meter.used = round2(meter.closing - meter.opening);
@@ -717,6 +741,11 @@ function parseEnergy(allLines, text, defaultYear) {
       else {
         const ce = allLines.map((l) => l.match(/cost of (?:electricity|gas)\s*(£\s?[\d,]+\.\d{2})/i)).filter(Boolean).map((m) => findAmounts(m[1])[0].value);
         if (ce.length) total = round2(ce.reduce((a, b) => a + b, 0));
+        else {
+          // v16.0: "Total to pay: £84.20", "Amount due £84.20", "Total amount due"
+          const due = allLines.map((l) => l.match(/\b(?:total to pay|total amount (?:due|to pay)|amount (?:due|to pay)|total due|balance to pay|total payable)\b[^£\d-]{0,6}(-?£\s?[\d,]+\.\d{2})/i)).filter(Boolean).map((m) => findAmounts(m[1])[0]).filter((a) => a && a.value > 0);
+          if (due.length) total = due[0].value;
+        }
       }
     }
   }

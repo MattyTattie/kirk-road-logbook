@@ -11,6 +11,7 @@
 //   policyEnded   'YYYY-MM-DD'  insurance: you said the policy ended (not renewed).
 // =====================================================================
 import { withoutSuperseded } from './mortgage.js';
+import { insKindOf } from './sections.js';
 
 const day = (iso) => String(iso || '').slice(0, 10);
 const dayNum = (iso) => { const [y, m, d] = day(iso).split('-').map(Number); return Date.UTC(y, (m || 1) - 1, d || 1) / 86400000; };
@@ -35,7 +36,7 @@ export function supersededPolicyIds(entries) {
     const due = dayNum(e.dueDate);
     for (const o of pol) {
       if (o === e || !isDay(o.date) || day(o.date) <= day(e.date)) continue;
-      if ((o.insType || 'home') !== (e.insType || 'home')) continue;
+      if ((insKindOf(o) || 'home') !== (insKindOf(e) || 'home')) continue;
       const same = (norm(o.supplier) && norm(o.supplier) === norm(e.supplier)) || (norm(o.policyNumber) && norm(o.policyNumber) === norm(e.policyNumber));
       if (!same) continue;
       const od = dayNum(o.date);
@@ -57,7 +58,23 @@ export function replacementOf(e, entries) {
   const pol = (entries || []).filter((x) => x && x.type === 'insurance' && x !== e);
   if (e.renewedBy) { const r = pol.find((x) => x.id === e.renewedBy); if (r) return r; }
   if (!supersededPolicyIds(entries).has(e.id)) return null;
-  return pol.filter((o) => isDay(o.date) && day(o.date) > day(e.date) && (o.insType || 'home') === (e.insType || 'home')).sort((a, b) => day(a.date).localeCompare(day(b.date)))[0] || null;
+  return pol.filter((o) => isDay(o.date) && day(o.date) > day(e.date) && (insKindOf(o) || 'home') === (insKindOf(e) || 'home')).sort((a, b) => day(a.date).localeCompare(day(b.date)))[0] || null;
+}
+
+// v16.0: the policy this one renewed (the one it replaced), or null.
+export function previousPolicyOf(e, entries) {
+  if (!e || e.type !== 'insurance') return null;
+  const sup = supersededPolicyIds(entries);
+  return (entries || []).filter((x) => x && x.type === 'insurance' && x.id !== e.id && sup.has(x.id) && (replacementOf(x, entries) || {}).id === e.id)
+    .sort((a, b) => day(b.date).localeCompare(day(a.date)))[0] || null;
+}
+// v16.0: "£612 a year, was £540 (+£72, +13%)" → { now, was, diff, pct } a year, or null.
+export function renewalChange(e, entries, yearlyOf) {
+  const prev = previousPolicyOf(e, entries);
+  if (!prev) return null;
+  const now = yearlyOf(e), was = yearlyOf(prev);
+  if (!(now > 0) || !(was > 0)) return null;
+  return { now, was, diff: Math.round((now - was) * 100) / 100, pct: Math.round((now - was) / was * 100), prev };
 }
 
 // Entries whose due / expiry / renewal date still matters (Coming up,

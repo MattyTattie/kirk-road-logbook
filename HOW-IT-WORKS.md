@@ -1071,3 +1071,37 @@ On a Mac the cards flow in independent-height columns with compact gaps. The man
 - The Google Drive photo folder is still called "Bills". Renaming it would change folders in Drive, which is sync territory, not display text.
 - Search still understands "bills" as well as "electricity".
 - Display text only. Section id `meter`, the Spending card's `bills` mode, DB, sync v3 and backup v1 are unchanged.
+
+## v16.0 — the 19 Nov audit, fixed (built 19 Nov 2026, local branch v16.0, NOT published)
+
+Faults
+- **Printed report insurance** counts only current policies (and ones whose renewal date has passed with nothing logged, as on the Insurance list). Renewed and ended policies are listed under "Past policies (… not in the total)" with "Ran to <date>", never in red. The grand total's insurance figure says "(current policies)".
+- **Mortgage what-if** starts from an estimate of today's balance: the latest statement's balance less the payments (and regular overpayments) due since, at the deal rate (the follow-on rate once a deal has ended, if known). The one-off "Paid in" months start from the next payment. "Now" is worked out from the same starting point, so with today's amount the date matches the key facts, and no answer can be a mortgage-free month in the past. The ERC warning names the lender from your entries (latest statement, else the set-up; "Your lender" if neither has one). Nothing about any lender or deal is in the code. A minus amount, or something that isn't a number, gets "Type an amount of £0 or more…" and no result.
+- **Bill scanner, plain PDFs**: reads "Total to pay / Amount due / Total due / Balance to pay", "Period: 1 Sep 2026 to 30 Sep 2026" (so the title gets "Sep 2026"), "Closing read / Opening read" with no date on the line (dated like the bill, the day after the period ends) and "Units used". These are fallbacks only: the EDF/OVO rules run first, unchanged. If the supplier was filled in from the top of the page, the banner says it's a best guess instead of "couldn't find the supplier".
+- **Glossary**: APR only matches capitals (APR / APRC), so "6 Apr 2025" is no longer underlined.
+- **Home due chip = Home Coming up**: Home's Coming up lists everything due in the next 30 days (the same things the house's "N due within 30 days" chip counts, reminders included), plus the mortgage deal end from 6 months out. With nothing in 30 days it shows just the next thing. Heading: "Coming up · next 30 days".
+- "1 photo" / "1 entry" plurals.
+
+Continuity
+- **"Soon" = 30 days** everywhere: `SOON_DAYS` 30 (was 60). Home chip, Home Coming up, the Logbook banner ("N due within 30 days", now links to Coming up and counts reminders too) and the orange "soon" colour. Insurance stays 30; the mortgage deal end keeps its 6-month window (labelled "deal ends in about 5 months"). The Coming up page keeps its labelled groups (Overdue, Next 30 days, Next 3 months, Later).
+- **Year chips newest first** everywhere (`yearPicker` default). The Home Spending card only offers years with spending in them (a warranty with no cost no longer adds a £0 year).
+- **Year in review electricity**: one basis on the page. With the Electricity page's "After EDF credits" switch on, the whole review counts bills after credits; off, as charged. The "at a glance" line, "Where it went" and the ⓘ note all say which.
+- **Counts**: tiles read "N things · £X" ("2 jobs · £60", "1 warranty", "10 bills · £1,293", "4 policies · £719"). The insurance tile adds "· 3 current" when the year's count includes replaced policies. Year in review's job/receipt rows say "N with a cost". More says "88 entries + 2 reminders" (same as the Logbook).
+- **Money**: refunds show a real minus "−£29.99" everywhere (utils `money()`), like credits. Year in review and the Mortgage "paid" table are in pounds and pence throughout; Home tiles stay whole pounds.
+- **Printed report matches the app**: reminders under their own "Reminders" heading (not Jobs); bill titles without "– £amount"; the Mortgage heading shows the balance (and its date), not £0.00; only the latest mortgage entry shows "Deal ends …". Header count: "N entries + N reminders".
+- **Coming up**: a mortgage deal end reads "Mortgage · deal ends in …" (was "Mortgage statement · …"). Home's Coming up shows a job's due date ("Job · due 28 Nov 2026"), not the date it was logged.
+- **Insurance kinds**: Pet, Travel and Gadget / phone added. Saved as `insType: 'other'` + `insKind: 'pet'` (new optional field), so v15.24 phones show them as Other and keep the kind when they edit them (tested). An old test entry with insType 'pet' still reads as Pet.
+- **Layout**: on phones the backup buttons stack (one line each); Home's Ask box is full width on desktop (was 640px over a full-width Scan button); entry titles may wrap to two lines on phones/tablets so "… bill Aug 2026" isn't cut.
+
+Ideas built
+- **Renewal price**: a policy that replaced another shows "Renewal price £262.40 a year, was £240.00 (+£22.40, +9%)". A current policy within 30 days of renewal gets a shop-around nudge with last time's price (or this year's).
+- **Ask Hearth**: "this month" and "last month" (with their year; "last month" in January is December last year). "last year" already worked.
+- **Mortgage**: "About £X today (estimate, after N payments since <statement date>)" under the balance; the Home tile shows "about £X owed · estimate, from <date>". A "Before your deal ends" checklist from 6 months before the deal end (check the ERC end, ask <lender> for a product transfer, compare with a broker, lock in a deal, check the new payment, add the new deal to Hearth). Ticks are kept on this phone only (localStorage `hearthbook.remortgage.<deal end>`), not backed up or synced.
+- **Bill page**: Covers (month), Used (kWh from the reading before, with dates) and Cost per kWh (all-in, after credits if the bill has them), alongside the unit rate / standing charge rows that were already there when the bill has a tariff.
+- **Running the house** (Year in review, current year): mortgage payment (+ regular overpayment), current insurance per month, average electricity bill over the last 12 months of bills → "£X a month".
+- **Reminder presets**: Electrical safety check (EICR) every 5 years, Renew the EPC every 10 years, Change smoke alarm batteries yearly (boiler service and chimney sweep were already there).
+- **Paid by** (optional, under More details on any entry except the mortgage): free text with suggestions ("Joint" + names you've used before). No names are in the code. Year in review shows a "Who paid" split once anything has one (insurance and mortgage not included). New optional field `paidBy`; v15.24 keeps it when it restores or edits an entry, and its backups carry it back (tested both ways).
+
+Not built: the battery dashboard (waiting for the January 2027 install).
+
+Unchanged: DB `kirk-road-logbook`, section ids (`meter` etc.), chartMode `bills`, `hearthbook-sync.json` v3, backup `kirk-road-logbook-backup` v1. New fields `paidBy` and `insKind` are optional and additive. sw cache `hearthbook-v16.0`, APP_VERSION 16.0.

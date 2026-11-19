@@ -90,6 +90,10 @@ export const PRESETS = [
   { key: 'dishwasher', title: 'Clean the dishwasher filter', every: 1, unit: 'month', notes: '' },
   { key: 'gutters', title: 'Clear the gutters', every: 1, unit: 'year', notes: 'Best after the leaves are down (Nov).' },
   { key: 'rcd', title: 'Press the RCD test buttons', every: 6, unit: 'month', notes: 'On the consumer unit.' },
+  // v16.0: house paperwork
+  { key: 'eicr', title: 'Electrical safety check (EICR)', every: 5, unit: 'year', notes: 'Electrical Installation Condition Report by a registered electrician.' },
+  { key: 'epc', title: 'Renew the EPC', every: 10, unit: 'year', notes: 'Energy Performance Certificate: lasts 10 years, needed to sell or let.' },
+  { key: 'alarmbattery', title: 'Change smoke alarm batteries', every: 1, unit: 'year', notes: 'Unless they are sealed 10-year alarms.' },
 ];
 export const preset = (key) => PRESETS.find((p) => p.key === key) || null;
 
