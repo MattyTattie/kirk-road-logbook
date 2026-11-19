@@ -42,7 +42,7 @@ async function build() {
   else {
     // Insurance premiums are a yearly running cost, shown under their own heading.
     const policies = entries.filter((e) => e.type === 'insurance');
-    parts.push(el('div', { class: 'grand', id: 'grand-total' }, `Total of all costs: ${money(totalCost(entries.filter((e) => e.type !== 'insurance')))} (excl. insurance; bills as charged, by date paid)`,
+    parts.push(el('div', { class: 'grand', id: 'grand-total' }, `Total of all costs: ${money(totalCost(entries.filter((e) => e.type !== 'insurance')))} (excl. insurance; electricity bills as charged, by date paid)`,
       policies.length ? ` · insurance ${money(totalCost(policies.map((e) => ({ cost: annualCost(e) }))))} a year` : ''));
   }
 

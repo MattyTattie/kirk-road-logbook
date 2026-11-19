@@ -441,10 +441,10 @@ async function renderHome() {
 
   // --- Hero: spend this year ---
   // The card opens the logbook filtered to this year; each little chip
-  // opens that section for the year (e.g. Receipts 2026, Bills 2026).
+  // opens that section for the year (e.g. Receipts 2026, Electricity 2026).
   const heroChip = (s) => {
     const v = spendInYear(spendSrc.filter((e) => e.type === s.id), year);
-    const name = s.id === 'meter' ? 'Bills' : s.label.split(' ')[0];
+    const name = s.id === 'meter' ? 'Electricity' : s.label.split(' ')[0]; // v15.24: was 'Bills' (display only; id stays 'meter')
     return v > 0 ? el('a', { class: 'hero-chip', href: `#/list/${s.id}/${year}`, 'data-section': s.id, 'aria-label': `${s.label} in ${year}: ${money(v)}` }, icon(s.glyph, 14), `${name} ${money(Math.round(v)).replace(/\.\d\d$/, '')}`) : null;
   };
   const heroChips = () => prefs.orderedSections().map(heroChip).filter(Boolean);
@@ -457,7 +457,7 @@ async function renderHome() {
     el('p', { class: 'hero-sub' }, `${countThisYear} entr${countThisYear === 1 ? 'y' : 'ies'} · ${money(lastYear)} in ${year - 1} · `,
       el('a', { class: 'hero-review', href: `#/year/${defaultReviewYear(everything)}`, id: 'year-review-link' }, 'Year in review ›')),
     // v14.6: say what the total counts (Year in review adds insurance; the charts use months used).
-    infoNote(`Bills by the month they cover, as charged · insurance not included${mortOn ? ' · incl. mortgage' : ''}`, { id: 'spend-basis', cls: 'hero-sub hero-basis', label: 'What this total counts' }),
+    infoNote(`Electricity bills by the month they cover, as charged · insurance not included${mortOn ? ' · incl. mortgage' : ''}`, { id: 'spend-basis', cls: 'hero-sub hero-basis', label: 'What this total counts' }),
     el('div', { class: 'hero-split' }, heroChips()),
     mortgageSwitch(everything, 'home')
   );
@@ -1042,10 +1042,10 @@ function meterInsights(everything) {
     fill(stats, meterStatsCells(s, unit, statsNote, hasCredits && prefs.afterCreditsOn()));
     savedLine(creditNote, s, hasCredits && prefs.afterCreditsOn());
     const netOn = hasCredits && prefs.afterCreditsOn();
-    fill(creditMore, netOn && s && s.credits && s.credits.total ? moreInfo(['Credits are the amounts printed on each bill. The Bills box and the charts use what was paid after them while the switch is on.'], { id: 'credit-more', rows: [
-      ['Bills as charged', money(s.billsTotal)], ['Credits', `−${money(s.credits.total)}`], ['Paid after credits', money(s.billsNet)]] }) : null);
+    fill(creditMore, netOn && s && s.credits && s.credits.total ? moreInfo(['Credits are the amounts printed on each bill. The Electricity box and the charts use what was paid after them while the switch is on.'], { id: 'credit-more', rows: [
+      ['Electricity as charged', money(s.billsTotal)], ['Credits', `−${money(s.credits.total)}`], ['Paid after credits', money(s.billsNet)]] }) : null);
     const y = billsVsLastYear(everything, yr, netOn);
-    fill(yoyBox, y ? resultBox(y.kind, y.kind === 'plain' ? `Bills about the same as ${yr - 1}` : `Bills ${y.diff < 0 ? 'down' : 'up'} ${money(Math.abs(y.diff))} on ${yr - 1}${y.pct !== null ? ` (${y.diff < 0 ? '−' : '+'}${Math.abs(y.pct)}%)` : ''}`,
+    fill(yoyBox, y ? resultBox(y.kind, y.kind === 'plain' ? `Electricity about the same as ${yr - 1}` : `Electricity ${y.diff < 0 ? 'down' : 'up'} ${money(Math.abs(y.diff))} on ${yr - 1}${y.pct !== null ? ` (${y.diff < 0 ? '−' : '+'}${Math.abs(y.pct)}%)` : ''}`,
       `${y.months ? y.months + ' ' : ''}${yr}: ${money(y.now)} · same months ${yr - 1}: ${money(y.then)}${netOn ? ' (after credits)' : ''}`, { id: 'bills-yoy', iconNode: icon(y.kind === 'good' ? 'check' : y.kind === 'bad' ? 'alert' : 'chart', 18) }) : null);
   };
   const creditSwitch = () => hasCredits ? el('label', { class: 'credit-switch', id: 'credit-switch-row' },
@@ -1142,7 +1142,7 @@ function meterInsights(everything) {
 }
 
 // v14.4: the four boxes at the top of the Electricity page for one tab, plus
-// the line under them. Labels name the period ("Used in 2025", "Bills 2025",
+// the line under them. Labels name the period ("Used in 2025", "Electricity 2025",
 // "Reading 31 Dec 2025"); numbers use the same spread as the bars.
 const shortDate = (iso) => niceDate(iso).replace(/ \d{4}$/, '');
 const sameYear = (a, b) => a && b && a.slice(0, 4) === b.slice(0, 4);
@@ -1167,7 +1167,8 @@ function meterStatsCells(s, unit, note, net = false) {
     return [
       cell('ms-used', 'Used, last 12 months', s.days ? kwhFmt(s.used) : '–', s.from ? `${unit} · since ${niceDate(s.from)}` : unit),
       cell('ms-avg', 'Daily average', avg, `${unit}/day, last 12 months`),
-      cell('ms-bills', 'Bills, last 12 months', pounds(billsFig), billSub),
+      cell('ms-bills', 'Electricity, 12 months', // v15.24: was 'Bills, last 12 months' (shorter so it fits one line at 390px)
+      pounds(billsFig), billSub),
       cell('ms-reading', 'Latest reading', readingFmt(s.reading.value), `${unit} · ${niceDate(s.reading.date)}`),
     ];
   }
@@ -1183,13 +1184,13 @@ function meterStatsCells(s, unit, note, net = false) {
   if (rd && rd.est) bits.push(`Reading at 31 Dec worked out from the ${shortDate(rd.est[0])} and ${niceDate(rd.est[1])} readings.`);
   if (s.missingDays > 0) bits.push(`No readings for ${s.missingDays} day${s.missingDays === 1 ? '' : 's'} in between.`);
   // v14.6: bills for months the readings don't cover are in Bills but not in Used.
-  if (s.uncovered && s.uncovered.length) bits.push(`Bills include ${s.uncovered.length === 1 ? '1 bill' : s.uncovered.length + ' bills'} for ${s.uncovered.length === 1 ? 'a month' : 'months'} with no readings (${s.uncoveredMonths.join(', ')}), so ${s.uncovered.length === 1 ? 'it isn’t' : 'they aren’t'} in Used.`);
+  if (s.uncovered && s.uncovered.length) bits.push(`Electricity includes ${s.uncovered.length === 1 ? '1 bill' : s.uncovered.length + ' bills'} for ${s.uncovered.length === 1 ? 'a month' : 'months'} with no readings (${s.uncoveredMonths.join(', ')}), so ${s.uncovered.length === 1 ? 'it isn’t' : 'they aren’t'} in Used.`);
   note.replaceChildren(bits.join(' '));
   note.hidden = !bits.length;
   return [
     cell('ms-used', `Used in ${y}`, s.days ? kwhFmt(s.used) : '–', `${unit}${cover ? ' ' + cover : ''}`),
     cell('ms-avg', `Daily average ${y}`, avg, `${unit}/day`),
-    cell('ms-bills', `Bills ${y}`, pounds(billsFig), billSub),
+    cell('ms-bills', `Electricity ${y}`, pounds(billsFig), billSub),
     cell('ms-reading', rLabel, rd ? readingFmt(rd.value) : '–', rSub, rTitle),
   ];
 }
@@ -1223,7 +1224,7 @@ function billStat(bill, id = 'pd-cost') {
 function billsStat(list, id = 'pd-cost') {
   const total = totalCost(list);
   if (prefs.afterCreditsOn() && list.some((b) => creditsOf(b).length)) return stat('Paid after credits', money(sumShown(list, true)), `of ${money(total)}, ${list.length} bills`, id);
-  return stat('Bills', money(total), `${list.length} bills`, id);
+  return stat('Electricity', money(total), `${list.length} bills`, id); // v15.24: label was 'Bills'
 }
 // "EDF bill Aug 2026 – £85.80 / paid 3 Sep 2026  [Open bill]" rows under a month card.
 function billRows(list) {

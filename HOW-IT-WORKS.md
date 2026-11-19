@@ -1051,3 +1051,23 @@ On a Mac the cards flow in independent-height columns with compact gaps. The man
 - Everything on the card follows the button: the bars, the "Last 12 months · £…" total, the month card (spent, entries, the list) and the "vs last month" pill. The 12 months / year chips work the same in all three modes. The "bills by the month they cover" note is hidden in Receipts, where there are no bills.
 - On a phone (under 600px wide) the three buttons sit on their own full-width row under the title, so the title and total stay on one line each.
 - The chosen mode is not saved anywhere (in memory only), so no data, DB, section ids, sync or backup format changes.
+
+## v15.24 — "Bills" now reads "Electricity"
+
+- Wherever "Bills" named the electricity section, it now says **Electricity**:
+  - Home, Spent-in-year card: the chip is "Electricity £…", and the note reads "Electricity bills by the month they cover, as charged · …".
+  - Electricity page boxes: "Electricity, 12 months" (shortened from "Bills, last 12 months" so it fits on one line on a phone) and "Electricity 2026" on a year tab.
+  - The year-on-year line: "Electricity up £… on 2025", "Electricity down …" or "Electricity about the same as 2025".
+  - The note about bills for months with no readings: "Electricity includes 2 bills for months with no readings…".
+  - The credits workings ("Electricity as charged") and the credits explainer ("The Electricity box and the charts…").
+  - A month with two or more bills: the box is "Electricity £…, 2 bills".
+  - The printed report's total line: "electricity bills as charged".
+- Left as "bill(s)" on purpose, where it means the paper bill itself:
+  - counts like "11 bills this year" and "13 bills for Nov 2025 – Oct 2026";
+  - "Last bill", "Scan a bill", the single-bill "Bill" box and "Bill photo";
+  - "Bill credits" in the glossary;
+  - duplicate-bill warnings;
+  - the section's own name, "Electricity bills".
+- The Google Drive photo folder is still called "Bills". Renaming it would change folders in Drive, which is sync territory, not display text.
+- Search still understands "bills" as well as "electricity".
+- Display text only. Section id `meter`, the Spending card's `bills` mode, DB, sync v3 and backup v1 are unchanged.

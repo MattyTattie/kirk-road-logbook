@@ -54,7 +54,8 @@
 // v15.21 = Mac/wide Electricity list: bills use the full left column again (they were squashed into a narrow two-column grid when no usage was imported); bill cards say "Meter reading" before the kWh figure.
 // v15.22 = the 10 Nov list: bill titles without the amount; Overdue on Home with Done/Dismiss/Renewed; renewed and ended insurance policies; one rule for bills (the month they cover) on Electricity, Year in review and Ask; restore keeps newer edits; same-bill-twice warning; far-future date warning; long lists show 60 at a time.
 // v15.23 = Home Spending card: All / Electricity / Receipts (Receipts = everything except electricity bills); "Bills" button renamed Electricity.
-const CACHE_NAME = 'hearthbook-v15.23';
+// v15.24 = "Bills" shown as "Electricity" everywhere it named the section (Spent card chip, Electricity page boxes, year-on-year line, notes). Display text only.
+const CACHE_NAME = 'hearthbook-v15.24';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
