@@ -77,8 +77,14 @@ async function run(storeName, mode, action) {
 // v15.0: the app's screens never see the EDF usage entry (type 'usage', see
 // usage.js); it isn't a logbook item. Backups and sync use getEverything().
 export async function getAllEntries() {
-  return (await getEverything()).filter((e) => !e || e.type !== 'usage');
+  const list = (await getEverything()).filter((e) => !e || e.type !== 'usage');
+  lastList = list;
+  return list;
 }
+// v16.1: the entries as last read, for small screen bits that need to know
+// about the other entries (is this policy renewed?) without reading again.
+let lastList = [];
+export const lastEntries = () => lastList;
 
 // Every record, including the usage entry: for backups and sync only.
 export function getEverything() {

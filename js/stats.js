@@ -6,6 +6,7 @@
 
 import { daysUntil, totalCost } from './utils.js';
 import { activeDue } from './duestate.js'; // v15.22
+import { midMonthKey } from './billmonth.js'; // v16.1
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -54,12 +55,9 @@ export function yearsWithSpend(entries, now = new Date()) {
 }
 
 // v14.1: the month a period between two readings mostly covers = the month
-// of its middle day. 3 Sep → 3 Oct is "Sep" (middle day 18 Sep).
-export function midMonthKey(fromIso, toIso) {
-  const a = dayNum(fromIso), b = dayNum(toIso);
-  const d = new Date(Math.floor((a + b) / 2) * 86400000);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
+// of its middle day. v16.1: lives in billmonth.js (one rule for every screen).
+export { midMonthKey };
+
 // The month an energy bill is "for": the middle of the period that ends at
 // its reading; with no earlier reading, a bill dated on the 1st–5th is for
 // the month before (EDF bills on the 3rd). Other entries: their own month.

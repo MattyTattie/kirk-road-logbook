@@ -123,6 +123,9 @@ export const INSURANCE_TYPES = [
   { id: 'other', label: 'Other' },
 ];
 export const insuranceTypeLabel = (id) => (INSURANCE_TYPES.find((t) => t.id === id) || { label: 'Other' }).label;
+// v16.1: one name for a policy's kind everywhere (Home, Coming up, Logbook,
+// Ask, the report): "Car insurance", "Gadget / phone insurance", "Other insurance".
+export const insuranceKindText = (e) => `${insuranceTypeLabel(insKindOf(e) || 'other')} insurance`;
 
 // Yearly cost of a policy: monthly premiums × 12.
 export function annualCost(e) {

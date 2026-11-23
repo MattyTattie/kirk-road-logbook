@@ -10,7 +10,7 @@
 
 @font-face {
   font-family: 'Inter';
-  src: url('fonts/inter-latin.woff') format('woff');
+  src: url('fonts/inter-latin.woff2') format('woff2');
   font-weight: 400 800;
   font-style: normal;
   font-display: swap; /* show text straight away with a system font, swap when loaded */
@@ -273,8 +273,6 @@ body.no-nav .bottom-nav { display: none; }
 
 /* Charts */
 .chart-card .card-head { margin-bottom: 2px; }
-.chart-readout { margin: 6px 0 4px !important; color: var(--text-2); font-size: 14px; }
-.chart-readout strong { color: var(--text); font-size: 17px; font-variant-numeric: tabular-nums; }
 .chart { color: var(--brand); }
 .chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
 .chart-grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 4; }
@@ -903,8 +901,6 @@ body.ready #splash { animation: splash-out 0.3s ease 0.1s forwards; }
 .remind-nudge .remind-text { flex: 1; }
 .reminders-status { font-weight: 600; }
 .reminders-status.ok { color: var(--good); }
-.cheap-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cheap-row input { width: auto; min-width: 7.5em; }
 
 @media (prefers-reduced-motion: reduce) {
   #splash, #splash img, #splash span { animation: none !important; }
@@ -1131,7 +1127,7 @@ a.year-chip { text-decoration: none; display: inline-flex; align-items: center; 
 .mcard-head .stat-label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 13px; font-weight: 650; }
 .mcard-head .credit-switch { margin: 0; }
 .mortgage-big { font-size: 30px; font-weight: 780; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; margin: 6px 0 2px; }
-.mortgage-big .est-tag { font-size: 12px; font-weight: 650; color: var(--soon); background: var(--soon-bg); border-radius: 999px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; letter-spacing: 0; }
+.mortgage-big .est-tag { white-space: nowrap; font-size: 12px; font-weight: 650; color: var(--soon); background: var(--soon-bg); border-radius: 999px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; letter-spacing: 0; }
 .mortgage-card .card-title { margin-bottom: 8px; }
 .overpay-saved { display: flex; gap: 8px; align-items: flex-start; background: var(--good-bg); color: var(--text); border-radius: 12px; padding: 10px 12px; margin: 10px 0 4px !important; font-size: 14px; font-weight: 600; line-height: 1.4; }
 .overpay-saved .ico { color: var(--good); flex: none; margin-top: 1px; }
@@ -1190,7 +1186,6 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
 .whatif-error svg { flex: none; margin-top: 2px; }
 .whatif input[aria-invalid="true"] { border-color: var(--bad, #e05a4f); }
 .more-toggle { background: none; border: 0; color: var(--brand, var(--accent)); font: inherit; font-size: 13px; padding: 8px 0; width: 100%; cursor: pointer; }
-.mortgage-switch-row { display: flex; justify-content: flex-end; margin: 6px 0 0; }
 .up-group { margin-bottom: 18px; }
 .up-row { display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit; }
 .up-date { flex: none; width: 46px; text-align: center; border-radius: 10px; padding: 6px 0; background: var(--surface-2, rgba(127,127,127,.1)); line-height: 1.1; }
@@ -1199,7 +1194,6 @@ a.mrow-link .mrow-v small { color: var(--brand, var(--accent)); }
 .up-text { flex: 1; min-width: 0; }
 .up-text strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .up-row.highlight { outline: 2px solid var(--brand, var(--accent)); }
-.review-mortgage .mrow, .review-power .mrow { font-size: 14px; }
 .summary { flex-wrap: wrap; row-gap: 6px; }
 .summary .mortgage-switch { flex-basis: 100%; justify-content: flex-end; }
 .hero .mortgage-switch { margin-top: 10px; }
@@ -1785,4 +1779,40 @@ body.pdf-open main { padding-bottom: 40px; }
 }
 @media (max-width: 1023px) {
   .entry-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+}
+
+/* ---- v16.1 ---- */
+/* Home chips: big enough to tap (were 26px tall) */
+.house-caption .hc-chip { min-height: 44px; box-sizing: border-box; padding-block: 0; }
+/* Insurance "Type of cover": no label wraps onto two lines ("Gadget / phone") */
+.ins-types { display: flex; flex-wrap: wrap; }
+.ins-types .radio-seg { flex: 1 0 auto; white-space: nowrap; }
+/* Logbook: search, then Room and Paid by side by side */
+.search-row.two-filters { flex-wrap: wrap; }
+.search-row.two-filters .search-wrap { flex-basis: 100%; }
+.search-row.two-filters .room-filter { flex: 1 1 0; max-width: none; min-width: 0; }
+.room-filter.on { border-color: var(--brand); }
+/* Home: the mortgage deal-end line under Coming up */
+.mortgage-notice { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 12px 14px; text-decoration: none; color: inherit; }
+.mortgage-notice .mn-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.mortgage-notice .due { margin-top: 2px; }
+/* Home Coming up: renewal nudge on a policy */
+.entry-nudge { margin-top: 3px; color: var(--brand); font-weight: 600; line-height: 1.35; }
+.entry-nudge svg { vertical-align: -1px; margin-right: 4px; }
+/* Mortgage chart: the dashed line on to today's estimate */
+.mortgage-line.today { stroke-dasharray: 4 4; stroke-width: 2; opacity: 0.85; }
+.mortgage-dot.today { fill: var(--surface); stroke: var(--sky); stroke-width: 2; }
+.chart-today { fill: var(--text-2); font-weight: 600; }
+/* Year in review: Running the house's ⓘ beside the title */
+#running-cost .mcard-head .info-note { margin: 0; }
+#running-cost .mcard-head .info-note.open { flex-basis: 100%; }
+/* Who paid: the evens-up line and the quieter "Not set" */
+.who-evens { margin: 10px 0 4px; font-weight: 600; }
+.who-evens svg { vertical-align: -2px; margin-right: 5px; color: var(--brand); }
+.who-unset { margin: 6px 0 0; }
+@media (min-width: 1024px) {
+  /* Year in review: "at a glance" full width; the other cards pack into two columns */
+  main:has(> #review-total) { grid-auto-flow: row dense; }
+  main:has(> #review-total) > #review-roundup, main:has(> #review-total) > #review-facts { grid-column: 1 / -1; }
+  main:has(> #review-total) > #running-cost, main:has(> #review-total) > #who-paid, main:has(> #review-total) > #review-categories, main:has(> #review-total) > #review-biggest { grid-column: auto; }
 }

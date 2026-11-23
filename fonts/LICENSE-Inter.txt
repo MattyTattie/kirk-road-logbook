@@ -1,4 +1,4 @@
-Inter (fonts/inter-latin.woff — a Latin subset of the variable font, weights 400–800)
+Inter (fonts/inter-latin.woff2 — a Latin subset of the variable font, weights 400–800)
 Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
 
 Copyright (c) <dates>, <Copyright Holder> (<URL|email>),

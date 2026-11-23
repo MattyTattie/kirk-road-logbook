@@ -84,6 +84,7 @@ export const earlyText = (n) => (!n ? '' : n === 1 ? '1 day before' : n === 7 ? 
 // Quick picks on the Add reminder screen. Nothing is created until you save.
 export const PRESETS = [
   { key: 'smoke', title: 'Test smoke & heat alarms', every: 1, unit: 'month', notes: 'Press the test button on each alarm.' },
+  { key: 'alarmbattery', title: 'Change smoke alarm batteries', every: 1, unit: 'year', notes: 'Unless they are sealed 10-year alarms.' }, // v16.1: next to the other smoke alarm one
   { key: 'co', title: 'Test CO alarm', every: 1, unit: 'month', notes: '' },
   { key: 'boiler', title: 'Boiler service', every: 1, unit: 'year', notes: '' },
   { key: 'stove', title: 'Sweep the stove chimney', every: 1, unit: 'year', notes: 'Mi-Fires Loughrigg stove.' },
@@ -93,7 +94,6 @@ export const PRESETS = [
   // v16.0: house paperwork
   { key: 'eicr', title: 'Electrical safety check (EICR)', every: 5, unit: 'year', notes: 'Electrical Installation Condition Report by a registered electrician.' },
   { key: 'epc', title: 'Renew the EPC', every: 10, unit: 'year', notes: 'Energy Performance Certificate: lasts 10 years, needed to sell or let.' },
-  { key: 'alarmbattery', title: 'Change smoke alarm batteries', every: 1, unit: 'year', notes: 'Unless they are sealed 10-year alarms.' },
 ];
 export const preset = (key) => PRESETS.find((p) => p.key === key) || null;
 

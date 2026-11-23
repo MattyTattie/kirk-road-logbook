@@ -59,7 +59,7 @@ the browser runs. Change a file, reload, and you see the change.
 | `js/reminders.js` | Reminder notifications for renewals, warranties and jobs due within 30 days. |
 | `js/motion.js` | Small animations: totals counting up, screen transitions, light vibration on taps. All switched off when the phone asks for reduced motion. |
 | `js/theme.js` | Light / Dark / Auto appearance (remembered in `localStorage`). |
-| `fonts/inter-latin.woff` | The Inter typeface (Latin letters only, ~38 KB), stored with the app so it works offline. Licence: SIL Open Font License, see `fonts/LICENSE-Inter.txt`. |
+| `fonts/inter-latin.woff2` | The Inter typeface (Latin letters only, ~31 KB, WOFF2 since v16.1; the older `inter-latin.woff` is kept in the folder but no longer used or precached), stored with the app so it works offline. Licence: SIL Open Font License, see `fonts/LICENSE-Inter.txt`. |
 | `js/db.js` | Saves and loads entries in **IndexedDB**, the phone's built-in browser database. |
 | `js/photos.js` | Shrinks photos to max 1600 px JPEG before saving, and converts photos to/from text for backups. |
 | `js/backup.js` | Creates the backup `.json` file and restores from one. |
@@ -1072,7 +1072,7 @@ On a Mac the cards flow in independent-height columns with compact gaps. The man
 - Search still understands "bills" as well as "electricity".
 - Display text only. Section id `meter`, the Spending card's `bills` mode, DB, sync v3 and backup v1 are unchanged.
 
-## v16.0 — the 19 Nov audit, fixed (built 19 Nov 2026, local branch v16.0, NOT published)
+## v16.0 — the 19 Nov audit, fixed (published 19 Nov 2026, 21:54 GMT)
 
 Faults
 - **Printed report insurance** counts only current policies (and ones whose renewal date has passed with nothing logged, as on the Insurance list). Renewed and ended policies are listed under "Past policies (… not in the total)" with "Ran to <date>", never in red. The grand total's insurance figure says "(current policies)".
@@ -1105,3 +1105,32 @@ Ideas built
 Not built: the battery dashboard (waiting for the January 2027 install).
 
 Unchanged: DB `kirk-road-logbook`, section ids (`meter` etc.), chartMode `bills`, `hearthbook-sync.json` v3, backup `kirk-road-logbook-backup` v1. New fields `paidBy` and `insKind` are optional and additive. sw cache `hearthbook-v16.0`, APP_VERSION 16.0.
+
+## v16.1 — Audit 2 fixed, ideas built, app lighter (built 19 Nov 2026, local branch v16.1, NOT published)
+
+Faults and continuity
+- **Ask Hearth** understands: "what's due/overdue" (only things with a due date: overdue first, oldest first, then this month), "renewals / insurance this month" (renewals in the month plus monthly-paid policies), "when does my mortgage deal end", "how much did <name> pay" / "paid by <name>" (the Paid by field only, never notes or manuals). Curly or straight apostrophes both work. "This year"/"last year" use the Year in review total ("· £X as on Year in review", with a link). The insurance-only heading is "N current policies · M renewed or ended". The "Nothing found" line has no glossary underlines.
+- **Renewed / ended policies** read "Renewed <date>" / "Ended" in grey everywhere (Logbook All, Ask, Coming up), never red.
+- **One bill-month rule**: `js/billmonth.js` (cover period → month in the title → the YYYY-MM in the title → paid date), used by stats, drivetidy, parse and search. Every list (All, a year, search results) puts a bill under the month it covers, so Logbook month totals = Ask "this month/last month" = Year in review. A month heading has no total when it has only one entry.
+- **Mortgage headline = today's estimate** everywhere: Mortgage page "About £107,624 today (est.)" with the statement figure underneath, the chart gets a dashed line to a hollow "today (est.)" point, the report heading says "About £X today (estimate)" with the statement under it. Home: the deal end has its own line under "Coming up · next 30 days" (not in the 30-day list) with the estimate, statement figure and checklist progress.
+- **Wording**: insurance kind names ("Car insurance", "Gadget / phone insurance") on Home, Coming up, Logbook and the detail page, without repeating words already in the title; "in about N months" for anything 90+ days off; readings/kWh with no ".0"; Year in review hides "vs" when the earlier year had nothing; Running the house has its ⓘ next to the title and says "as charged"/"after credits"; scanner wording per kind (bill/policy/mortgage) and "about 5 MB".
+- **Layout**: Home chips 44px tall; Year in review at a glance full width on desktop; reminder presets grouped (alarm batteries next to smoke alarms); duplicate `notes` key in usage.js removed.
+
+Ideas built
+- **Who paid**: bars like "Where it went"; tap a name → that year's Logbook filtered to them; "To split it evenly, Sam would pay Alex £X" (Joint/both/shared left out); "Not set" muted, last.
+- **Logbook "Paid by" filter** next to the room filter (only when some entry has Paid by).
+- **Renewal nudge on Home** for a current policy renewing within 30 days ("Shop around before it renews: now £390.00 a year").
+- **Report**: Running the house section, "Paid by X" per item, bills "Used N kWh · about Xp per kWh all-in".
+- **Remortgage checklist ticks sync**: stored on the mortgage set-up entry (or the latest statement if there's no set-up) as optional `remortgageChecklist: { dealEnd, done: [ids] }`, so they go into backups and Drive sync. Old localStorage ticks are read as a fallback and still written. v16.0/v15.24 keep the field when they edit or back up (tested) but don't show the ticks.
+
+Lighter
+- Service worker installs with `cache: 'no-cache'` (asks GitHub if each file changed instead of re-downloading the copy the page just loaded). Never an old copy.
+- icon-512 / icon-maskable-512 no longer precached (and all icons re-saved losslessly, pixel-identical: 512 94→39 KB, maskable 77→27 KB).
+- The scanner (OCR + PDF reader, about 5 MB) downloads only on Wi-Fi/ethernet (and not with Data Saver) or when the scanner is first opened; offline before then it says so and offers "add by hand".
+- Font WOFF2 (39→31 KB).
+- backup, drivebackup, usage and manuallookup load on demand (still precached). sync and the Drive modules stay at start-up.
+- Manuals 61.8 → 39.5 MB (lossless re-save; Beldray's huge photo downscaled; Shelly Pro 4PM V2 re-rendered at 300 dpi). Same file names; cache name `hearthbook-manuals-v1` kept so saved manuals aren't wiped.
+- Skipped: minified bundle (tests read the source; no build step on Pages), fast OCR model (less accurate), WebP photos (changes backups).
+
+Unchanged: DB `kirk-road-logbook`, section ids, chartMode `bills`, `hearthbook-sync.json` v3, backup v1. New optional field `remortgageChecklist` only. sw cache `hearthbook-v16.1`, APP_VERSION 16.1.
+

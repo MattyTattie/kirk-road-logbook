@@ -56,15 +56,17 @@
 // v15.23 = Home Spending card: All / Electricity / Receipts (Receipts = everything except electricity bills); "Bills" button renamed Electricity.
 // v15.24 = "Bills" shown as "Electricity" everywhere it named the section (Spent card chip, Electricity page boxes, year-on-year line, notes). Display text only.
 // v16.0 = the 19 Nov audit fixed: report counts current policies only, mortgage what-if from today's estimated balance + real lender name, one "soon" (30 days), newest-first years, tile wording, minus signs, plain-PDF bills, renewal price, running cost, remortgage checklist, reminder presets, optional Paid by.
-const CACHE_NAME = 'hearthbook-v16.0';
+// v16.1 = Audit 2: Ask Hearth answers what's due/overdue/renewals/deal end/who paid and uses Year in review's totals; renewed policies never red; one bill-month rule everywhere; mortgage headline = today's estimate; Who paid bars + evens up + Paid by filter; report adds Paid by, kWh, p/kWh, running cost; remortgage ticks saved with the mortgage; lighter install (revalidate instead of re-download, big icons not precached, scanner on Wi-Fi or first use, woff2, smaller manuals).
+const CACHE_NAME = 'hearthbook-v16.1';
 // Where a shared photo/PDF waits for the app to pick it up (share target).
 const SHARE_CACHE = 'hearthbook-share';
 
 // The scanner's libraries (OCR engine + English model + PDF reader) are big
-// (~8 MB to download), so they get their OWN cache with its own version.
+// (~5 MB to download, ~8 MB once saved), so they get their OWN cache with its own version.
 // That way an ordinary app update doesn't download them all again, and the
 // first install isn't slowed down: they're fetched quietly in the background
-// after the app has loaded (see "warm-ocr" below). Bump this only when the
+// after the app has loaded on Wi-Fi, or when the scanner is first opened
+// (v16.1; see "warm-ocr" below). Bump this only when the
 // files in vendor/ change.
 const OCR_CACHE = 'hearthbook-ocr-v1';
 const OCR_FILES = [
@@ -74,9 +76,11 @@ const OCR_FILES = [
   './vendor/pdfjs/pdf.min.mjs',
   './vendor/pdfjs/pdf.worker.min.mjs',
 ];
-// The appliance manuals (about 40 MB of PDFs) get their own cache too, filled
-// the first time you open More → Manuals ("warm-manuals"), not at install.
-// The list is in js/manuals.js. Bump only when the PDFs change.
+// The appliance manuals (about 38 MB of PDFs) get their own cache too, filled
+// only when you tap "Save all for offline" in Manuals ("warm-manuals"), not at install.
+// The list is in js/manuals.js. v16.1: the PDFs were re-saved smaller with the
+// same names; the name stays v1 so manuals already saved for offline aren't
+// deleted (they're the same documents, just bigger copies).
 const MANUALS_CACHE = 'hearthbook-manuals-v1';
 const isManual = (url) => new URL(url).pathname.includes('/manuals/') && /\.pdf$/i.test(new URL(url).pathname);
 
@@ -142,21 +146,26 @@ const APP_SHELL = [
   './js/outcomes.js',
   './js/formhelp.js',
   './js/duestate.js',
-  './fonts/inter-latin.woff',
+  './js/billmonth.js',
+  './fonts/inter-latin.woff2',
   './icons/icon.svg',
   './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-maskable-512.png',
+  // v16.1: icon-512.png and icon-maskable-512.png are no longer saved here: the
+  // app never shows them (the browser fetches them when installing, and the
+  // Android app has its own copies built in).
 ];
 
 // 1) INSTALL: runs once when this version of the service worker is new.
 //    We download every app file into the cache.
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    // cache: 'reload' (v13) skips the browser's own HTTP cache, so a new
-    // version never saves copies of the previous version's files (GitHub
-    // Pages lets browsers keep files for 10 minutes).
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())
+    // v13 used cache: 'reload' (never keep a copy of the previous version's
+    // files: GitHub Pages lets browsers keep files for 10 minutes), which
+    // downloaded the whole app a second time on the first visit. v16.1:
+    // cache: 'no-cache' asks GitHub "has this changed?" for every file: a
+    // changed file comes back new (so still never an old copy), an unchanged
+    // one is a tiny "not modified" reply and the copy the page just loaded is used.
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL.map((u) => new Request(u, { cache: 'no-cache' })))).then(() => self.skipWaiting())
   );
 });
 
@@ -198,7 +207,7 @@ self.addEventListener('message', (event) => {
 });
 
 // 2c) When you tap "Save all for offline" in Manuals (v13: it asks first,
-//     ~59 MB), the page sends 'warm-manuals' with the list of PDFs; we save
+//     ~38 MB), the page sends 'warm-manuals' with the list of PDFs; we save
 //     the ones not already saved, one at a time. Otherwise viewing is
 //     temporary only; serveManual never saves a new offline copy.
 //     (The pdf.js reader used to show them comes along too.) If the

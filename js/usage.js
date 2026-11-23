@@ -289,7 +289,7 @@ export function usageEntry(existing, months, meta, nowIso = new Date().toISOStri
   const last = keys[keys.length - 1];
   const imports = [...((existing && existing.usage && Array.isArray(existing.usage.imports)) ? existing.usage.imports : []), meta].slice(-20);
   return {
-    cost: null, notes: '', dueDate: null, meterValue: null, meterUnit: '', photos: [],
+    cost: null, dueDate: null, meterValue: null, meterUnit: '', photos: [], // v16.1: notes is set below (was here twice)
     ...(existing || {}),
     id: USAGE_ID,
     type: USAGE_TYPE,

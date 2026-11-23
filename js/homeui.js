@@ -6,7 +6,7 @@
 // app.js hands in the few helpers these need (entryCard, sectionTile…),
 // so this file doesn't depend on app.js.
 
-import { el, fill, addTo, money, niceDate } from './utils.js';
+import { el, fill, addTo, money, niceDate, todayISO as todayIso } from './utils.js';
 import { icon } from './icons.js';
 import { SECTIONS, getSection } from './sections.js';
 import { houseSVG, glowLevel } from './house.js';
@@ -15,7 +15,7 @@ import { search, whenText } from './search.js';
 import { searchManuals } from './manuals.js';
 import { list as userManuals, searchUser } from './usermanuals.js';
 import { bills, coverMonths } from './stats.js';
-import { activeDue } from './duestate.js'; // v15.22
+import { activeDue, policyStatus } from './duestate.js'; // v15.22
 import { shownTitle } from './formhelp.js'; // v15.22
 import * as prefs from './prefs.js';
 import * as reminders from './reminders.js';
@@ -146,30 +146,49 @@ export function houseCard(everything, { ask: askOn = true, overdue = null } = {}
 // Ask Hearthbook
 // ---------------------------------------------------------------------
 // v15.19: the example year follows the clock (was a typed-in 2026).
-const EXAMPLES = ['When does the car insurance renew?', `Electricity bills ${new Date().getFullYear()}`, 'Receipts this year', 'When does the warranty expire?'];
+const EXAMPLES = ['When does the car insurance renew?', 'What’s due this month?', `Electricity bills ${new Date().getFullYear()}`, 'When does my mortgage deal end?']; // v16.1
 
+// v16.1: a mortgage's answer is "the deal", not the statement it's saved on.
+const answerTitle = (e) => (e.type === 'mortgage' ? `${e.supplier || 'Your'} mortgage deal` : shownTitle(e));
 function answerCard(answer) {
   if (!answer) return null;
-  if (answer.kind === 'none') return el('div', { class: 'answer-card none', id: 'ask-answer', role: 'status' }, icon('search', 18), el('p', {}, answer.text));
+  if (answer.kind === 'none') return el('div', { class: 'answer-card none no-terms', id: 'ask-answer', role: 'status' }, icon('search', 18), el('p', {}, answer.text));
+  // v16.1: "how much did Sam pay"
+  if (answer.kind === 'payer') {
+    return el('div', { class: 'answer-card payer-answer no-terms', id: 'ask-answer', role: 'status', 'data-tone': 'violet' },
+      el('span', { class: 'badge badge-md', 'data-tone': 'violet' }, icon('user', 22)),
+      el('div', { class: 'answer-text' },
+        el('span', { class: 'answer-title' }, answer.count ? `${answer.name} paid ${money(answer.total)}` : `Nothing with “Paid by ${answer.name}”`),
+        el('span', { class: 'answer-when' }, answer.count ? `${answer.count} entr${answer.count === 1 ? 'y' : 'ies'} with “Paid by ${answer.name}” (insurance and mortgage aren’t counted, as on Year in review)` : 'Paid by is under More details on each entry.')));
+  }
   const e = answer.entry;
   if (answer.kind === 'nodate') {
     return el('a', { class: 'answer-card', id: 'ask-answer', href: `#/view/${e.id}` }, icon(getSection(e.type).glyph, 20),
       el('div', {}, el('strong', {}, shownTitle(e)), el('p', {}, `No ${answer.verb === 'renews' ? 'renewal' : answer.verb === 'expires' ? 'expiry' : 'due'} date saved yet. Tap to add one.`)));
   }
   const past = answer.days < 0;
-  const verb = past ? { renews: 'renewed', expires: 'expired', 'is due': 'was due' }[answer.verb] : answer.verb;
+  const verb = past ? { renews: 'renewal was due', expires: 'expired', 'is due': 'was due', 'deal ends': 'deal ended' }[answer.verb] : answer.verb;
   return el('div', { class: 'answer-wrap' },
     el('a', { class: 'answer-card', id: 'ask-answer', href: `#/view/${e.id}`, 'data-tone': getSection(e.type).tone },
       el('span', { class: 'badge badge-md', 'data-tone': getSection(e.type).tone }, icon(getSection(e.type).glyph, 22)),
       el('div', { class: 'answer-text' },
-        el('span', { class: 'answer-title' }, shownTitle(e)),
+        el('span', { class: 'answer-title' }, answerTitle(e)),
         el('span', { class: 'answer-date', id: 'ask-answer-date' }, `${verb} on ${niceDate(answer.date)}`),
         el('span', { class: 'answer-when' }, whenText(answer.days))),
       icon('chevron', 18)),
-    (answer.others || []).length ? el('p', { class: 'answer-also small muted' }, 'Also: ', answer.others.map((o, i) => [i ? ' · ' : '', el('a', { href: `#/view/${o.id}` }, `${o.title} (${niceDate(o.dueDate)})`)])) : null);
+    (answer.others || []).length ? el('p', { class: 'answer-also small muted' }, 'Also: ', answer.others.map((o, i) => [i ? ' · ' : '', el('a', { href: `#/view/${o.id}` }, `${answerTitle(o)} (${niceDate(o.dueDate)})`)])) : null);
 }
 
-export function askBox({ getEntries, entryCard, autofocus = false, onAsking = () => {}, examples = false, initial = '' }) {
+// v16.1: what a count of results is called ("3 policies", "1 electricity bill")
+const NOUN = { insurance: ['policy', 'policies'], meter: ['electricity bill', 'electricity bills'], receipt: ['receipt', 'receipts'], job: ['job', 'jobs'], warranty: ['warranty', 'warranties'], mortgage: ['mortgage entry', 'mortgage entries'] };
+const LONG_MONTH = (m) => new Date(2000, m - 1, 1).toLocaleDateString('en-GB', { month: 'long' });
+const countOf = (n, type) => { const w = NOUN[type] || ['entry', 'entries']; return `${n} ${n === 1 ? w[0] : w[1]}`; };
+
+// review(entries, year) → Year in review's figures (app.js passes the same
+// sums the Year in review screen uses, with its switches), so "this year" in
+// Ask is the same £ as Year in review. spend(list) → the £ of a list of
+// entries the way Logbook's month headers add them up.
+export function askBox({ getEntries, entryCard, autofocus = false, onAsking = () => {}, examples = false, initial = '', review = null, spend = null }) {
   const input = el('input', { type: 'search', id: 'ask', class: 'search ask-input', placeholder: 'Ask Hearth…', 'aria-label': 'Ask Hearth: search everything', autocomplete: 'off', enterkeyhint: 'search', value: initial });
   const results = el('div', { class: 'ask-results', id: 'ask-results', 'aria-live': 'polite' });
   const hints = examples ? el('div', { class: 'ask-examples', id: 'ask-examples' }, EXAMPLES.map((t) => el('button', { type: 'button', class: 'year-chip', onclick: () => { input.value = t; run(); input.focus(); } }, t))) : null;
@@ -180,16 +199,54 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
     if (hints) hints.hidden = Boolean(q);
     if (!q) { results.replaceChildren(); return; }
     const entries = await getEntries();
-    const r = search(entries, q, { cover: coverMonths(entries) }); // v15.22: bills by the month they cover
+    const now = new Date();
+    const r = search(entries, q, { cover: coverMonths(entries), now }); // v15.22: bills by the month they cover
     const shown = r.results.slice(0, 40).map((x) => x.entry);
-    const total = shown.reduce((a, e) => a + (e.type === 'insurance' ? 0 : Number(e.cost) || 0), 0);
     const p = r.query;
-    const scope = [p.types.length === 1 ? getSection(p.types[0]).label.toLowerCase() : 'entries', p.month ? `in ${new Date(2000, p.month - 1, 1).toLocaleDateString('en-GB', { month: 'long' })}` : '', p.year ? String(p.year) : ''].filter(Boolean).join(' ');
+    const all = r.results.map((x) => x.entry);
+    const one = p.types.length === 1 ? p.types[0] : null;
+    const when = p.month ? `in ${LONG_MONTH(p.month)}${p.year ? ` ${p.year}` : ''}` : p.year ? `in ${p.year}` : '';
+    // v16.1: month totals are added up like Logbook's month headers (bills in the
+    // month the power was used, insurance not included); a whole year is Year in review's figure.
+    let total = 0, basis = '';
+    if (!r.intent) {
+      const plainPeriod = p.year && !p.month && !p.words.length && review;
+      if (plainPeriod) {
+        const yr = review(entries, p.year);
+        if (yr) {
+          if (!one) { total = yr.total; basis = 'as on Year in review'; }
+          else { const c = yr.categories.find((x) => x.id === one); total = c ? c.total : 0; basis = 'as on Year in review'; }
+        }
+      } else {
+        total = spend ? spend(all) : all.reduce((a, e) => a + (e.type === 'insurance' ? 0 : Number(e.cost) || 0), 0);
+        if (total && all.some((e) => e.type === 'insurance')) basis = 'excl. insurance';
+      }
+    }
+    const heading = (() => {
+      const n = r.results.length;
+      if (r.intent === 'payer') return `${n} ${n === 1 ? 'entry' : 'entries'} paid by ${r.answer.name}${when ? ' ' + when : ''}${r.answer.total ? ' · ' + money(r.answer.total) : ''}`;
+      if (r.intent === 'overdue') return n ? `${n} overdue, oldest first` : '';
+      if (r.intent === 'due-period') {
+        const word = p.question === 'renew' ? 'renewing' : p.question === 'expire' ? 'ending' : 'due';
+        const inMonth = n - (r.overdueCount || 0);
+        return n ? [r.overdueCount ? `${r.overdueCount} overdue` : '', `${inMonth} ${word} ${when}`].filter(Boolean).join(' · ') : '';
+      }
+      if (r.intent === 'insurance-month') return n ? `${countOf(n, 'insurance')} for ${LONG_MONTH(p.month)} ${r.monthKey.slice(0, 4)}${r.renewCount ? ` · ${r.renewCount} renewing` : ''}` : '';
+      if (r.intent === 'live-dates') return n ? `${n} coming up${all.some((e) => e.dueDate.slice(0, 10) < todayIso()) ? ', overdue first' : ', soonest first'}` : '';
+      if (!n) return '';
+      // v16.1: "5 current policies · 1 renewed or ended" (was "6 insurance")
+      if (one === 'insurance' && !when && !r.someWords) {
+        const today = todayIso();
+        const cur = all.filter((e) => ['current', 'lapsed'].includes(policyStatus(e, entries, today))).length;
+        if (cur !== n) return `${cur} current polic${cur === 1 ? 'y' : 'ies'} · ${n - cur} renewed or ended`;
+      }
+      return `${countOf(n, one)}${when ? ' ' + when : ''}${r.someWords ? ' (matching some of your words)' : r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) + (basis ? ` ${basis}` : '') : ''}`;
+    })();
     // Manuals that match ("dishwasher filter", "hive manual", a model number).
     // v13: plus the manuals you added yourself (by name, notes, room).
     let mine = [];
-    try { mine = searchUser(await userManuals(), q).slice(0, 4); } catch {}
-    const mans = searchManuals(q).slice(0, 4);
+    if (!r.intent) try { mine = searchUser(await userManuals(), q).slice(0, 4); } catch {}
+    const mans = r.intent ? [] : searchManuals(q).slice(0, 4); // v16.1: "paid by …" / dates aren't manual searches
     const count = mans.length + mine.length;
     const manualHits = count
       ? el('div', { class: 'ask-manuals', id: 'ask-manuals' },
@@ -207,9 +264,11 @@ export function askBox({ getEntries, entryCard, autofocus = false, onAsking = ()
     fill(results,
       answerCard(r.answer),
       r.results.length ? null : manualHits,
-      el('p', { class: 'ask-summary', id: 'ask-summary' }, r.results.length
-        ? `${r.results.length} ${r.results.length === 1 ? (scope === 'entries' ? 'entry' : scope.replace(/ies\b/, 'y').replace(/s\b/, '')) : scope}${r.someWords ? ' (matching some of your words)' : r.fuzzy ? ' (closest matches)' : ''}${total ? ' · ' + money(total) : ''}`
-        : count ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`),
+      // v16.1: no glossary links inside what you typed ("no-terms")
+      heading || !r.results.length ? el('p', { class: 'ask-summary no-terms', id: 'ask-summary' }, r.results.length
+        ? heading
+        : r.intent ? (r.answer && r.answer.kind === 'none' ? '' : `Nothing found for “${q}”.`) : count ? `No entries for “${q}”, but here’s what’s in Manuals:` : `Nothing found for “${q}”.`) : null,
+      basis === 'as on Year in review' && p.year ? el('p', { class: 'small muted ask-basis' }, el('a', { href: `#/year/${p.year}`, class: 'link', id: 'ask-review-link' }, `See ${p.year} in Year in review`)) : null,
       el('div', { class: 'list', id: 'ask-list' }, shown.map(entryCard)),
       r.results.length ? manualHits : null);
   }

@@ -26,11 +26,14 @@
 // into the <main id="app"> box. A nice side effect: the phone's Back button
 // works, because each screen has its own address in the history.
 
-import { SECTIONS, getSection, SOON_DAYS, BACKUP_REMINDER_DAYS, soonDaysFor, INSURANCE_TYPES, insuranceTypeLabel, annualCost, insKindOf, insStore } from './sections.js';
+import { SECTIONS, getSection, SOON_DAYS, BACKUP_REMINDER_DAYS, soonDaysFor, INSURANCE_TYPES, insuranceTypeLabel, insuranceKindText, annualCost, insKindOf, insStore } from './sections.js';
 import { APP_NAME, APP_TAGLINE, ADDRESS } from './config.js';
 import * as db from './db.js';
 import { compressImage } from './photos.js';
-import { exportBackup, restoreBackup } from './backup.js';
+// v16.1: backup.js, drivebackup.js, usage.js and manuallookup.js load when
+// first needed (they're still saved for offline in sw.js), so start-up has less to read.
+const exportBackup = async (...a) => (await import('./backup.js')).exportBackup(...a);
+const restoreBackup = async (...a) => (await import('./backup.js')).restoreBackup(...a);
 import { el, fill, addTo, addFirst, infoNote, keepPlace, resultBox, moreInfo, money, totalCost, niceDate, todayISO, daysUntil, dueText, newestFirst, CURRENCIES } from './utils.js';
 import { icon } from './icons.js';
 import { barChart, sparkline } from './charts.js';
@@ -51,16 +54,14 @@ import * as manuals from './manuals.js';
 import * as native from './native.js';
 import * as rooms from './rooms.js';
 import * as userManuals from './usermanuals.js';
-import { saveBackupToDrive } from './drivebackup.js';
+const saveBackupToDrive = async (...a) => (await import('./drivebackup.js')).saveBackupToDrive(...a);
 import { allowSharedFolder, loadBlob as loadManualBlob, saveOnThisPhone } from './sharedmanuals.js';
 import { yearReview, reviewYears, defaultReviewYear } from './review.js';
 import * as due from './duestate.js'; // v15.22: dismissed dates, renewed policies, duplicate bills, typo dates
 import { backupDue, sizeLabel } from './homelogic.js';
-import * as lookup from './manuallookup.js';
 import * as weather from './weather.js';
 import * as mort from './mortgage.js';
 import * as mortUI from './mortgageui.js';
-import * as usage from './usage.js';
 import * as rem from './reminderlogic.js';
 import * as gloss from './glossary.js';
 import { billsVsLastYear, comingUpState } from './outcomes.js';
@@ -77,6 +78,7 @@ const state = {
   chartYear: 0, // dashboard chart: 0 = last 12 months, or a calendar year
   meterYear: 0, // meter chart: 0 = "Last 12 months" (the last 12 periods between readings), or a calendar year
   room: '', // list screen: only this room ('' = every room)
+  payer: '', // v16.1: list screen: only what this person paid ('' = everyone)
 };
 
 // The name comes from config.js, so renaming is a one-line change.
@@ -614,25 +616,27 @@ async function renderHome() {
   // v16.0: everything due in the next SOON_DAYS (30) days, the same things the
   // house's "N due within 30 days" chip counts (was the first 3 + renewals);
   // with nothing that close, just the next one.
+  // v16.1: "next 30 days" means exactly that: a mortgage deal ending further
+  // off isn't in the list; it gets its own line below (from 6 months before).
   const within = upcoming(everything).filter((e) => daysUntil(e.dueDate) <= SOON_DAYS);
   const soonList = within.length ? within : upcoming(everything).filter((e) => e.type !== 'mortgage').slice(0, 1);
   // v15.22: overdue things get their own strip above Coming up (they never showed on Home)
   const overdueBox = overdueStrip(everything);
-  // v14.7: a mortgage deal ending within 6 months is always in Coming up.
-  for (const e of upcoming(everything)) if (e.type === 'mortgage' && daysUntil(e.dueDate) <= soonDaysFor(e) && !soonList.includes(e)) soonList.push(e);
+  const dealNotice = mortgageNotice(everything, soonList);
   const recent = everything.filter((e) => !rem.isReminder(e)).slice(0, 4);
 
   // --- Ask Hearthbook: while you type, the rest of the dashboard steps aside ---
   const dash = el('div', { class: 'dash', id: 'dashboard' });
-  const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, onAsking: (on) => dash.classList.toggle('is-asking', on) });
+  const ask = askBox({ getEntries: () => db.getAllEntries(), entryCard, ...askSums, onAsking: (on) => dash.classList.toggle('is-asking', on) });
   // v15.20: one tap from Home to the scanner (was + → Scan receipt or bill).
   const scanBtn = el('a', { class: 'btn home-scan', id: 'home-scan', href: '#/scan' }, icon('scan', 20), 'Scan a receipt or bill');
   function redrawHero() { fill(hero.querySelector('.hero-split'), ...heroChips()); }
 
-  const comingUp = soonList.length
+  const comingUp = soonList.length || dealNotice
     ? el('section', { class: 'group', id: 'coming-up', 'aria-labelledby': 'coming-up-title' },
         el('div', { class: 'group-head' }, el('h2', { id: 'coming-up-title' }, 'Coming up', within.length ? el('small', { class: 'group-sub', id: 'coming-up-window' }, ` next ${SOON_DAYS} days`) : null), comingUpLink()),
-        el('div', { class: 'list' }, soonList.map((e) => entryCard(e.type === 'mortgage' ? { ...e, title: `${e.supplier || 'Mortgage'} deal ends ${niceDate(e.dueDate)}` } : { ...e, __upcoming: true }))),
+        soonList.length ? el('div', { class: 'list' }, soonList.map((e) => entryCard(e.type === 'mortgage' ? { ...e, title: `${e.supplier || 'Mortgage'} deal ends ${niceDate(e.dueDate)}` } : { ...e, __upcoming: true, __nudge: renewalNudgeText(e, everything) }))) : null,
+        dealNotice,
         remindersBlock({ compact: true, getEntries: () => db.getAllEntries(), rerender: () => render() }))
     : null;
   const banner = await backupReminder(everything);
@@ -682,6 +686,38 @@ async function renderHome() {
 }
 
 // v14.8: "See all" opens the Coming up page (every date, soonest first).
+// v16.1: a policy's kind and insurer, without repeating what its title says
+// ("Car insurance – Demo Motor" needs neither; "Phone cover" gets both).
+function notInTitle(e, parts) {
+  const t = String(fh.shownTitle(e) || e.title || '').toLowerCase();
+  return parts.filter((x) => x && !t.includes(String(x).toLowerCase()));
+}
+// v16.1: Home's mortgage line: the deal end from 6 months before (its own
+// window, so it isn't mixed into "next 30 days"), with today's estimated balance
+// and the remortgage checklist's progress.
+function mortgageNotice(everything, shownAlready = []) {
+  const e = upcoming(everything).find((x) => x.type === 'mortgage' && daysUntil(x.dueDate) <= soonDaysFor(x));
+  if (!e || shownAlready.includes(e)) return null;
+  const ms = mort.summary(everything);
+  const today = ms ? mort.balanceToday(ms, todayISO()) : null;
+  const ticks = ms ? mortUI.checklistProgress(everything, ms) : null;
+  return el('a', { class: 'card mortgage-notice', id: 'home-mortgage-notice', href: '#/list/mortgage' },
+    el('span', { class: 'badge badge-md', 'data-tone': getSection('mortgage').tone }, icon(getSection('mortgage').glyph, 20)),
+    el('span', { class: 'mn-text' },
+      el('strong', {}, `${e.supplier || 'Mortgage'} deal ends ${niceDate(e.dueDate)}`),
+      el('span', { class: 'small muted', id: 'home-mortgage-owed' }, today && today.estimate ? `About ${money(Math.round(today.balance)).replace(/\.00$/, '')} owed today (estimate) · ${money(ms.balance)} at ${niceDate(ms.asAt)}` : ms ? `${money(ms.balance)} owed at ${niceDate(ms.asAt)}` : ''),
+      ticks ? el('span', { class: 'small muted', id: 'home-mortgage-checklist' }, `Remortgage checklist: ${ticks.done} of ${ticks.total} done`) : null,
+      el('span', { class: 'due soon' }, dueText('deal ends', daysUntil(e.dueDate)))),
+    icon('chevron', 18));
+}
+// v16.1: on Home's Coming up, a policy renewing within 30 days says to shop around.
+function renewalNudgeText(e, everything) {
+  if (e.type !== 'insurance') return '';
+  const d = daysUntil(e.dueDate);
+  if (d === null || d < 0 || d > SOON_DAYS) return '';
+  if (due.policyStatus(e, everything, todayISO()) !== 'current') return '';
+  return `Shop around before it renews: now ${money(annualCost(e))} a year`;
+}
 function comingUpLink() {
   return el('a', { href: '#/upcoming', class: 'link', id: 'coming-up-link' }, 'See all');
 }
@@ -756,7 +792,11 @@ async function renderList(type, year = 0) {
   // v13: rooms as a filter that works together with the search box.
   const roomNames = rooms.roomList(await rooms.getStored(), everything).filter((r) => rooms.inRoom(inSectionAll, r).length || rooms.sameRoom(r, state.room));
   if (state.room && !roomNames.some((r) => rooms.sameRoom(r, state.room))) state.room = '';
-  const byRoom = () => (state.room ? rooms.inRoom(inSectionAll, state.room) : inSectionAll);
+  // v16.1: a "Paid by" filter beside the room one (names from the Paid by field)
+  const samePayer = (a, b) => String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  const payerNames = [...new Map(inSectionAll.filter((e) => String(e.paidBy || '').trim()).map((e) => [String(e.paidBy).trim().toLowerCase(), String(e.paidBy).trim()])).values()].sort((a, b) => a.localeCompare(b));
+  if (state.payer && !payerNames.some((n) => samePayer(n, state.payer))) state.payer = '';
+  const byRoom = () => (state.room ? rooms.inRoom(inSectionAll, state.room) : inSectionAll).filter((e) => !state.payer || samePayer(e.paidBy, state.payer));
   let inSection = byRoom();
 
   const screen = [screenHead(section ? section.label : 'Logbook', { id: 'list-title', sub: year ? `${year} only` : null }), tabs(type, year)];
@@ -808,6 +848,10 @@ async function renderList(type, year = 0) {
     await render();
     window.scrollTo(0, y);
     toast(msg || 'Saved', prevRec ? async () => { await restoreEntry(prevRec, 'Change undone'); await render(); window.scrollTo(0, y); } : null);
+  }, saveQuiet: async (entry) => { // v16.1: the remortgage checklist ticks (no redraw, no toast)
+    const saved = { ...entry, updatedAt: new Date().toISOString() };
+    await db.saveEntry(saved);
+    await sync.recordSave(saved.id);
   } }));
 
   // --- Search box and total ---
@@ -829,7 +873,13 @@ async function renderList(type, year = 0) {
         roomNames.map((r) => el('option', { value: r, selected: rooms.sameRoom(r, state.room) }, r)))
     : null;
   if (roomSelect && state.room) roomSelect.classList.add('on');
-  screen.push(el('div', { class: 'search-row' }, el('label', { class: 'search-wrap' }, icon('search', 20), search), roomSelect), answerBox, summary, list);
+  const payerSelect = payerNames.length && !(section && section.kind === 'mortgage')
+    ? el('select', { class: 'room-filter payer-filter' + (state.payer ? ' on' : ''), id: 'payer-filter', 'aria-label': 'Paid by',
+        onchange: (ev) => { state.payer = ev.target.value; inSection = byRoom(); list.classList.remove('stagger'); drawList(); ev.target.classList.toggle('on', Boolean(state.payer)); } },
+        el('option', { value: '' }, 'Anyone paid'),
+        payerNames.map((n) => el('option', { value: n, selected: samePayer(n, state.payer) }, `Paid by ${n}`)))
+    : null;
+  screen.push(el('div', { class: 'search-row' + (roomSelect && payerSelect ? ' two-filters' : '') }, el('label', { class: 'search-wrap' }, icon('search', 20), search), roomSelect, payerSelect), answerBox, summary, list);
 
   // Draw (or redraw) just the list part. We call this on every key press
   // in the search box, instead of redrawing the whole screen, so the
@@ -869,7 +919,7 @@ async function renderList(type, year = 0) {
         ontoggle: (ev) => { if (ev.currentTarget.open) openFolds.add(pastId); else openFolds.delete(pastId); } },
         el('summary', { class: 'year-fold-head' }, el('span', { class: 'yf-title' }, 'Past policies'),
           el('span', { class: 'small muted yf-sub' }, `${past.length} renewed or ended · not in the total`)),
-        el('div', { class: 'year-fold-list' }, past.map((e) => entryCard({ ...e, __status: st(e) === 'ended' ? `Ended${typeof e.policyEnded === 'string' ? ' ' + niceDate(e.policyEnded) : ''}` : 'Renewed' })))) : null;
+        el('div', { class: 'year-fold-list' }, past.map((e) => entryCard({ ...e, __status: policyStatusText(e, st(e)) })))) : null;
       fill(list, ...(byRenewal.length ? [...live.map((e) => entryCard(e)), pastFold]
         : [el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon(q ? 'search' : section.glyph, 36)),
             el('p', {}, q ? 'Nothing matches your search.' : 'No insurance policies yet. Tap + to add home, car, pet or other cover and get a reminder before each renewal.'))]));
@@ -953,8 +1003,10 @@ async function renderList(type, year = 0) {
     // v15.22: bills under the month they cover ("October 2026"), paid date on the card.
     const monthGroups = (items) => {
       const groups = [];
-      const keyOf = (e) => (e.type === 'meter' && type === 'meter' ? spendMonthKey(e, cover) : (e.date || '').slice(0, 7));
-      const sorted = type === 'meter' ? [...items].sort((a, b) => keyOf(b).localeCompare(keyOf(a)) || newestFirst(a, b)) : items;
+      // v16.1: on every list (All, a year, search results), not only Electricity,
+      // so a month's total here matches Ask, Home and Year in review.
+      const keyOf = (e) => (e.type === 'meter' ? spendMonthKey(e, cover) : (e.date || '').slice(0, 7));
+      const sorted = items.some((e) => e.type === 'meter') ? [...items].sort((a, b) => keyOf(b).localeCompare(keyOf(a)) || newestFirst(a, b)) : items;
       for (const e of sorted) {
         const key = keyOf(e) || 'undated';
         let g = groups[groups.length - 1];
@@ -975,7 +1027,9 @@ async function renderList(type, year = 0) {
       return out.flatMap((g) => [
         el('div', { class: 'month-head' },
           el('span', {}, g.key === 'undated' ? 'No date' : monthName(g.key)),
-          (() => { const t = sumShown((g.all || g.items).filter(isSpend), netList); return t ? el('span', {}, money(t)) : null; })()), // v14.9: no "£0.00" when nothing has a cost
+          // v14.9: no "£0.00" when nothing has a cost; v16.1: nor a total that just repeats
+          // the month's only costed entry (a bill beside a reminder or a policy, say)
+          (() => { const counted = (g.all || g.items).filter((e) => isSpend(e) && shownCost(e, netList)); const t = sumShown(counted, netList); return t && counted.length > 1 ? el('span', {}, money(t)) : null; })()),
         ...g.items.map(entryCard),
       ]);
     };
@@ -1153,7 +1207,7 @@ const shortDate = (iso) => niceDate(iso).replace(/ \d{4}$/, '');
 const sameYear = (a, b) => a && b && a.slice(0, 4) === b.slice(0, 4);
 const span = (a, b) => (sameYear(a, b) ? `${shortDate(a)} – ${niceDate(b)}` : `${niceDate(a)} – ${niceDate(b)}`);
 const kwhFmt = (v) => Math.round(v).toLocaleString('en-GB');
-const readingFmt = (v) => Number(v).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const readingFmt = (v) => Number(v).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 1 }); // v16.1: "31,714 kWh", not "31,714.0"
 function meterStatsCells(s, unit, note, net = false) {
   if (!s) return [];
   const cell = (id, label, value, sub, title = '') => el('div', { id, title }, el('span', { class: 'stat-label' }, label), el('span', { class: 'stat-value' }, value), el('span', { class: 'stat-title' }, sub));
@@ -1289,8 +1343,9 @@ function billFor(interval, everything) {
 
 // v14.1: "35,880.9" everywhere (the list used to say "35880.9").
 // v14.6: always one decimal place ("12,208.6"), whatever was typed or scanned.
-const fmtReading = (v) => (v !== '' && v !== null && isFinite(Number(v)) ? Number(v).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : String(v));
-const fmtNum = (n, dp = 1) => Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+// v16.1: no pointless ".0" ("31,714 kWh", "Used 398 kWh"); a real decimal stays ("31,714.6").
+const fmtReading = (v) => (v !== '' && v !== null && isFinite(Number(v)) ? Number(v).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 1 }) : String(v));
+const fmtNum = (n, dp = 1) => Number(n).toLocaleString('en-GB', { minimumFractionDigits: dp === 1 ? 0 : dp, maximumFractionDigits: dp });
 // v14.6: the "After EDF credits" switch is on AND some of these entries have credits.
 const netOnFor = (entries) => prefs.afterCreditsOn() && entries.some((e) => e.type === 'meter' && creditsOf(e).length);
 // What an entry counts as in a total: after its credits when the switch applies.
@@ -1321,6 +1376,7 @@ function tariffOf(bill) {
   return t && (t.rates.length || t.standing.length) ? t : null;
 }
 const pence = (p) => `${fmtNum(p, 2)}p`;
+const pence1 = (p) => `${Number(p).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}p`; // v16.1: pence keep their decimal ("22.0p" beside "21.9p"); only readings/kWh drop ".0"
 const shortDay = (iso) => { const d = new Date(iso); return `${d.getDate()} ${MON3[d.getMonth()]}`; };
 // "21.07p" · "24.51p → 21.07p" (tariff changed, with "from 14 May") · "Day 30.10p · Night 15.20p"
 function rateText(list) {
@@ -1372,7 +1428,7 @@ function periodDetail(interval, prev, everything) {
       stat('Average', fmtNum(interval.perDay), `${unit}/day`, 'pd-perday'),
       cost !== null ? billStat(bill) : el('div', { class: 'period-stat', id: 'pd-cost' }, el('span', { class: 'stat-label' }, 'Bill'), el('span', { class: 'v muted-v' }, 'None logged')),
       ...tariffStats(tariff, interval.days, unit),
-      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, `${fmtNum(allIn !== null ? allIn : perUnit * 100, 1)}p`, [tariff ? allInNote(vat) : '', net && creditsOf(bill).length ? 'before credits' : ''].filter(Boolean).join(', ') || null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
+      perUnit !== null ? stat(tariff ? `All-in per ${unit}` : 'Cost per ' + unit, pence1(allIn !== null ? allIn : perUnit * 100), [tariff ? allInNote(vat) : '', net && creditsOf(bill).length ? 'before credits' : ''].filter(Boolean).join(', ') || null, 'pd-perunit') : el('div', { class: 'period-stat', id: 'pd-perunit' }, el('span', { class: 'stat-label' }, `Cost per ${unit}`), el('span', { class: 'v muted-v' }, '–'))
     ),
     el('div', { class: 'period-change', id: 'pd-change' },
       el('span', {}, 'vs previous:'),
@@ -1433,6 +1489,11 @@ function monthItems(items) {
 }
 
 // One row in the list.
+// v16.1: "Renewed 1 Mar 2026" / "Ended 3 Jun 2026" (grey, never red), everywhere.
+function policyStatusText(e, st) {
+  if (st === 'ended') return `Ended${typeof e.policyEnded === 'string' ? ' ' + niceDate(e.policyEnded) : ''}`;
+  return `Renewed${e.dueDate ? ' ' + niceDate(e.dueDate) : ''}`;
+}
 function entryCard(e) {
   const section = getSection(e.type);
   const days = daysUntil(e.dueDate);
@@ -1446,6 +1507,12 @@ function entryCard(e) {
       : el('div', { class: 'thumb placeholder', 'data-tone': rem.isReminder(e) ? 'amber' : section.tone }, icon(rem.isReminder(e) ? 'bell' : section.glyph, 24));
 
   const isIns = section.kind === 'insurance';
+  // v16.1: a renewed or ended policy is never "renewal was due" in red, wherever
+  // it's listed (Logbook, Ask Hearth, rooms…), not just on the Insurance tab.
+  if (isIns && !e.__status) {
+    const st = due.policyStatus(e, db.lastEntries(), todayISO());
+    if (st === 'renewed' || st === 'ended') { e = { ...e, __status: policyStatusText(e, st) }; dueClass = ''; }
+  }
   // v14.7: a mortgage statement: balance and rate; a past deal end isn't flagged
   const isMort = section.kind === 'mortgage';
   if (isMort && days !== null && days < 0) dueClass = '';
@@ -1453,7 +1520,7 @@ function entryCard(e) {
   const details = isRem
     ? ['Reminder', rem.repeatText(e.reminder), e.room].filter(Boolean).join(' · ')
     : isIns
-    ? [insKindOf(e) ? insuranceTypeLabel(insKindOf(e)) : '', e.supplier, e.policyNumber].filter(Boolean).join(' · ')
+    ? notInTitle(e, [insuranceKindText(e), e.supplier, e.policyNumber]).join(' · ') // v16.1: "Car insurance · Demo Motor" as on Coming up (less what the title already says)
     : isMort ? mortUI.cardLine(e)
     // v16.0: in Home's Coming up, the date it's due (as on the Coming up page), not the date logged
     : e.__upcoming && e.dueDate ? [section.single, `${section.dueWord === 'expires' ? 'ends' : 'due'} ${niceDate(e.dueDate)}`, e.supplier].filter(Boolean).join(' · ')
@@ -1479,7 +1546,8 @@ function entryCard(e) {
       e.dueDate && !(isMort && days < 0) && !e.__status
         ? el('div', { class: 'due' + (due.dueDismissed(e) ? '' : dueClass) }, due.dueDismissed(e) ? `${dueText(section.dueWord || 'due', days)} · dismissed` : dueText(section.dueWord || 'due', days)) : null,
       // v15.22: a warranty with no end date can't remind you
-      e.type === 'warranty' && !e.dueDate ? el('div', { class: 'due soon no-expiry' }, 'No expiry date yet') : null
+      e.type === 'warranty' && !e.dueDate ? el('div', { class: 'due soon no-expiry' }, 'No expiry date yet') : null,
+      e.__nudge ? el('div', { class: 'entry-nudge small' }, icon('sparkle', 12), e.__nudge) : null // v16.1
     ),
     e.cost ? el('div', { class: 'entry-cost' + (Number(e.cost) < 0 ? ' refund' : '') }, netRow ? money(netCost(e)) : money(e.cost, e.currency), isIns ? el('small', {}, e.costFreq === 'monthly' ? '/mo' : '/yr') : netRow ? el('small', { class: 'entry-cost-note' }, 'after credits') : Number(e.cost) < 0 ? el('small', { class: 'entry-cost-note' }, 'refund') : null) : null
   );
@@ -1488,10 +1556,17 @@ function entryCard(e) {
 // ---------------------------------------------------------------------
 // SEARCH: "Ask Hearthbook" on its own screen (app shortcut "Search")
 // ---------------------------------------------------------------------
+// v16.1: Ask Hearth adds up the same way as the screens it answers for:
+// a year = Year in review (same switches), a list = Logbook's month headers.
+const reviewOf = (everything, year) => {
+  const netOn = prefs.afterCreditsOn() && everything.some((e) => e.type === 'meter' && creditsOf(e).length);
+  return yearReview(withMortgage(netOn ? afterCredits(everything) : everything), year);
+};
+const askSums = { review: reviewOf, spend: (list) => sumShown(list.filter(isSpend), netOnFor(list)) };
 function renderSearch(initial = '') {
   fill(app,
     screenHead('Ask Hearth', { back: { href: '#/home', label: 'Home' }, sub: 'Search everything on this phone — or ask “when does … renew?”' }),
-    askBox({ getEntries: () => db.getAllEntries(), entryCard, autofocus: true, examples: true, initial }));
+    askBox({ getEntries: () => db.getAllEntries(), entryCard, ...askSums, autofocus: true, examples: true, initial }));
 }
 
 // ---------------------------------------------------------------------
@@ -1563,8 +1638,20 @@ async function renderScan(arg) {
   const fileInput = el('input', { type: 'file', accept: 'image/*,application/pdf,.pdf', hidden: true, id: 'scan-file-input' });
   const body = el('div', { class: 'scan-body', id: 'scan-body' });
   const offline = el('p', { class: 'scan-offline', id: 'scan-offline' });
+  // v16.1: the reader (about 5 MB) downloads the first time the scanner opens
+  // (or earlier on Wi-Fi); offline before that, it says so.
+  const showReady = (ready) => fill(offline, icon(ready ? 'check' : 'download', 16), ready ? 'Works offline — nothing leaves this phone'
+    : navigator.onLine === false ? 'You’re offline. The reader needs signal once to download (about 5 MB); until then you can add it by hand. Nothing leaves this phone.'
+    : 'Nothing leaves this phone. The reader is downloading once (about 5 MB) so scanning works offline next time.');
   ocrReady().then((ready) => {
-    fill(offline, icon(ready ? 'check' : 'download', 16), ready ? 'Works offline — nothing leaves this phone' : 'Nothing leaves this phone. The reader downloads once (about 8 MB) for offline use.');
+    showReady(ready);
+    if (ready) return;
+    if (navigator.onLine !== false) warmScanner();
+    let tries = 0;
+    const again = setInterval(async () => {
+      if (!offline.isConnected || ++tries > 60) return clearInterval(again);
+      if (await ocrReady()) { clearInterval(again); showReady(true); }
+    }, 3000);
   });
 
   function picker(error) {
@@ -1573,7 +1660,12 @@ async function renderScan(arg) {
       el('div', { class: 'scan-hero' },
         el('div', { class: 'scan-art', 'aria-hidden': 'true' }, el('span', { class: 'scan-doc' }, el('i'), el('i'), el('i'), el('i')), el('span', { class: 'scan-beam' })),
         el('h2', {}, 'Snap it, we’ll fill it in'),
-        el('p', {}, 'Take a photo of a receipt, or choose a bill PDF or screenshot. You’ll check everything before it’s saved.')),
+        // v16.1: says what you're scanning ("Take a photo of the bill" on Electricity)
+        el('p', { id: 'scan-lede' }, hint === 'meter' ? 'Take a photo of the bill, or choose the bill PDF or a screenshot. You’ll check everything before it’s saved.'
+          : hint === 'insurance' ? 'Take a photo of the policy schedule, or choose its PDF. You’ll check everything before it’s saved.'
+          : hint === 'mortgage' ? 'Choose the annual statement PDF, or take a photo of it. You’ll check everything before it’s saved.'
+          : hint && hint !== 'receipt' ? `Take a photo of the ${hintSec.single.toLowerCase()} paperwork, or choose a PDF or screenshot. You’ll check everything before it’s saved.`
+          : 'Take a photo of a receipt, or choose a bill PDF or screenshot. You’ll check everything before it’s saved.')),
       el('div', { class: 'scan-actions' },
         el('button', { type: 'button', class: 'btn btn-lg', id: 'scan-camera', onclick: () => cameraInput.click() }, icon('camera', 20), 'Take photo'),
         el('button', { type: 'button', class: 'btn btn-lg secondary', id: 'scan-pick', onclick: () => fileInput.click() }, icon('file', 20), 'Choose photo or PDF'),
@@ -1748,6 +1840,17 @@ function scanHint(scan, onSwitch) {
 }
 const listText = (a) => (a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} or ${a[a.length - 1]}`);
 
+// v16.1: Wi-Fi or wired, as far as the browser can tell (Android Chrome and the
+// app can; iPhone and some desktop browsers can't, so they wait for the scanner).
+function onUnmetered() {
+  const c = navigator.connection;
+  if (!c || c.saveData) return false;
+  return c.type === 'wifi' || c.type === 'ethernet';
+}
+function warmScanner() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-ocr' })).catch(() => {});
+}
 // Has the service worker already stored the OCR files (so scanning works offline)?
 async function ocrReady() {
   try {
@@ -2704,7 +2807,7 @@ async function renderDetail(id) {
   const billMonth = e.type === 'meter' && Number(e.cost) > 0 ? coverMonths(allEntries).get(e.id) : null;
   const billPaid = e.type === 'meter' ? (creditsOf(e).length ? netCost(e) : Number(e.cost)) : 0;
   const rows = ins ? [
-    ['Cover', insKindOf(e) ? `${insuranceTypeLabel(insKindOf(e))} insurance` : 'Insurance', 'umbrella'],
+    ['Cover', insuranceKindText(e), 'umbrella'],
     ['Insurer', e.supplier, 'home'],
     ['Policy number', e.policyNumber, 'file'],
     ['Cost', premium, 'receipt'],
@@ -2973,7 +3076,7 @@ addEventListener('keydown', (ev) => {
 // ---------------------------------------------------------------------
 // MANUALS (More → Manuals): every appliance guide, plus your own
 // ---------------------------------------------------------------------
-// v13: the built-in PDFs (about 59 MB) are no longer all downloaded the
+// v13: the built-in PDFs (about 38 MB since v16.1's smaller copies; was 59) are no longer all downloaded the
 // first time this screen opens. Viewing is temporary; only explicit Save
 // keeps a copy. "Save all for offline" downloads the lot (it asks
 // first, and remembers your answer).
@@ -2981,7 +3084,7 @@ addEventListener('keydown', (ev) => {
 // Opening fetches for this session; "Save on this device" keeps an offline
 // copy. Built-in green (offline) copies can be cleared one-by-one or all.
 const OFFLINE_KEY = 'hearthbook.manualsOffline';
-const BUILTIN_MB = 59;
+const BUILTIN_MB = 38; // v16.1: the 24 PDFs add up to 37.6 MB (tests/test_v16_1.py checks it)
 const offlineChosen = () => { try { return localStorage.getItem(OFFLINE_KEY) === 'yes'; } catch { return false; } };
 const builtinUrl = (file) => new URL(manuals.DIR + file, location.href).href;
 async function manualsSaved() {
@@ -3392,6 +3495,7 @@ async function renderManualViewer(file) {
 // Save. Free (no paid search service); nothing saved without your Save.
 // ---------------------------------------------------------------------
 async function renderManualLookup() {
+  const lookup = await import('./manuallookup.js'); // v16.1: loaded when needed
   const mine = await userManuals.list();
   const photoInput = el('input', { type: 'file', accept: 'image/*', hidden: true, id: 'lookup-photo-input' });
   const status = el('p', { class: 'small muted', id: 'lookup-status', role: 'status' }, 'Works offline: the label is read on this phone.');
@@ -3459,6 +3563,7 @@ async function renderManualLookup() {
 }
 
 async function renderManualForm(id, arg) {
+  const lookup = await import('./manuallookup.js'); // v16.1: loaded when needed
   const editing = id ? await userManuals.get(id) : null;
   if (id && !editing) {
     fill(app, el('a', { class: 'back', href: '#/manuals' }, icon('back', 20), 'Manuals'), el('div', { class: 'empty' }, el('p', {}, 'That manual isn’t in Hearth. Sync, then try again.')));
@@ -3819,7 +3924,7 @@ function upRow(r) {
   const isRem = rem.isReminder(e); // v15.1
   const sub = r.ended ? r.sub
     : isRem ? ['Reminder', rem.repeatText(e.reminder), dueText('due', days)].join(' · ')
-    : e && !r.reminder ? [e.type === 'mortgage' ? 'Mortgage' : sec.single, dueText(sec.dueWord || 'due', days)].join(' · ') // v16.0: was "Mortgage statement · deal ends…"
+    : e && !r.reminder ? [...(e.type === 'insurance' ? notInTitle(e, [insuranceKindText(e), e.supplier]) : [e.type === 'mortgage' ? 'Mortgage' : sec.single]), dueText(sec.dueWord || 'due', days)].filter(Boolean).join(' · ') // v16.0: was "Mortgage statement · deal ends…"; v16.1: "Car insurance · Demo Motor" as on Home
     : `${r.sub} · ${dueText('', days).trim()}`;
   const action = upAction(r);
   return el('a', { class: 'card up-row' + (r.mortgage ? ' up-mortgage' : '') + (isRem ? ' up-reminder' : '') + (days < 0 ? ' up-late' : ''), href: r.ended ? '#/list/mortgage' : e && !r.reminder ? `#/view/${e.id}` : '#/list/mortgage', 'data-date': r.date, 'data-section': isRem ? 'reminder' : sec.id, 'data-id': e ? e.id : null },
@@ -3884,13 +3989,31 @@ function whoPaidCard(entries, year) {
   const cover = coverMonths(entries);
   const items = entries.filter((e) => isSpend(e) && e.type !== 'mortgage' && !rem.isReminder(e) && Number(e.cost) && spendMonthKey(e, cover).startsWith(String(year)));
   if (!items.some((e) => e.paidBy)) return null;
-  const by = new Map();
-  for (const e of items) { const k = (e.paidBy || '').trim() || 'Not set'; by.set(k, Math.round(((by.get(k) || 0) + Number(e.cost)) * 100) / 100); }
-  const rows = [...by.entries()].sort((a, b) => (a[0] === 'Not set') - (b[0] === 'Not set') || b[1] - a[1]);
+  // v16.1: bars like "Where it went"; "Not set" comes last, quieter, with how to fill it in.
+  const by = new Map(), names = new Map();
+  let unset = 0, unsetCount = 0;
+  for (const e of items) {
+    const raw = String(e.paidBy || '').trim();
+    if (!raw) { unset = Math.round((unset + Number(e.cost)) * 100) / 100; unsetCount++; continue; }
+    const k = raw.toLowerCase();
+    if (!names.has(k)) names.set(k, raw);
+    by.set(k, Math.round(((by.get(k) || 0) + Number(e.cost)) * 100) / 100);
+  }
+  const rows = [...by.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => [names.get(k), v]);
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  const open = (name) => (ev) => { ev.preventDefault(); state.payer = name; state.room = ''; state.query = ''; location.hash = `#/list/all/${year}`; };
+  // "Evens up": with two people (a "Joint" share is left out), half the gap.
+  const people = rows.filter(([n]) => !/^(joint|both|shared|us)$/i.test(n));
+  const evens = people.length === 2 && Math.abs(people[0][1] - people[1][1]) >= 1
+    ? `To split it evenly, ${people[1][0]} would pay ${people[0][0]} ${money(Math.round((people[0][1] - people[1][1]) * 50) / 100)}.` : null;
   return el('section', { class: 'card', id: 'who-paid' },
     el('h2', { class: 'card-title' }, 'Who paid'),
-    el('div', { class: 'mrows' }, rows.map(([k, v]) => el('div', { class: 'mrow', 'data-payer': k }, el('span', { class: 'mrow-k' }, k), el('span', { class: 'mrow-v' }, money(v))))),
-    el('p', { class: 'small muted' }, 'From “Paid by” under More details on each entry. Insurance and mortgage payments aren’t included.'));
+    el('div', { class: 'review-cats' }, rows.map(([k, v]) => el('a', { class: 'review-cat', href: `#/list/all/${year}`, 'data-payer': k, onclick: open(k) },
+      el('div', { class: 'review-cat-row' }, el('strong', {}, k), el('span', { class: 'review-amt' }, money(v))),
+      el('div', { class: 'review-bar' }, el('i', { style: `width:${Math.round((v / max) * 100)}%` }))))),
+    evens ? el('p', { class: 'small who-evens', id: 'who-evens' }, icon('sparkle', 14), evens, people.length < rows.length ? el('small', { class: 'muted' }, ` (${rows.filter((r) => !people.includes(r)).map((r) => r[0]).join(', ')} left out)`) : null) : null,
+    unsetCount ? el('p', { class: 'small muted who-unset', id: 'who-unset', 'data-payer': 'Not set' }, `Not set: ${unsetCount} entr${unsetCount === 1 ? 'y' : 'ies'}, ${money(unset)}. Add “Paid by” under More details on an entry to count it here.`) : null,
+    el('p', { class: 'small muted' }, 'From “Paid by” on each entry. Tap a name to see those entries. Insurance and mortgage payments aren’t included.'));
 }
 
 // v16.0: "Running the house": about what it costs each month right now
@@ -3905,13 +4028,13 @@ function runningCostCard(everything, netOn) {
   if (rc.total === null) return null;
   const line = (id, k, v, note) => el('div', { class: 'mrow', id }, el('span', { class: 'mrow-k' }, k), el('span', { class: 'mrow-v' }, v, note ? el('small', {}, note) : null));
   return el('section', { class: 'card', id: 'running-cost' },
-    el('h2', { class: 'card-title' }, 'Running the house'),
+    el('div', { class: 'mcard-head' }, el('h2', { class: 'card-title' }, 'Running the house'), // v16.1: the ⓘ beside the title, not alone on a line
+      infoNote('Right now, not this year’s total: today’s mortgage payment, what your current policies cost per month, and the average electricity bill over the last 12 months of bills. Jobs and receipts come and go, so they aren’t in it.', { id: 'running-cost-note', cls: 'small muted', label: 'What this counts' })),
     el('p', { class: 'review-value', id: 'running-cost-total' }, money(rc.total), el('small', {}, ' a month')),
     el('div', { class: 'mrows' },
       rc.mortgage !== null ? line('rc-mortgage', 'Mortgage', money(rc.mortgage), rc.overpay ? `incl. ${money(rc.overpay)} overpayment` : 'monthly payment') : null,
       rc.insurance !== null ? line('rc-insurance', 'Insurance', money(rc.insurance), `${policies.length} current polic${policies.length === 1 ? 'y' : 'ies'}, per month`) : null,
-      rc.electricity !== null ? line('rc-electricity', 'Electricity', money(rc.electricity), `average bill, last ${rc.electricityMonths} month${rc.electricityMonths === 1 ? '' : 's'}${netOn ? ', after credits' : ''}`) : null),
-    infoNote('Right now, not this year’s total: today’s mortgage payment, what your current policies cost per month, and the average electricity bill over the last 12 months of bills. Jobs and receipts come and go, so they aren’t in it.', { id: 'running-cost-note', cls: 'small muted', label: 'What this counts' }));
+      rc.electricity !== null ? line('rc-electricity', 'Electricity', money(rc.electricity), `average bill, last ${rc.electricityMonths} month${rc.electricityMonths === 1 ? '' : 's'}, ${netOn ? 'after credits' : 'as charged'}`) : null));
 }
 
 // v14.8: the year at a glance: spending, the biggest item, electricity and
@@ -3920,6 +4043,7 @@ function roundupCard(r, year, netOn = false) {
   const pounds = money; // v16.0: pounds and pence, like the total at the top of Year in review
   const vs = (now, then, fmt, lowerIsGood = true) => {
     if (then === null || then === undefined || now === null) return null;
+    if (!Number(then)) return null; // v16.1: no "▲ £3,005.07 vs 2025" against an empty year
     const d = Math.round((now - then) * 100) / 100;
     if (Math.abs(d) < 0.5) return el('small', { class: 'yoy' }, `same as ${year - 1}`);
     const good = lowerIsGood ? d < 0 : d > 0;
@@ -3985,7 +4109,7 @@ async function renderYearReview(year) {
   const netOn = prefs.afterCreditsOn() && everything.some((e) => e.type === 'meter' && creditsOf(e).length);
   const r = yearReview(withMortgage(netOn ? afterCredits(everything) : everything), year);
   const short = money; // v16.0: pounds and pence throughout Year in review
-  const change = (d, vs) => (d === null ? null : el('span', { class: 'yoy ' + (d > 0 ? 'up' : d < 0 ? 'down' : '') }, d === 0 ? `same as ${vs}` : `${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} vs ${vs}`));
+  const change = (d, vs, prev = 1) => (d === null || !Number(prev) ? null : el('span', { class: 'yoy ' + (d > 0 ? 'up' : d < 0 ? 'down' : '') }, d === 0 ? `same as ${vs}` : `${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} vs ${vs}`));
   const max = Math.max(1, ...r.categories.map((c) => c.total));
   const hrefFor = (id) => (id === 'insurance' || id === 'mortgage' ? `#/list/${id}` : `#/list/${id}/${year}`);
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -4019,14 +4143,14 @@ async function renderYearReview(year) {
           el('div', { class: 'review-cats' }, r.categories.filter((c) => c.total).map((c) => el('a', /* v15.22: no "Jobs £0.00 · 0 items" row */ { class: 'review-cat', href: hrefFor(c.id), 'data-cat': c.id },
             el('div', { class: 'review-cat-row' }, el('strong', {}, c.label), el('span', { class: 'review-amt' }, money(c.total))),
             el('div', { class: 'review-bar' }, el('i', { style: `width:${Math.round((c.total / max) * 100)}%` })),
-            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : c.id === 'meter' ? `${c.count} bill${c.count === 1 ? '' : 's'}, by month used, ${netOn ? 'after credits' : 'as charged'}` : c.id === 'mortgage' ? `${c.count} month${c.count === 1 ? '' : 's'} of payments` : `${c.count} with a cost`, c.prev !== null ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1)))))))
+            el('div', { class: 'small muted' }, [c.id === 'insurance' ? `${c.count} polic${c.count === 1 ? 'y' : 'ies'}, pro rata` : c.id === 'meter' ? `${c.count} bill${c.count === 1 ? '' : 's'}, by month used, ${netOn ? 'after credits' : 'as charged'}` : c.id === 'mortgage' ? `${c.count} month${c.count === 1 ? '' : 's'} of payments` : `${c.count} with a cost`, Number(c.prev) ? `${short(c.prev)} in ${year - 1}` : ''].filter(Boolean).join(' · '), ' ', change(c.change, String(year - 1), c.prev)))))) // v16.1: nothing about an empty year
       : el('div', { class: 'empty' }, el('div', { class: 'empty-art' }, icon('chart', 36)), el('p', {}, `Nothing with a cost in ${year} yet.`)),
     r.biggest.length
       ? el('section', { class: 'group', id: 'review-biggest' }, el('div', { class: 'group-head' }, el('h2', {}, 'Biggest items')),
           el('div', { class: 'list' }, r.biggest.map((b) => el('a', { class: 'entry', href: `#/view/${b.entry.id}`, 'data-id': b.entry.id },
             el('div', { class: 'thumb placeholder', 'data-tone': getSection(b.entry.type).tone }, icon(getSection(b.entry.type).glyph, 24)),
             el('div', { class: 'entry-text' }, el('div', { class: 'entry-title' }, fh.shownTitle(b.entry)),
-              el('div', { class: 'entry-sub' }, b.insurance ? `${getSection('insurance').single} · paid in ${year}, pro rata` : [getSection(b.entry.type).single, b.entry.type === 'meter' ? `paid ${niceDate(b.entry.date)}` : niceDate(b.entry.date)].join(' · '))),
+              el('div', { class: 'entry-sub' }, b.insurance ? [...notInTitle(b.entry, [insuranceKindText(b.entry)]), `paid in ${year}, pro rata`].join(' · ') : [getSection(b.entry.type).single, b.entry.type === 'meter' ? `paid ${niceDate(b.entry.date)}` : niceDate(b.entry.date)].join(' · '))),
             el('div', { class: 'entry-cost' }, money(b.amount))))))
       : null,
     r.busiestMonth || r.kwh
@@ -4435,11 +4559,10 @@ if ('serviceWorker' in navigator) {
     addEventListener('hashchange', wait);
   });
   // A little while after start-up, ask the service worker to fetch the
-  // scanner files in the background (skipped on "data saver").
-  const warm = () => {
-    if (navigator.connection && navigator.connection.saveData) return;
-    navigator.serviceWorker.ready.then((reg) => reg.active && reg.active.postMessage({ type: 'warm-ocr' }));
-  };
+  // scanner files in the background. v16.1: only on Wi-Fi or a wired
+  // connection, when the phone says so (never on "data saver"); otherwise
+  // the scanner downloads when you first open it (renderScan).
+  const warm = () => { if (onUnmetered()) warmScanner(); };
   addEventListener('load', () => setTimeout(() => ('requestIdleCallback' in window ? requestIdleCallback(warm, { timeout: 10000 }) : warm()), 4000));
 }
 
@@ -4453,6 +4576,7 @@ if ('serviceWorker' in navigator) {
 const kwh0 = (v) => Math.round(v).toLocaleString('en-GB');
 const pct = (f) => `${Math.abs(Math.round(f * 100))}%`;
 async function usageCard() {
+  const usage = await import('./usage.js'); // v16.1: loaded when needed
   const entry = await db.getEntry(usage.USAGE_ID);
   const months = usage.savedMonths(entry);
   const keys = Object.keys(months);
@@ -4525,6 +4649,7 @@ async function usageCard() {
 }
 
 async function renderUsageImport() {
+  const usage = await import('./usage.js'); // v16.1: loaded when needed
   const everything = await db.getAllEntries();
   const entry = await db.getEntry(usage.USAGE_ID);
   const saved = usage.savedMonths(entry);

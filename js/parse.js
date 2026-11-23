@@ -30,6 +30,7 @@
 // Pure functions only (no browser APIs), so the tests can run it in Node.
 
 import { addRate } from './tariff.js';
+import { midMonthKey, shortMonthLabel } from './billmonth.js'; // v16.1
 
 // ---------- Known suppliers ----------
 // kind 'energy' makes the scan a meter-reading/bill entry.
@@ -799,12 +800,9 @@ export function parseTariff(allLines, defaultYear = new Date().getFullYear()) {
 const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const gbp = (n) => '£' + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// The month a bill is "for": the month containing the middle of the period.
-function billMonth(start, end) {
-  const a = Date.parse(start), b = Date.parse(end);
-  const mid = new Date((a + b) / 2);
-  return `${MON_SHORT[mid.getUTCMonth()]} ${mid.getUTCFullYear()}`;
-}
+// The month a bill is "for": the month containing the middle of the period
+// (v16.1: the shared rule in billmonth.js).
+const billMonth = (start, end) => shortMonthLabel(midMonthKey(start, end));
 
 // ---------- v14.5: EDF credits on a bill ----------
 // "15 Jul 2026   Sunday Saver   -£12.34" (charges page) and "Sunday Saver

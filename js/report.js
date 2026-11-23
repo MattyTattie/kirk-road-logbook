@@ -4,7 +4,7 @@
 // It loads every entry, groups them by section, adds up the costs, and
 // draws a simple document. Photos are shown as small thumbnails.
 
-import { SECTIONS, getSection, soonDaysFor, insuranceTypeLabel, annualCost, insKindOf } from './sections.js';
+import { SECTIONS, getSection, soonDaysFor, insuranceTypeLabel, insuranceKindText, annualCost, insKindOf } from './sections.js';
 import { APP_NAME, ADDRESS } from './config.js';
 import { getAllEntries } from './db.js';
 import { el, fill, money, totalCost, niceDate, daysUntil, dueText, newestFirst, todayISO } from './utils.js';
@@ -12,6 +12,7 @@ import { policyStatus, activeDue } from './duestate.js';
 import { isReminder, repeatText } from './reminderlogic.js';
 import { shownTitle } from './formhelp.js';
 import * as M from './mortgage.js';
+import { usageIntervals, runningCost } from './stats.js';
 
 async function build() {
   const entries = (await getAllEntries()).sort(newestFirst);
@@ -42,6 +43,18 @@ async function build() {
   const stillDue = new Set(activeDue(entries).map((e) => e.id));
   const currentPolicies = entries.filter((e) => e.type === 'insurance' && ['current', 'lapsed'].includes(policyStatus(e, entries, today)));
   const yearly = (list) => money(totalCost(list.map((e) => ({ cost: annualCost(e) }))));
+  // v16.1: each bill's kWh (from the readings) and what that came to per kWh
+  const ivByBill = new Map(usageIntervals(entries).map((iv) => [iv.to.id, iv]));
+  const ms = M.summary(entries);
+  const est = ms ? M.balanceToday(ms, today) : null;
+
+  // v16.1: about what the house costs each month right now (as Year in review)
+  const dealLive = ms && (!ms.deal.end || ms.deal.end >= today);
+  const rc = runningCost(entries, { mortgage: ms ? { payment: dealLive || !ms.svrPayment ? ms.deal.payment : ms.svrPayment, extra: M.extraOn(ms.changes || [], today, ms.extra || 0) } : null, policies: currentPolicies });
+  if (rc.total !== null) {
+    parts.push(el('h2', { id: 'report-running' }, el('span', {}, '\u{1F3E0} Running the house'), el('span', {}, `${money(rc.total)} a month`)));
+    parts.push(el('p', { class: 'subhead', id: 'report-running-lines' }, [rc.mortgage !== null ? `mortgage ${money(rc.mortgage)}${rc.overpay ? ` (incl. ${money(rc.overpay)} overpayment)` : ''}` : '', rc.insurance !== null ? `insurance ${money(rc.insurance)} (${currentPolicies.length} current polic${currentPolicies.length === 1 ? 'y' : 'ies'})` : '', rc.electricity !== null ? `electricity ${money(rc.electricity)} (average bill, last ${rc.electricityMonths} month${rc.electricityMonths === 1 ? '' : 's'}, as charged)` : ''].filter(Boolean).join(' · ') + '. Right now, not a year’s total.'));
+  }
   for (const type of types) {
     const section = getSection(type);
     let items = entries.filter((e) => e.type === type && !isReminder(e));
@@ -60,10 +73,12 @@ async function build() {
     }
     if (!items.length) continue;
     let sum = money(totalCost(items));
-    if (section.kind === 'mortgage') { const ms = M.summary(entries); sum = ms ? `Balance ${money(ms.balance)}` : ''; }
+    // v16.1: the mortgage headline is today's estimate (as on Home and the
+    // Mortgage page), with the statement's figure under it.
+    if (section.kind === 'mortgage') sum = ms ? (est && est.estimate ? `About ${money(Math.round(est.balance))} today (estimate)` : `Balance ${money(ms.balance)}`) : '';
     parts.push(el('h2', { id: `report-${type}` }, el('span', {}, `${section.icon} ${section.label}`), el('span', {}, sum)));
-    if (section.kind === 'mortgage') { const ms = M.summary(entries); if (ms) parts.push(el('p', { class: 'subhead' }, `at ${niceDate(ms.asAt)} (${ms.source || 'set-up'})`)); }
-    for (const e of items) parts.push(itemRow(e, section, { due: stillDue.has(e.id) || section.kind !== 'mortgage' }));
+    if (section.kind === 'mortgage' && ms) parts.push(el('p', { class: 'subhead', id: 'report-mortgage-asat' }, est && est.estimate ? `${money(ms.balance)} at ${niceDate(ms.asAt)} (${ms.source || 'set-up'}), less ${est.payments} payment${est.payments === 1 ? '' : 's'} since` : `at ${niceDate(ms.asAt)} (${ms.source || 'set-up'})`));
+    for (const e of items) parts.push(itemRow(e, section, { due: stillDue.has(e.id) || section.kind !== 'mortgage', iv: ivByBill.get(e.id) }));
     if (type === 'job') {
       const rems = entries.filter((e) => isReminder(e)).sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
       if (rems.length) {
@@ -88,13 +103,17 @@ async function build() {
   document.body.dataset.ready = 'yes';
 }
 
-function itemRow(e, section, { due = true, past = false, reminder = false } = {}) {
+const kwhText = (v) => Number(v).toLocaleString('en-GB', { maximumFractionDigits: 0 });
+function itemRow(e, section, { due = true, past = false, reminder = false, iv = null } = {}) {
   const days = daysUntil(e.dueDate);
   const cls = past || days === null ? '' : days < 0 ? 'expired' : days <= soonDaysFor(e) ? 'soon' : '';
   const ins = section.kind === 'insurance';
   const line = ins
-    ? [insKindOf(e) ? `${insuranceTypeLabel(insKindOf(e))} insurance` : '', e.supplier, e.policyNumber ? `policy ${e.policyNumber}` : '', e.covered ? `covers ${e.covered}` : '', e.date ? `since ${niceDate(e.date)}` : ''].filter(Boolean).join(' · ')
+    ? [insuranceKindText(e), e.supplier, e.policyNumber ? `policy ${e.policyNumber}` : '', e.covered ? `covers ${e.covered}` : '', e.date ? `since ${niceDate(e.date)}` : ''].filter(Boolean).join(' · ')
     : [e.type === 'meter' && Number(e.cost) > 0 ? `paid ${niceDate(e.date)}` : niceDate(e.date), e.supplier].filter(Boolean).join(' · ');
+  // v16.1: the bill's kWh and £ per kWh, and who paid
+  const used = iv && Number(iv.used) > 0 ? Number(iv.used) : null;
+  const usedLine = e.type === 'meter' && used ? `Used ${kwhText(used)} ${iv.unit || e.meterUnit || 'kWh'}${Number(e.cost) > 0 ? ` · about ${(Number(e.cost) / used * 100).toFixed(1)}p per ${iv.unit || 'kWh'} all-in (bill ÷ kWh)` : ''}` : null;
   return el(
     'div',
     { class: 'item' },
@@ -104,7 +123,9 @@ function itemRow(e, section, { due = true, past = false, reminder = false } = {}
       el('div', { class: 'title' }, shownTitle(e)),
       reminder ? el('div', { class: 'line' }, `Reminder · ${repeatText(e.reminder)}`) : null,
       line ? el('div', { class: 'line' }, line) : null,
-      e.meterValue !== null && e.meterValue !== undefined ? el('div', { class: 'line' }, `Reading: ${isFinite(Number(e.meterValue)) && e.meterValue !== '' ? Number(e.meterValue).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : e.meterValue} ${e.meterUnit || ''}`) : null,
+      e.meterValue !== null && e.meterValue !== undefined ? el('div', { class: 'line' }, `Reading: ${isFinite(Number(e.meterValue)) && e.meterValue !== '' ? Number(e.meterValue).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 1 }) : e.meterValue} ${e.meterUnit || ''}`) : null,
+      usedLine ? el('div', { class: 'line report-used' }, usedLine) : null,
+      String(e.paidBy || '').trim() ? el('div', { class: 'line report-paidby' }, `Paid by ${String(e.paidBy).trim()}`) : null,
       e.dueDate && past ? el('div', { class: 'line' }, `Ran to ${niceDate(e.dueDate)}`)
         : e.dueDate && due ? el('div', { class: 'line ' + cls }, `${section.dueWord === 'expires' ? 'Expires' : section.dueWord === 'renews' ? 'Renews' : section.dueWord === 'deal ends' ? 'Deal ends' : 'Next due'} ${niceDate(e.dueDate)} (${dueText(section.dueWord || 'due', days)})`) : null,
       e.notes ? el('div', { class: 'notes' }, e.notes) : null,

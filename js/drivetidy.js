@@ -38,6 +38,7 @@
 import * as drive from './gdrive.js';
 import * as db from './db.js';
 import { coverMonths } from './stats.js';
+import { billMonthKey } from './billmonth.js'; // v16.1
 
 export const FOLDERS = {
   receipts: { name: 'Receipts', old: [] },
@@ -65,18 +66,9 @@ const WORD = { receipt: 'receipt', warranty: 'warranty', meter: 'bill', insuranc
 const clean = (s) => String(s || '').replace(/[\\/:*?"<>|#\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
 export const SECOND = ' (second phone)';
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-/** v15.19: "YYYY-MM" a bill is for: its title ("EDF bill Sep 2025"), else
- *  the period it covers (cover = coverMonths()), else its date. Pure. */
-export function billMonth(entry, cover = null) {
-  const t = String(entry?.title || '');
-  const m = t.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})\b/i);
-  if (m) return `${m[2]}-${String(MONTHS.indexOf(m[1].toLowerCase()) + 1).padStart(2, '0')}`;
-  const iso = t.match(/\b(\d{4})-(0[1-9]|1[0-2])\b/);
-  if (iso) return `${iso[1]}-${iso[2]}`;
-  const c = cover && entry?.id && (cover.get ? cover.get(entry.id) : cover[entry.id]);
-  if (c && /^\d{4}-\d{2}$/.test(c)) return c;
-  return /^\d{4}-\d{2}/.test(entry?.date || '') ? entry.date.slice(0, 7) : '';
-}
+/** v15.19: "YYYY-MM" a bill is for. v16.1: the shared rule in billmonth.js
+ *  (the period it covers first, then the title, then its date). Pure. */
+export const billMonth = (entry, cover = null) => billMonthKey(entry, cover);
 /** "2026-11 EDF bill.jpg", "2026-10 Screwfix receipt 2.jpg". Pure.
  *  opts.cover: coverMonths() map for bills; opts.day: use the full date. */
 export function photoName(entry, index = 0, count = 1, ext = 'jpg', opts = {}) {

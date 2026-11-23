@@ -1,7 +1,7 @@
 // =====================================================================
 // manuals.js — the appliance manuals bundled with the app (v12).
 // =====================================================================
-// The PDFs live in the app's manuals/ folder. They're big (about 59 MB
+// The PDFs live in the app's manuals/ folder. They’re big (about 38 MB since v16.1, was 59
 // together), so they are NOT downloaded when the app installs. Viewing
 // only loads temporary bytes; explicit Save on this device / Save all
 // keeps offline copies in the manual cache.

@@ -8,7 +8,7 @@
 // mortgage-free date for the same mortgage with no overpayments: an
 // estimate, and always labelled as one.
 
-import { el, fill, moreInfo, infoNote, keepPlace, money, niceDate, daysUntil, todayISO } from './utils.js';
+import { el, fill, moreInfo, infoNote, keepPlace, money, niceDate, daysUntil, todayISO, dueText } from './utils.js';
 import { icon } from './icons.js';
 import * as prefs from './prefs.js';
 import * as M from './mortgage.js';
@@ -17,13 +17,12 @@ const pounds = (v) => money(Math.round(v)).replace(/\.\d\d$/, '');
 const monthsText = (n) => { const y = Math.floor(n / 12), m = n % 12; return [y ? `${y} year${y === 1 ? '' : 's'}` : '', m ? `${m} month${m === 1 ? '' : 's'}` : ''].filter(Boolean).join(' ') || '0 months'; };
 const monthsBetween = (a, b) => (Number(b.slice(0, 4)) - Number(a.slice(0, 4))) * 12 + Number(b.slice(5, 7)) - Number(a.slice(5, 7));
 const longMonth = (iso) => new Date(iso.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+// v16.1: the same words as Home and Coming up ("in about 5 months", "in 12 days").
 function inTime(iso) {
   const d = daysUntil(iso);
   if (d === null) return '';
   if (d < 0) return 'ended';
-  if (d <= 31) return d === 0 ? 'today' : `in ${d} day${d === 1 ? '' : 's'}`;
-  const m = Math.round(d / 30.44);
-  return m >= 24 ? `in about ${Math.round(d / 365.25)} years` : `in ${m} months`;
+  return dueText('', d).trim();
 }
 
 // Balance over time: the real line, and the shadow one (dashed) when shown.
@@ -34,12 +33,14 @@ function inTime(iso) {
 const goodDate = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d);
 const cleanPoints = (pts) => (pts || []).filter((p) => p && goodDate(p.date) && Number.isFinite(Number(p.balance))).map((p) => ({ ...p, date: p.date.slice(0, 10), balance: Number(p.balance) }));
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-export function balanceChart(rawPoints, rawShadow = null) {
+export function balanceChart(rawPoints, rawShadow = null, rawToday = null) {
   const points = cleanPoints(rawPoints);
   const shadowPoints = rawShadow ? cleanPoints(rawShadow) : null;
+  // v16.1: a dashed line on to today's estimated balance (hollow dot, "today")
+  const todayPt = rawToday ? cleanPoints([rawToday])[0] || null : null;
   if (!points.length) return el('div', { class: 'mortgage-chart-box', id: 'mortgage-chart' });
   const W = 340, H = 150, top = 16, bottom = 22, left = 6, right = 8;
-  const all = [...points, ...(shadowPoints || [])];
+  const all = [...points, ...(shadowPoints || []), ...(todayPt ? [todayPt] : [])];
   const t = (d) => Date.UTC(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10)));
   const t0 = Math.min(...all.map((p) => t(p.date))), t1 = Math.max(...all.map((p) => t(p.date)));
   const vmax = Math.max(...all.map((p) => p.balance)), vmin = Math.min(...all.map((p) => p.balance));
@@ -47,13 +48,19 @@ export function balanceChart(rawPoints, rawShadow = null) {
   const x = (d) => left + ((t(d) - t0) / Math.max(1, t1 - t0)) * (W - left - right);
   const y = (v) => top + (1 - (v - lo) / Math.max(1, hi - lo)) * (H - top - bottom);
   const path = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.date).toFixed(1)} ${y(p.balance).toFixed(1)}`).join(' ');
-  let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg mortgage-chart" role="img" aria-label="${esc(`Balance: ${points.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}${shadowPoints && shadowPoints.length ? `. Without overpayments (estimate): ${shadowPoints.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}` : ''}`)}">`;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg mortgage-chart" role="img" aria-label="${esc(`Balance: ${points.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}${todayPt ? `; today about ${money(Math.round(todayPt.balance))} (estimate)` : ''}${shadowPoints && shadowPoints.length ? `. Without overpayments (estimate): ${shadowPoints.map((p) => `${niceDate(p.date)} ${money(p.balance)}`).join('; ')}` : ''}`)}">`;
   for (const v of [hi, (hi + lo) / 2]) svg += `<line x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="chart-grid"/><text x="2" y="${(y(v) - 3).toFixed(1)}" text-anchor="start" class="chart-axis">${pounds(v).replace(/,\d{3}$/, 'k')}</text>`;
   svg += `<line x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}" class="chart-base"/>`;
   const years = [...new Set(all.map((p) => p.date.slice(0, 4)))];
   for (const yr of years) { const d = `${yr}-12-31`; if (t(d) <= t1 && t(d) >= t0) svg += `<text x="${Math.min(W - 14, x(d)).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="chart-axis">${yr}</text>`; }
   if (shadowPoints && shadowPoints.length) svg += `<path d="${path(shadowPoints)}" class="mortgage-line shadow"/>` + shadowPoints.map((p) => `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.balance).toFixed(1)}" r="3" class="mortgage-dot shadow"/>`).join('');
   svg += `<path d="${path(points)}" class="mortgage-line"/>` + points.map((p) => `<circle cx="${x(p.date).toFixed(1)}" cy="${y(p.balance).toFixed(1)}" r="3.4" class="mortgage-dot"/>`).join('');
+  if (todayPt) {
+    const last = points[points.length - 1];
+    const tx = x(todayPt.date), ty = y(todayPt.balance);
+    svg += `<path d="M${x(last.date).toFixed(1)} ${y(last.balance).toFixed(1)} L${tx.toFixed(1)} ${ty.toFixed(1)}" class="mortgage-line today"/><circle cx="${tx.toFixed(1)}" cy="${ty.toFixed(1)}" r="3.6" class="mortgage-dot today" id="mortgage-today-dot"/>`
+      + `<text x="${(tx - 7).toFixed(1)}" y="${(ty + 13 < H - bottom - 2 ? ty + 13 : ty - 8).toFixed(1)}" text-anchor="end" class="chart-axis chart-today">today (est.)</text>`;
+  }
   const box = el('div', { class: 'mortgage-chart-box', id: 'mortgage-chart' });
   box.innerHTML = svg + '</svg>';
   return box;
@@ -211,8 +218,26 @@ function fold(id, title, body) {
     el('summary', {}, title), body);
 }
 // v16.0: a remortgage checklist, from 6 months before the deal ends until it
-// ends. The ticks are kept on this phone (per deal end), not in backups.
-export function remortgageCard(s, today = todayISO()) {
+// ends. v16.1: the ticks are saved on the mortgage set-up entry (an optional
+// field older versions keep untouched), so they reach the other phone through
+// Drive and go into backups:  remortgageChecklist: { dealEnd, done: ['erc', …] }
+// Ticks made on v16.0 (this phone only) are picked up the first time.
+const CHECK_IDS = ['erc', 'pt', 'broker', 'lock', 'payment', 'hearth'];
+const checklistHome = (s) => s.setup || s.latest || null;
+function savedTicks(s) {
+  const d = s.deal, home = checklistHome(s);
+  const c = home && home.remortgageChecklist;
+  if (c && typeof c === 'object' && String(c.dealEnd || '').slice(0, 10) === String(d.end).slice(0, 10) && Array.isArray(c.done)) return c.done.filter((x) => CHECK_IDS.includes(x));
+  return prefs.remortgageTicks(d.end).filter((x) => CHECK_IDS.includes(x)); // v16.0 ticks on this phone
+}
+// Home's mortgage line: "remortgage checklist 2 of 6" (only while the checklist shows).
+export function checklistProgress(everything, s = M.summary(everything)) {
+  if (!s || !s.deal.end) return null;
+  const left = daysUntil(s.deal.end);
+  if (left === null || left < 0 || left > 183) return null;
+  return { done: savedTicks(s).length, total: CHECK_IDS.length };
+}
+export function remortgageCard(s, today = todayISO(), saveQuiet = null) {
   const d = s.deal;
   if (!d.end) return null;
   const left = daysUntil(d.end);
@@ -226,17 +251,22 @@ export function remortgageCard(s, today = todayISO()) {
     ['payment', 'Check the new monthly payment fits'],
     ['hearth', 'Add the new deal to Hearth (its statement, or rate and end date)'],
   ];
-  const ticked = new Set(prefs.remortgageTicks(d.end));
+  const ticked = new Set(savedTicks(s));
+  const home = checklistHome(s);
   const count = el('span', { class: 'small muted', id: 'remortgage-count' });
   const recount = () => { count.textContent = `${ticked.size} of ${items.length} done`; };
   recount();
+  const store = async () => {
+    prefs.setRemortgageTicks(d.end, [...ticked]); // also on this phone, as before
+    if (home && saveQuiet) await saveQuiet({ ...home, remortgageChecklist: { dealEnd: String(d.end).slice(0, 10), done: [...ticked] } });
+  };
   return el('section', { class: 'card mortgage-card', id: 'mortgage-remortgage' },
     el('div', { class: 'mcard-head' }, el('h2', { class: 'card-title' }, 'Before your deal ends'), count),
-    el('p', { class: 'small muted' }, `Your deal ends ${niceDate(d.end)} (${inTime(d.end)}). Ticks are saved on this phone only.`),
+    el('p', { class: 'small muted' }, `Your deal ends ${niceDate(d.end)} (${inTime(d.end)}). ${home && saveQuiet ? 'Ticks are saved with your mortgage, so they’re in backups and on both phones when you share with Drive.' : 'Ticks are saved on this phone.'}`),
     el('ul', { class: 'remortgage-list' }, items.map(([id, text]) => el('li', {}, el('label', {},
       el('input', { type: 'checkbox', 'data-step': id, checked: ticked.has(id) || undefined, onchange: (ev) => {
         if (ev.currentTarget.checked) ticked.add(id); else ticked.delete(id);
-        prefs.setRemortgageTicks(d.end, [...ticked]); recount(); } }),
+        recount(); store(); } }),
       el('span', {}, text))))));
 }
 
@@ -252,7 +282,7 @@ function keyFacts(s, on, sh) {
     free ? el('div', { class: 'kf', id: 'kf-free' }, el('span', { class: 'kf-label' }, 'Mortgage-free'), el('strong', {}, longMonth(free.date)), el('small', {}, free.how)) : null);
 }
 
-export function overview(everything, { saveSetup = null } = {}) {
+export function overview(everything, { saveSetup = null, saveQuiet = null } = {}) {
   const s = M.summary(everything);
   const wrap = el('div', { class: 'mortgage-overview', id: 'mortgage-overview' });
   if (!s) {
@@ -274,16 +304,19 @@ export function overview(everything, { saveSetup = null } = {}) {
     // 1. Balance
     const balance = el('section', { class: 'card mortgage-card', id: 'mortgage-balance' },
       el('div', { class: 'mcard-head' }, el('span', { class: 'stat-label' }, icon('key', 16), 'Balance'), sw),
-      el('p', { class: 'mortgage-big', id: 'mortgage-balance-value' }, money(on ? sh.balance : s.balance), on ? el('small', { class: 'est-tag' }, 'estimate') : null),
-      el('p', { class: 'small muted', id: 'mortgage-asat' }, on ? `Without overpayments, ${asAtText}. Real balance ${money(s.balance)}.` : asAtText),
-      // v16.0: roughly what's owed today, after the payments since that date
-      !on && est && est.estimate ? el('p', { class: 'mortgage-today', id: 'mortgage-today' }, `About ${pounds(est.balance)} today`,
-        el('small', {}, ` estimate, after ${est.payments} payment${est.payments === 1 ? '' : 's'} since ${niceDate(s.asAt)}`)) : null,
+      // v16.1: the headline is today's estimate (as on Home and in the report),
+      // with the last statement's real figure under it.
+      !on && est && est.estimate
+        ? el('p', { class: 'mortgage-big', id: 'mortgage-balance-value' }, `About ${pounds(est.balance)}`, el('small', { class: 'est-tag' }, 'today (est.)'))
+        : el('p', { class: 'mortgage-big', id: 'mortgage-balance-value' }, money(on ? sh.balance : s.balance), on ? el('small', { class: 'est-tag' }, 'estimate') : null),
+      !on && est && est.estimate
+        ? el('p', { class: 'small muted', id: 'mortgage-asat' }, `${money(s.balance)} ${asAtText}`, el('span', { class: 'mortgage-today', id: 'mortgage-today' }, ` · estimate after ${est.payments} payment${est.payments === 1 ? '' : 's'} since then`))
+        : el('p', { class: 'small muted', id: 'mortgage-asat' }, on ? `Without overpayments, ${asAtText}. Real balance ${money(s.balance)}.` : asAtText),
       on ? el('p', { class: 'overpay-saved', id: 'overpay-saved' }, icon('sparkle', 16),
         el('span', {}, `You owe ${money(sh.owesLess)} less`, sh.interestSaved !== null ? ` and save ${money(sh.interestSaved)} interest` : '', ' thanks to overpayments',
           el('small', {}, ` (estimate, to ${niceDate(s.asAt)})`))) : null,
       keyFacts(s, on, sh),
-      s.points.length > 1 ? balanceChart(s.points, on ? sh.points : null) : null,
+      s.points.length > 1 ? balanceChart(s.points, on ? sh.points : null, !on && est && est.estimate ? { date: todayISO(), balance: est.balance } : null) : null,
       on ? el('p', { class: 'chart-legend', id: 'mortgage-legend' }, el('i', { class: 'lg-real' }), 'With overpayments', el('i', { class: 'lg-shadow' }), 'Without (estimate)') : null);
 
     // 2. Current deal
@@ -378,7 +411,7 @@ export function overview(everything, { saveSetup = null } = {}) {
 
     const setupHint = !s.setup ? el('a', { class: 'card mortgage-card mortgage-setup-hint', id: 'mortgage-setup-hint', href: '#/new/mortgage' },
       el('strong', {}, 'Add the set-up'), el('span', { class: 'small muted' }, 'The amount borrowed, the term and the first deal (tap +, then “Mortgage set-up”), to see what your overpayments save.')) : null;
-    fill(wrap, balance, setupHint, deal, remortgageCard(s), years, paidCard, free, notes);
+    fill(wrap, balance, setupHint, deal, remortgageCard(s, todayISO(), saveQuiet), years, paidCard, free, notes);
   };
   draw();
   return wrap;
