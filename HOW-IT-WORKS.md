@@ -1106,7 +1106,7 @@ Not built: the battery dashboard (waiting for the January 2027 install).
 
 Unchanged: DB `kirk-road-logbook`, section ids (`meter` etc.), chartMode `bills`, `hearthbook-sync.json` v3, backup `kirk-road-logbook-backup` v1. New fields `paidBy` and `insKind` are optional and additive. sw cache `hearthbook-v16.0`, APP_VERSION 16.0.
 
-## v16.1 — Audit 2 fixed, ideas built, app lighter (built 19 Nov 2026, local branch v16.1, NOT published)
+## v16.1 — Audit 2 fixed, ideas built, app lighter (published 23 Nov 2026, 22:40 GMT; commit ba4144f)
 
 Faults and continuity
 - **Ask Hearth** understands: "what's due/overdue" (only things with a due date: overdue first, oldest first, then this month), "renewals / insurance this month" (renewals in the month plus monthly-paid policies), "when does my mortgage deal end", "how much did <name> pay" / "paid by <name>" (the Paid by field only, never notes or manuals). Curly or straight apostrophes both work. "This year"/"last year" use the Year in review total ("· £X as on Year in review", with a link). The insurance-only heading is "N current policies · M renewed or ended". The "Nothing found" line has no glossary underlines.
